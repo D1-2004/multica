@@ -13,7 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-func executionFactFixture(t *testing.T, f fixture, held bool) ExecutionFact {
+func executionFactFixture(t *testing.T, f fixture, held bool, route ...string) ExecutionFact {
 	t.Helper()
 	a := f.admission
 	ws, _ := util.ParseUUID(a.Scope.WorkspaceID)
@@ -21,6 +21,9 @@ func executionFactFixture(t *testing.T, f fixture, held bool) ExecutionFact {
 	principal, _ := util.ParseUUID(a.Item.PrincipalID)
 	e := eventrouter.Event{Version: 1, ID: uuid.NewString(), Source: "employee.execution", Type: "execution.terminal", Category: eventrouter.RunCallback, PayloadSchema: "employee.execution/1", Payload: json.RawMessage(`{"run_id":"recorded-run"}`)}
 	h := eventrouter.Host{Owner: scene.Owner{WorkspaceID: ws, AgentID: agent}, PrincipalID: principal, TenantOrgID: a.Scope.TenantOrgID, Locator: scene.DingTalkConversation("org-a", scene.KindGroup, "cid-test"), Route: eventrouter.Unified, ConfigVersion: "execution/1", Fingerprint: e.ID}
+	if len(route) > 0 {
+		h.Route = route[0]
+	}
 	state, reason := "completed", "current_goal_revision"
 	if held {
 		h.UnmappedReason = "scene_unavailable"
@@ -117,5 +120,33 @@ func TestExecutionFactCannotReplaceAdmittedPayload(t *testing.T) {
 	}
 	if _, err := f.store.Lookup(context.Background(), fact.Scope, fact.ReceiptID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("invalid fact persisted", err)
+	}
+}
+
+func TestExecutionFactAcceptsResolvedLegacyAndRejectsInconsistentReceipt(t *testing.T) {
+	for _, kind := range []string{"legacy", "wrong_state", "reason", "unmapped"} {
+		t.Run(kind, func(t *testing.T) {
+			f := database(t)
+			fact := executionFactFixture(t, f, kind == "unmapped", eventrouter.Legacy)
+			fact.State = "completed"
+			if kind == "wrong_state" {
+				if _, err := f.pool.Exec(context.Background(), `UPDATE scene_event_receipt SET state='ready' WHERE id=$1::uuid`, fact.ReceiptID); err == nil {
+					t.Fatal("database accepted inconsistent route/state")
+				}
+				return
+			}
+			if kind == "reason" {
+				if _, err := f.pool.Exec(context.Background(), `UPDATE scene_event_receipt SET reason='unresolved_source' WHERE id=$1::uuid`, fact.ReceiptID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, err := f.store.RecordExecutionFact(context.Background(), fact)
+			if kind == "legacy" && err != nil {
+				t.Fatal("valid legacy fact rejected", err)
+			}
+			if kind != "legacy" && !errors.Is(err, ErrInvalid) {
+				t.Fatal("unresolved/inconsistent receipt admitted", err)
+			}
+		})
 	}
 }

@@ -26,6 +26,12 @@ import (
 const employeeExecutionSource = "employee.execution"
 const employeeExecutionSchema = "employee.execution/1"
 
+// Keep the version-1 storage wrapper recognizable to old readers. Proof version
+// 2 accepts resolved legacy receipts as well as unified receipts. Old readers
+// skip either wrapper; new readers reassess only older proofs, never downgrade
+// a newer proof or require a foreground replica-marker change.
+const employeeExecutionProofVersion = 2
+
 // employeeExecutionTerminal is a fact, never a continuation or a user message.
 // The output remains on Run/queue; the envelope contains only durable references.
 type employeeExecutionTerminal struct {
@@ -75,8 +81,11 @@ func (h *Handler) ReconcileEmployeeExecutionEvents(ctx context.Context, limit in
  AND r.state IN ('succeeded','failed','cancelled') AND q.status IN ('completed','failed','cancelled')
  AND NOT EXISTS(SELECT 1 FROM employee_scene_job j WHERE j.id::text=q.context->>'employee_job_id' AND j.workspace_id=t.workspace_id AND j.agent_id=t.agent_id AND j.tenant_org_id=t.tenant_org_id AND j.scene_id=t.scene_id AND j.state<>'completed')
  AND NOT EXISTS(SELECT 1 FROM scene_event_receipt e WHERE e.workspace_id=t.workspace_id AND e.agent_id=t.agent_id AND e.source=$1 AND e.source_event_id=r.id::text)
- AND NOT COALESCE(q.context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',r.id::text) AND q.context->'employee_execution_event_skip'->>'reason'<>'',false)
- ORDER BY r.finished_at,r.id LIMIT $2`, employeeExecutionSource, limit)
+ AND NOT COALESCE(q.context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',r.id::text)
+  AND jsonb_typeof(q.context->'employee_execution_event_skip'->'proof_version')='number'
+  AND q.context->'employee_execution_event_skip'->'proof_version'>=to_jsonb($3::int)
+  AND q.context->'employee_execution_event_skip'->>'reason'<>'',false)
+ ORDER BY r.finished_at,r.id LIMIT $2`, employeeExecutionSource, limit, employeeExecutionProofVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -154,12 +163,17 @@ func (h *Handler) recordEmployeeExecutionEvent(ctx context.Context, workspaceID,
 	if err != nil {
 		return false, err
 	}
-	// A competing reconciler may have committed while we waited for the scene.
-	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scene_event_receipt WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND source=$3 AND source_event_id=$4)`, workspaceID, b.Scope.AgentID, employeeExecutionSource, runID).Scan(&exists); err != nil {
+	// Recheck after the scene lock and queue reload: a competing reconciler may
+	// have committed a receipt or a newer rejection while this candidate waited.
+	var settled bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scene_event_receipt WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND source=$3 AND source_event_id=$4)
+ OR COALESCE($5::jsonb->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',$4::text)
+  AND jsonb_typeof($5::jsonb->'employee_execution_event_skip'->'proof_version')='number'
+  AND $5::jsonb->'employee_execution_event_skip'->'proof_version'>=to_jsonb($6::int)
+  AND $5::jsonb->'employee_execution_event_skip'->>'reason'<>'',false)`, workspaceID, b.Scope.AgentID, employeeExecutionSource, runID, b.Queue.Context, employeeExecutionProofVersion).Scan(&settled); err != nil {
 		return false, err
 	}
-	if exists {
+	if settled {
 		return false, nil
 	}
 	reason, err := h.employeeExecutionOrigin(ctx, tx, &b)
@@ -172,14 +186,17 @@ func (h *Handler) recordEmployeeExecutionEvent(ctx context.Context, workspaceID,
 	if reason != "" {
 		// No verified source principal exists for these historical/corrupt rows.
 		// Record only a local skip marker; never invent an admission identity.
-		skip := map[string]any{"version": 1, "run_id": b.RunID, "reason": reason}
+		skip := map[string]any{"version": 1, "proof_version": employeeExecutionProofVersion, "run_id": b.RunID, "reason": reason}
 		raw, _ := json.Marshal(skip)
 		tag, err := tx.Exec(ctx, `UPDATE agent_task_queue q SET context=jsonb_set(q.context,'{employee_execution_event_skip}',$2::jsonb,true)
  WHERE q.id=$1::uuid AND q.agent_id=$3::uuid AND q.context=$5::jsonb AND q.status=$7
- AND NOT COALESCE(q.context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',$4::text) AND q.context->'employee_execution_event_skip'->>'reason'<>'',false)
+ AND NOT COALESCE(q.context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',$4::text)
+  AND jsonb_typeof(q.context->'employee_execution_event_skip'->'proof_version')='number'
+  AND q.context->'employee_execution_event_skip'->'proof_version'>=to_jsonb($9::int)
+  AND q.context->'employee_execution_event_skip'->>'reason'<>'',false)
  AND EXISTS(SELECT 1 FROM employee_task_run r JOIN employee_task t ON t.id=r.task_id AND t.workspace_id=r.workspace_id AND t.agent_id=r.agent_id AND t.tenant_org_id=r.tenant_org_id
  WHERE r.id=$4::uuid AND r.queue_task_id=q.id AND r.agent_id=q.agent_id AND r.workspace_id=$6::uuid AND r.state=$8
- AND r.state IN ('succeeded','failed','cancelled') AND t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene')`, b.QueueTaskID, raw, b.Scope.AgentID, b.RunID, b.Queue.Context, b.Scope.WorkspaceID, b.Queue.Status, b.State)
+ AND r.state IN ('succeeded','failed','cancelled') AND t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene')`, b.QueueTaskID, raw, b.Scope.AgentID, b.RunID, b.Queue.Context, b.Scope.WorkspaceID, b.Queue.Status, b.State, employeeExecutionProofVersion)
 		if err != nil {
 			return false, err
 		}
@@ -205,19 +222,27 @@ func (h *Handler) recordEmployeeExecutionEvent(ctx context.Context, workspaceID,
 	if sceneMissing {
 		state, reason = "held", "scene_unavailable"
 	} else {
-		sc, err := scene.Get(ctx, q, owner, parseUUID(sceneID))
-		if err != nil {
-			return false, err
-		}
-		identity, err := q.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: owner.WorkspaceID, AgentID: owner.AgentID})
+		// This source is a digital employee: retain the missing-identity hold
+		// rather than borrowing agentTenantOrg's identity-less robot fallback.
+		// Keep the binding stable through fencedScene's second identity read.
+		var identityAgent pgtype.UUID
+		err := tx.QueryRow(ctx, `SELECT agent_id FROM agent_dingtalk_identity WHERE workspace_id=$1 AND agent_id=$2 FOR SHARE`, owner.WorkspaceID, owner.AgentID).Scan(&identityAgent)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, err
 		}
-		if errors.Is(err, pgx.ErrNoRows) || scene.CheckTenant(sc, identity.OrgID) != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			state, reason = "held", "scene_tenant_unavailable"
 		} else {
-			host.Locator = scene.Locator{Provider: sc.Provider, TenantOrgID: sc.TenantOrgID, Namespace: sc.SourceNamespace, Kind: sc.SceneKind, ExternalID: sc.ExternalSceneID}
-			host.Observation = scene.Observation{ActiveAt: b.FinishedAt}
+			sc, err := fencedScene(ctx, q, &scene.Ref{SceneID: sceneID}, owner, b.Scope.TenantOrgID)
+			switch {
+			case errors.Is(err, scene.ErrNotFound), errors.Is(err, scene.ErrStaleTenant), errors.Is(err, scene.ErrUnresolved):
+				state, reason = "held", "scene_tenant_unavailable"
+			case err != nil:
+				return false, err
+			default:
+				host.Locator = scene.Locator{Provider: sc.Provider, TenantOrgID: sc.TenantOrgID, Namespace: sc.SourceNamespace, Kind: sc.SceneKind, ExternalID: sc.ExternalSceneID}
+				host.Observation = scene.Observation{ActiveAt: b.FinishedAt}
+			}
 		}
 	}
 	if state == "held" {
@@ -326,14 +351,15 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 				return "source_consumption_missing", nil
 			}
 			var original db.SceneEventReceipt
-			err = tx.QueryRow(ctx, `SELECT principal_id,scene_id,route,state,config_version FROM scene_event_receipt WHERE id=$1 AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4`, receiptID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID).Scan(&original.PrincipalID, &original.SceneID, &original.Route, &original.State, &original.ConfigVersion)
+			err = tx.QueryRow(ctx, `SELECT principal_id,scene_id,route,state,reason,config_version FROM scene_event_receipt WHERE id=$1 AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4`, receiptID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID).Scan(&original.PrincipalID, &original.SceneID, &original.Route, &original.State, &original.Reason, &original.ConfigVersion)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return "source_receipt_missing", nil
 			}
 			if err != nil {
 				return "", err
 			}
-			if original.PrincipalID != principal || util.UUIDToString(original.SceneID) != b.SceneID || original.Route != eventrouter.Unified || original.State != eventrouter.Ready {
+			resolvedRoute := original.Route == eventrouter.Unified && original.State == eventrouter.Ready || original.Route == eventrouter.Legacy && original.State == eventrouter.Legacy
+			if original.PrincipalID != principal || util.UUIDToString(original.SceneID) != b.SceneID || original.Reason != "" || !resolvedRoute {
 				return "source_receipt_mismatch", nil
 			}
 			b.SourceReceiptID, b.PrincipalID, b.Original = item.ReceiptID, principal, original

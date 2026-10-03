@@ -34,12 +34,14 @@ func (s *Store) RecordExecutionFact(ctx context.Context, fact ExecutionFact) (Co
 		return Consumption{}, false, mapError(err)
 	}
 	args := append(scopeArgs(fact.Scope), fact.ReceiptID, fact.PrincipalID)
-	var receiptState, category string
+	var receiptRoute, receiptState, receiptReason, category string
 	var payloadMatches bool
-	if err = tx.QueryRow(ctx, `SELECT state,envelope->>'category',envelope->'payload'=$7::jsonb FROM scene_event_receipt WHERE `+receiptScopeWhere+` AND id=$5::uuid AND principal_id=$6::uuid FOR UPDATE`, append(args, fact.Payload)...).Scan(&receiptState, &category, &payloadMatches); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT route,state,reason,envelope->>'category',envelope->'payload'=$7::jsonb FROM scene_event_receipt WHERE `+receiptScopeWhere+` AND id=$5::uuid AND principal_id=$6::uuid FOR UPDATE`, append(args, fact.Payload)...).Scan(&receiptRoute, &receiptState, &receiptReason, &category, &payloadMatches); err != nil {
 		return Consumption{}, false, mapError(err)
 	}
-	if category != eventrouter.RunCallback || (fact.State == "completed" && (receiptState != eventrouter.Ready || fact.Scope.SceneID == "")) {
+	// Provider routing is independent of the frozen Employee work owner.
+	resolvedRoute := receiptRoute == eventrouter.Unified && receiptState == eventrouter.Ready || receiptRoute == eventrouter.Legacy && receiptState == eventrouter.Legacy
+	if category != eventrouter.RunCallback || (fact.State == "completed" && (!resolvedRoute || receiptReason != "" || fact.Scope.SceneID == "")) {
 		return Consumption{}, false, ErrInvalid
 	}
 	if !payloadMatches {

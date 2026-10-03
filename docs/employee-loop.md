@@ -59,7 +59,9 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 可验证原场域来源的 Employee Direct Run 终态，由现有周期恢复入口补录 `employee.execution` / `execution.terminal` 事件。幂等键是 Run ID；payload 只含原 task/run/queue、goal revision、result_ref、scene、job 和原 receipt 引用，occurred_at 使用 Run 的数据库完成时间。当前 Task revision 只在消费时判定，不进入事实指纹。结果正文保留在原记录中，不重复导出。
 
-Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_started` 账本来源和已提交 `dispatch_task` tool journal 的来源及三个结果 ID。当前处理模式或成员资格变化不替换原 principal/owner，不授权新工作。正常事实和旧目标事实写 `completed`，场域缺失或 tenant 不再匹配写 `held`；两者均 `job_id=NULL`，不进入消息窗口或模型。缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`（version、run_id、固定 reason），保留 `employee_direct_input` 和其他 context；此标记不证明事件消费或消息送达。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
+Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_started` 账本来源和已提交 `dispatch_task` tool journal 的来源及三个结果 ID。provider route 与 Loop owner 独立：具有原目录 scene、空 reason 及完整来源证明的 `legacy/legacy` 和 `unified/ready` receipt 均可承载 Employee 消费，后续事实保留原 route；unmapped、主体或来源错配不能据此通过。当前处理模式或成员资格变化不替换原 principal/owner，不授权新工作。租户围栏复用 `fencedScene/agentTenantOrg`，认可身份组织和已为该 Agent 创建的 tenant；原 DWS 身份缺失仍 held，不借用 robot 的无身份回退。正常事实和旧目标事实写 `completed`，已确认的场域缺失或 tenant 不再匹配写 `held`；临时数据库错误和取消返回可重试错误，回滚不保存 held。两种消费均 `job_id=NULL`，不进入消息窗口或模型。
+
+缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`，保留 `employee_direct_input` 和其他 context。`version=1` 表示兼容存储格式，`proof_version=2` 表示本次来源校验版本，另有 run_id 和固定 reason；此标记不证明事件消费或消息送达。新扫描会重评缺少 proof_version 的旧误判，只将同 Run 的当前或更高 proof_version 作为最终 skip，不降级较新证明。旧副本仍识别 version=1，故不会覆盖新证明而形成滚动降级循环；IM marker 保持 5。合法旧 Run 通过重评后，由原子提交的新事实 receipt 阻止重复消费，历史旧 skip 不再控制结果。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
 
 事实及消费同事务提交。提交后 SLS 记录 `employee_execution_event_recorded` 的状态、原因和关联 ID；已受理事实在原 `employee_loop` job trace 中记录零时长 Event，并复用 Langfuse index 关联 Run、queue、新旧 receipt。重投不重复记录成功，回滚不导出成功；观测导出仍是尽力而为，PostgreSQL 记录是事实依据。没有 generation、token usage、新模型 job 或重复通知，结果通知及文件静音继续由既有 notice 路径决定。
 
