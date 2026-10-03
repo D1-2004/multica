@@ -87,8 +87,7 @@ type EmployeeSceneWorker struct {
 func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeSceneWorker {
 	database, _ := employeeEntryDB(h)
 	origins := employeeentry.NewTaskOriginRegistry()
-	// A fresh registry cannot already hold this namespace.
-	_ = origins.Register(employeeentry.TaskOriginNamespace, employeeSceneTaskOriginReader{})
+	origins.MustRegister(employeeentry.TaskOriginNamespace, employeeSceneTaskOriginReader{})
 	return &EmployeeSceneWorker{handler: h, store: employeeentry.NewStore(database), model: model, origins: origins, wake: make(chan struct{}, 1), done: make(chan struct{})}
 }
 func (w *EmployeeSceneWorker) Notify() {

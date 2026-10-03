@@ -105,6 +105,15 @@ func NewTaskOriginRegistry() *TaskOriginRegistry {
 	return &TaskOriginRegistry{readers: map[string]TaskOriginReader{}}
 }
 
+// MustRegister installs reader for namespace at wiring time and panics on a
+// duplicate or invalid registration, so two readers for one namespace fail
+// startup instead of one of them being silently ignored.
+func (r *TaskOriginRegistry) MustRegister(namespace string, reader TaskOriginReader) {
+	if err := r.Register(namespace, reader); err != nil {
+		panic("employee task origin registry: " + namespace + ": " + err.Error())
+	}
+}
+
 // Register installs reader for namespace once; a second reader is an error.
 func (r *TaskOriginRegistry) Register(namespace string, reader TaskOriginReader) error {
 	if r == nil || reader == nil || namespace == "" || strings.TrimSpace(namespace) != namespace {
