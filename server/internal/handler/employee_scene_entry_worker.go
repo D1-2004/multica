@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:9]"
+const EmployeeLoopReplicaMarker = "[employee-loop:10]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
@@ -308,6 +308,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		return employeeSavedInput{}, errEmployeeWindowTooLarge
 	}
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: employeeSceneTools()}}
+	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
@@ -328,7 +329,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
 	if err != nil {
-		input.Input.RecentConversation = "Recent conversation history unavailable."
+		input.Input.RecentConversation = employeeloop.RecentConversationUnavailable
 	}
 	agentID := parseUUID(job.Scope.AgentID)
 	agent, err := w.handler.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
