@@ -1,0 +1,163 @@
+{
+  "schema": "el2e.registry.v1",
+  "updated_at": "2026-10-03",
+  "note": "Identifiers only, never tokens. openDingTalkId values are observer-relative: always use the id seen by the sending/reading actor.",
+  "env": {
+    "server": "https://pre-fde-workbench.dingtalk.com",
+    "multica_profile": "pre-fde",
+    "workspace_id": "5f8b5b73-f912-4879-9a29-b763d103fedf",
+    "langfuse_environment": "pre",
+    "langfuse_lookup": ".agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py",
+    "sls": {
+      "project": "dt-fde-multica-sls",
+      "logstore": "application-log",
+      "prehost_tag": "acni_ag_dt-fde-multica_default_prehost"
+    },
+    "pods": [
+      "dt-fde-multica033008056137.pre.na620",
+      "dt-fde-multica033060149134.pre.na620"
+    ],
+    "pipeline": {
+      "app_id": 342160,
+      "pipeline_id": 66
+    },
+    "dws_gateway": "prod only (private DWS_CONFIG_DIR without mcp_url); never switch pre / restore"
+  },
+  "employee": {
+    "name": "Qwen-Real",
+    "agent_id": "33af235e-e03b-4be2-be3b-bbae8b97fce5",
+    "agent_name": "Tag · RealNiubility",
+    "tag_tenant_id": "cc357586-119c-4b7e-8f04-c6be51865088",
+    "tenant_org_id": "44675729",
+    "corp_id": "dinge033bd8ae2430d9b35c2f4657eb6378f",
+    "dws_user_id": "507523443",
+    "deap_agent_uuid": "9b22e245-2071-4f62-9b3c-9063acf14d1f",
+    "runtime_id": "b706c1f6-186d-476a-847a-8b36b4aba05c",
+    "open_ids": {
+      "zhujue": "DiiD01p03EN0Ptovr5QG6B7lyYOffx4WWW",
+      "director": "Do124gHNiPwuH7gthaNiShnhb7SiPchjJtNE"
+    },
+    "routines": [
+      {
+        "id": "e02d1d7b-adb8-4a7f-bdb0-0e940e8837ba",
+        "conversation": "dm_zhujue",
+        "cron": "0 * * * *",
+        "name": "每小时对话汇报",
+        "note": "posts shortly after every full hour; the grader flags unquoted employee posts in HH:00-HH:06 as routine"
+      }
+    ]
+  },
+  "actors": {
+    "zhujue": {
+      "label": "冬翔 (主角, cross-org profile in the 钉钉 org acting in RealNiubility)",
+      "profile": "ding8196cd9a2b2405da24f2f5cc6abecb85:103262",
+      "kind": "human",
+      "realniubility_staff_id": "0104644667680872",
+      "open_ids": {
+        "director": "DiiMSMHAUrTDg3IiStruJG1kFc8SBvF3ZnF",
+        "self": "DiiD01p03EN0O0zGM31JVCEKiiZiPe4MyhSU"
+      },
+      "realniubility_user_id": "0104644667680872"
+    },
+    "director": {
+      "label": "DingTalk-FDE Director",
+      "profile": "dinge033bd8ae2430d9b35c2f4657eb6378f:014228605753392760936",
+      "kind": "human",
+      "note": "Also the execution identity of prod DWH-E2E agents 0ec8a7cb/f5a8d068 (route revoked/unbound, native stream off).",
+      "open_ids": {
+        "zhujue": "DiiD01p03EN0NPvpEvJzdiSVfqLwulT7VPP",
+        "self": "Do124gHNiPwuGcXiSZmYwBqDxrL7lDmtpPv"
+      }
+    },
+    "daiyu": {
+      "label": "红楼·林黛玉 (DEAP actor)",
+      "profile": "dinge033bd8ae2430d9b35c2f4657eb6378f:349329748",
+      "kind": "deap_actor",
+      "agent_uuid": "41b554af-df66-4c0b-9611-35229b9f36cf",
+      "open_ids": {
+        "director": "Do124gHNiPwuH7gthaNiShnhaye1bpB32kc"
+      }
+    }
+  },
+  "deap_pool": {
+    "pool_file": "~/github/multica-dwh-agents/e2e/deap-pool-2026-09-19.json",
+    "size": 50,
+    "creator": "DingTalk-FDE Director",
+    "lease_board": {
+      "issue_id": "5598799a-eedb-42a3-be05-8510fccfa180",
+      "workspace_id": "1ccd28c9-0def-4d14-a4d4-f83df980ea42",
+      "profile": "fde-prod",
+      "tool": "~/github/multica-dwh-agents/tools/actor_lease.py",
+      "rule": "pick actors with no live lease; never connect, publish or edit an actor"
+    },
+    "login_recipe": "python3 ~/.agents/skills/dws-env/scripts/dws_env.py as 'Real Niubility/DingTalk-FDE Director' -- dingtalk-tag manage login --agent-uuid <agentUuid> --format json  (adds profile <corpId>:<staffId>; then `e2e.py gw prepare` re-syncs the private gateway dir)",
+    "limits": [
+      "cannot @ anyone; use only for non-@ group lines",
+      "DE<->DE DM does not work; Qwen-Real is a DE, so never DM it from an actor",
+      "an unconnected local_agent actor auto-replies a fixed template when DM'd",
+      "joining a group posts intro / '暂无可展示的最终产物' placeholder cards (filtered by the grader)",
+      "one event-stream consumer per actor: never connect it"
+    ]
+  },
+  "conversations": {
+    "dm_zhujue": {
+      "kind": "dm",
+      "cid": "cidCM1fyRb/UMY8GtXz1g5R5ttlJGj6kEgpcpS/68bbflE=",
+      "scene_id": "e961aa28-b1a6-4755-bbe7-00afdaca72dd",
+      "members": [
+        "zhujue"
+      ],
+      "readers": [
+        "zhujue"
+      ]
+    },
+    "dm_director": {
+      "kind": "dm",
+      "cid": "cidBn1mvnN6r1VpSh5GVL/1RzYuPSPZDOvFn6RI1rlNLvQ=",
+      "scene_id": "01e7b93f-6aa5-437f-8f1a-f186a25b400f",
+      "members": [
+        "director"
+      ],
+      "readers": [
+        "director"
+      ],
+      "opened_at": "2026-10-03T18:10:21+08:00"
+    },
+    "group_e2e": {
+      "kind": "group",
+      "name": "EL-E2E-1003",
+      "cid": "cidTpcOVp1CjVKVmm1OYVjV3w==",
+      "scene_id": "61e3c567-d132-4109-9d51-9783a938b0e3",
+      "members": [
+        "zhujue",
+        "director"
+      ],
+      "readers": [
+        "director",
+        "zhujue"
+      ],
+      "created_by": "director",
+      "created_at": "2026-10-03T18:05:31+08:00",
+      "other_members": [
+        "AI小钉 (default intelligent bot added by group creation)"
+      ],
+      "note": "Qwen-Real posted its join introduction at 18:05:32; 主角 needs `chat data-auth cross-org --all --grant-type timed --ttl 24h` to read/send"
+    },
+    "group_de_probe": {
+      "kind": "group",
+      "name": "EL-E2E-1003-DE",
+      "cid": "cid1aKA0Jmc1HO3/G3BrfyTHg==",
+      "scene_id": null,
+      "members": [
+        "director",
+        "daiyu"
+      ],
+      "readers": [
+        "director"
+      ],
+      "created_by": "director",
+      "created_at": "2026-10-03T18:20:30+08:00",
+      "note": "DEAP-actor probe group (Director + Qwen-Real + 红楼·林黛玉); used to test DE-sent group lines and quote-reply auto-@"
+    }
+  }
+}

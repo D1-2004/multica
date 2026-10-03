@@ -1,0 +1,5 @@
+{
+  "schema": "el2e.known_gaps.v1",
+  "note": "Ratchet: a known gap that starts passing must be removed here in the same change. CI/graders fail only on unexpected results.",
+  "gaps": {}
+}
