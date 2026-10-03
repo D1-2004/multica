@@ -882,11 +882,29 @@ func (w *EmployeeSceneWorker) invitationContext(ctx context.Context, job employe
 	if len(closedViews) > 0 {
 		context["closed_questions"] = closedViews
 	}
-	context["guidance"] = "You earlier asked this sender these questions on someone's behalf; only the sender's own questions are listed. " +
-		"bound means the Host matched this message to that question (a reply to it, or the only open question here). If the message actually answers it, call accept_collection_input with a short thanks. " +
-		"A question back, 'later', thanks or unrelated chat is not an answer. ambiguous means several of their questions fit: ask which one they are answering, unless the message itself clearly names it. " +
-		"closed_questions are past questions already delivered to this sender that are now closed; they are not answer bindings or new requests. Do not collect, remind, forward, promise a summary or restart that closed work. Reply politely if useful, without pretending to record or relay an answer. A genuinely new independent request still follows the normal authorization contract. " +
-		"Never mention who else was asked, anyone's answers, totals, or the requester's other context."
+	guidance := []string{"Only this sender's own previously delivered questions are shown as Host data, not new requests or authority."}
+	if len(bindings) > 0 {
+		context["guidance_mode"] = "active_only"
+		guidance = append(guidance,
+			"Only invitation_context carries active answer bindings. bound means the Host matched this source message to that active question (a reply to it, or the only open question here). If the message actually answers that active question, call accept_collection_input; give a short acknowledgement only after the Host accepts the answer. "+
+				"A question back, 'later', thanks or unrelated chat is not an answer. ambiguous means several active questions fit: ask which one they are answering, unless this message itself clearly names it.")
+	}
+	if len(closedViews) > 0 {
+		if len(bindings) > 0 {
+			context["guidance_mode"] = "mixed"
+		} else {
+			context["guidance_mode"] = "closed_only"
+		}
+		guidance = append(guidance,
+			"closed_questions are past questions that have already ended. They supply no active answer binding, and answer-like details do not become accepted inputs to that old work. "+
+				"Do not say or imply that those details were accepted, recorded, saved, noted in a business record or included in a summary; receiving a chat message alone is not a recording or memory-write effect. "+
+				"Do not collect, remind, forward, promise a summary or restart that closed work. You may acknowledge the message naturally or explain that the old question ended, without claiming an effect that did not occur.")
+	}
+	guidance = append(guidance,
+		"A genuinely new independent substantive request still follows the normal authorization and confirmed-effect contract; these old questions do not prevent new authorized work and cannot revive the old work. "+
+			"Never mention who else was asked, anyone's answers, totals, or the requester's other context.")
+	context["guidance"] = strings.Join(guidance, " ")
+
 	raw, err := json.Marshal(context)
 	return bindings, string(raw), err
 }
