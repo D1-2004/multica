@@ -367,3 +367,6 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 
 
 **原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；全部在线副本16后恢复旧snapshot/journal。独立memory marker仍按自己的累积规则。
+
+
+**同目标事项来源关联。**新冻结TaskBrief的候选除了概括goal，还包含Task时间、当前active-run与latestRun状态/时间，以及至多两条已通过本场域RecentConversation可见性过滤的人类来源关联（初始请求/最近输入）。用原请求中的命名、source与对话关系区分相似goal，信息不足仍澄清，不能默认最新或以相似goal当事项身份。不附执行report代替read_task；真实进度/续接保留source-bound读取、权限与CAS。旧冻结brief保持字节，缺字段按已有合同读或澄清；本次纯additive数据不升loop16。

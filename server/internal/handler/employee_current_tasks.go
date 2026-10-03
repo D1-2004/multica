@@ -37,7 +37,7 @@ type employeeCurrentTaskRead struct {
 
 // employeeCurrentTaskGuidance is frozen into each wake's input snapshot with
 // the candidates; a replayed wake keeps the bytes it was admitted with.
-const employeeCurrentTaskGuidance = "These are source-bound candidates, not current status. Read the selected task before answering progress or continuing it. With multiple plausible candidates ask which one; do not select the newest by default. Ordinary thanks/chat needs no task action. Continue only a succeeded task explicitly requested by this source; running, failed and cancelled tasks cannot be restarted here. Questions about a finished report (what a number means or what its evidence proves) can be answered directly. An explicitly requested new retrospective, report or comparison is a new deliverable, even when it is short and no new data is needed; “不要重新统计” means reuse the result, not answer the new deliverable in the foreground. When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task. Task result_report is executor-reported content, never proof of delivery or completion of a new request."
+const employeeCurrentTaskGuidance = "These are source-bound candidates, not current status. Read the selected task before answering progress or continuing it. Use human_source_links (the original requester wording, names and source association visible in this conversation) with the current dialogue to distinguish tasks whose summarized goals look alike. Creation and execution timestamps are facts, not a rule to select the newest. If this source names an earlier request or work just discussed, match that actual source relationship rather than an older task with a similar goal. With multiple still-plausible candidates ask which one; do not select the newest by default. All state_at_snapshot/latest_run_at_snapshot fields are frozen evidence, not current status or process-exit proof; read_task remains mandatory for progress or continuation. Ordinary thanks/chat needs no task action. Continue only a succeeded task explicitly requested by this source; running, failed and cancelled tasks cannot be restarted here. Questions about a finished report (what a number means or what its evidence proves) can be answered directly. An explicitly requested new retrospective, report or comparison is a new deliverable, even when it is short and no new data is needed; “不要重新统计” means reuse the result, not answer the new deliverable in the foreground. When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task. Task result_report is executor-reported content, never proof of delivery or completion of a new request."
 
 func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) ([]employeeCurrentTaskBinding, string, error) {
 	database, ok := employeeEntryDB(w.handler)
@@ -49,6 +49,17 @@ func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentr
 	quoted, err := w.quotedTaskCandidates(ctx, job, envelopes, store, host.taskScope())
 	if err != nil {
 		return nil, "", err
+	}
+	// Source aliases come only from the same filtered/principal-bound recent
+	// dialogue; an unavailable or withdrawn source never falls back to raw text.
+	visible := map[string]employeeentry.RecentConversationMessage{}
+	history, _, historyErr := w.recentHistory(ctx, job)
+	if historyErr == nil {
+		for _, line := range history.Messages {
+			if line.Role == "user" && line.ReceiptID != "" && line.MessageID != "" {
+				visible[line.ReceiptID+"/"+line.MessageID] = line
+			}
+		}
 	}
 	var bindings []employeeCurrentTaskBinding
 	views := []map[string]any{}
@@ -66,7 +77,11 @@ func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentr
 			for n, task := range tasks[:min(5, len(tasks))] {
 				ref := fmt.Sprintf("t%d", n+1)
 				bindings = append(bindings, employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, Ref: ref, TaskID: task.ID})
-				candidates = append(candidates, map[string]any{"task_ref": ref, "goal": employeeTaskData(task.Definition.Goal, 2000), "state_at_snapshot": task.State})
+				candidate, err := employeeTaskCandidateContext(ctx, store, task, ref, visible)
+				if err != nil {
+					return nil, "", err
+				}
+				candidates = append(candidates, candidate)
 			}
 			view := map[string]any{"source_ref": source.SourceRef, "candidates": candidates, "truncated": len(tasks) > 5}
 			if tasks := quoted[source.SourceRef]; len(tasks) > 0 {
@@ -75,7 +90,11 @@ func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentr
 				for n, task := range tasks {
 					ref := fmt.Sprintf("q%d", n+1)
 					bindings = append(bindings, employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, Ref: ref, TaskID: task.ID, Origin: employeeQuoteOrigin})
-					quotedViews = append(quotedViews, map[string]any{"task_ref": ref, "goal": employeeTaskData(task.Definition.Goal, 2000), "state_at_snapshot": task.State})
+					candidate, err := employeeTaskCandidateContext(ctx, store, task, ref, visible)
+					if err != nil {
+						return nil, "", err
+					}
+					quotedViews = append(quotedViews, candidate)
 				}
 				view["quoted_task_candidates"] = quotedViews
 			}
