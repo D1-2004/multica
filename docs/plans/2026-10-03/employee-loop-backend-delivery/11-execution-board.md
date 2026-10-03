@@ -2,6 +2,20 @@
 
 本文件记录 2026-10-03 起主代理（Coordinator）实际执行本计划时采用的事实和约定。它覆盖 Step 0 与 00-context 中写于另一台机器、已经过时的部分。产品验收仍以 [10-delivery-standard.md](10-delivery-standard.md) 为准。
 
+## 最新接续核对（2026-10-04）
+
+本节更新下面历史批次记录的进度；完整事实、纠偏、证据和继续顺序见 [15-codex-resume-assessment.md](15-codex-resume-assessment.md)。
+
+- 第五批生产代码 `a4c3aa4dab` 已部署。远端/交付 HEAD 现为 `44566d0bf7`，新增两笔资料文档，生产代码未再变化。
+- run `3110352822` 部署 SUCCESS，预发验证 WAITING；两个 live 副本均有 loop:15 和 memory:1/2/3。本轮没有关验证门。
+- Qwen-Real 已 Apply revision 11、绑定 runtime `461aabb2`；Tag·钉钉仍 revision 10。例行任务 `e02d1d7b` 已启用。
+- 23:00 新 runtime 自动任务的 Run/Task、Langfuse 与真实 IM 已对应；SLS 已补两副本启动窗口，CRON-04 pass。其他七包未完成，不宣称第五批验收完成。
+- 原计划三笔“遗漏补丁”已有等价实现，不再拣；旧审查四项已修，H2 混版来源冻结与历史迁移风险单列。
+- Q harness 五笔提交及六个脏文件仍待收口。已交付默认 dry-run 为 30 runnable/15 partial/28 blocked_harness/15 waiting_ops；51 ready 是静态标签。
+- 历史 rel-b4 的 13 NEW 重算为 7 个未解释失败；int-b5 定向 256 pass 不覆盖其中四条 service，待定向归因。
+- 后续按 [Employee 交付工作流](../../../employee-delivery-workflow.md) 推进。四条 service 在独立本地库实跑均 FAIL，三项 fixture/合同期待过时、一项真实 retry/reconciler 并发缺陷，已进入 [16 修复切片](16-service-retry-repair.md)。
+- M8 的 group_all probe allowed；实际未 @ 摄入还未验证。group_p_hx 服务端无 scene，先按真实 @ 入站建立夹具再开业务验证；临时账号与场域事实逐波读回。
+
 ## 1. 协作方式
 
 - 子代理只在自己的 git worktree 里开发，在本地提交到自己的分支，然后交给主代理。
