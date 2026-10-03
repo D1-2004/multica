@@ -952,9 +952,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
-	employeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
+	// Only snapshots created before model routing retain the old transport.
+	// Every new Employee wake freezes the Coordinator registry's effective chain.
+	legacyEmployeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
 	h.EmployeeMemory = employeememory.NewStore(pool)
-	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, employeeModel)
+	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
+	h.EmployeeSceneWorker.ModelRoutes = h.Models
 	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
@@ -965,13 +968,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:5")
+			return errors.New("live server replicas do not all support employee-loop:6")
 		}
 		return nil
 	}
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
+	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {
@@ -2386,6 +2390,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+			r.Get("/agents/{agentId}/github-installations", h.ListContextConfigGitHubInstallations)
 			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
 			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
 			// Official apps added and connected from the page.
@@ -3086,6 +3091,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/github-installations", h.ListAgentGitHubInstallations)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.ListAgentContextRoutines)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.CreateAgentContextRoutine)

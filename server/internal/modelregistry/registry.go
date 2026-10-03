@@ -53,9 +53,12 @@ type Snapshot struct {
 	Keys   map[string]string
 }
 type Registry struct {
-	Pool     *pgxpool.Pool
-	Box      *secretbox.Box
-	Defaults func() Snapshot
+	// Package tests may replace only the transport after URL validation.
+	// Production keeps HTTPClient DNS pinning and redirect protection.
+	coordinatorTransport http.RoundTripper
+	Pool                 *pgxpool.Pool
+	Box                  *secretbox.Box
+	Defaults             func() Snapshot
 }
 
 var ErrConflict = errors.New("model configuration changed; reload before saving")

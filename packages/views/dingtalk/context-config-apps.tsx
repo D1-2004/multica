@@ -1,11 +1,12 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { Copy, ExternalLink, KeyRound, Link2, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorCode } from "@multica/core/api";
 import {
+  contextConfigGitHubInstallationsOptions,
   contextConfigOAuthAppOptions,
   useAddContextConfigApp,
   useDeleteContextConfigOAuthApp,
@@ -1130,25 +1131,128 @@ function OAuthConnectionControl({
         </div>
       )}
 
-      {connector.catalogSlug === "github" && !readOnly && (
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.context_config.install_hint)}
-          {connector.installUrl && (
-            <>
-              {" "}
-              <a
-                href={connector.installUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
-              >
-                {t(($) => $.context_config.install_link)}
-                <ExternalLink className="size-3" />
-              </a>
-            </>
-          )}
-        </p>
-      )}
+      {connector.catalogSlug === "github" && !readOnly &&
+        (credential ? (
+          <GitHubAppInstallations
+            agentId={agentId}
+            scopeType={scopeType}
+            scopeKey={scopeKey}
+            orgId={orgId}
+            connectorId={connector.id}
+            installUrl={connector.installUrl}
+          />
+        ) : (
+          <GitHubInstallHint installUrl={connector.installUrl} />
+        ))}
+    </div>
+  );
+}
+
+function GitHubInstallLink({ url, label }: { url: string; label: string }) {
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+    >
+      {label}
+      <ExternalLink className="size-3" />
+    </a>
+  );
+}
+
+/** Shown before a GitHub account is connected: where the app has to be installed. */
+function GitHubInstallHint({ installUrl }: { installUrl: string }) {
+  const { t } = useT("agents");
+  return (
+    <p className="text-caption text-muted-foreground">
+      {t(($) => $.context_config.install_hint)}{" "}
+      <GitHubInstallLink url={installUrl} label={t(($) => $.context_config.install_link)} />
+    </p>
+  );
+}
+
+/**
+ * Installations the stored GitHub App user token already covers. One
+ * authorization lists every account and organization; private and other-org
+ * repositories appear after the app is installed there.
+ */
+function GitHubAppInstallations({
+  agentId,
+  scopeType,
+  scopeKey,
+  orgId,
+  connectorId,
+  installUrl,
+}: {
+  agentId: string;
+  scopeType: ContextWriteScopeType;
+  scopeKey: string;
+  orgId: string;
+  connectorId: string;
+  installUrl: string;
+}) {
+  const { t } = useT("agents");
+  const query = useQuery(
+    contextConfigGitHubInstallationsOptions(agentId, { scopeType, scopeKey, ...orgField(orgId) }, connectorId),
+  );
+  const data = query.data;
+  let body: ReactNode;
+  if (query.isPending) {
+    body = (
+      <p className="flex items-center gap-2" role="status">
+        <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+        {t(($) => $.context_config.install_loading)}
+      </p>
+    );
+  } else if (query.isError || !data || (data.error !== "" && data.error !== "reconnect" && data.error !== "not_github_app_token")) {
+    body = <p>{t(($) => $.context_config.install_failed)}</p>;
+  } else if (data.error === "reconnect") {
+    body = <p>{t(($) => $.context_config.install_reconnect)}</p>;
+  } else if (data.error === "not_github_app_token") {
+    body = <p>{t(($) => $.context_config.install_pat)}</p>;
+  } else {
+    body = (
+      <>
+        <p>{t(($) => $.context_config.install_covers)}</p>
+        {data.installations.length === 0 ? (
+          <p>{t(($) => $.context_config.install_empty)}</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.installations.map((item) => (
+              <li key={item.id}>
+                <span className="font-medium text-foreground">@{item.accountLogin}</span>
+                {" · "}
+                {item.accountType === "Organization"
+                  ? t(($) => $.context_config.install_org)
+                  : t(($) => $.context_config.install_user)}
+                {" · "}
+                {item.repositorySelection === "selected"
+                  ? t(($) => $.context_config.install_selected)
+                  : t(($) => $.context_config.install_all)}
+                {item.settingsUrl ? (
+                  <>
+                    {" "}
+                    <GitHubInstallLink url={item.settingsUrl} label={t(($) => $.context_config.install_settings)} />
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        {data.truncated ? <p>{t(($) => $.context_config.install_truncated)}</p> : null}
+      </>
+    );
+  }
+  return (
+    <div className="space-y-1.5 text-caption text-muted-foreground">
+      <p>
+        {t(($) => $.context_config.install_hint)}{" "}
+        <GitHubInstallLink url={installUrl} label={t(($) => $.context_config.install_link)} />
+      </p>
+      {body}
     </div>
   );
 }

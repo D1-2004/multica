@@ -1484,8 +1484,8 @@
     "agent_models": "Agent model choices",
     "agent_help": "Selected models appear in Agent settings. Migrate existing agents before removing a model in use.",
     "default_model": "Default model",
-    "coordinator": "Coordinator models",
-    "chain_help": "Configure the primary and fallback models in order. Failed calls try the next model without repeating completed actions.",
+    "coordinator": "Coordinator / EmployeeLoop のモデル",
+    "chain_help": "Coordinator と EmployeeLoop は同じプライマリモデルとフォールバックモデルの順序を使用します。呼び出しが失敗すると次のモデルを試し、完了済みの操作は繰り返しません。",
     "add_fallback": "Add fallback model",
     "last_diamond": "Use the Diamond default as the final fallback",
     "save": "Save global settings",
@@ -1517,8 +1517,8 @@
     "catalog_count": "Showing {{visible}} / {{total}} models",
     "discovering": "Discovering and checking…",
     "bailian_discovered": "Bailian: checked {{checked}} text/tool models, kept {{count}}; {{unavailable}} rejected, {{unverified}} unverified. Save to apply.",
-    "diamond_help": "Append the Diamond Coordinator model after this fallback chain, skipping duplicates. It is also used before global models are configured.",
-    "coordinator_choice": "Coordinator model {{index}}"
+    "diamond_help": "Coordinator / EmployeeLoop 共通のフォールバック順序の末尾に、Diamond の Coordinator モデルを重複なしで追加します。グローバルモデルが未設定の場合も、両方でこの既定モデルを使用します。",
+    "coordinator_choice": "Coordinator / EmployeeLoop のモデル {{index}}"
   },
   "tag": {
     "title": "Tag",

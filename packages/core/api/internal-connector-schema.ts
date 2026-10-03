@@ -209,6 +209,63 @@ export const ConnectorAuthorizeUrlSchema = z
   .transform((value) => safeExternalUrl(value.authorize_url))
   .pipe(z.string().min(1));
 
+/** One GitHub App installation covered by a stored connector user token. */
+export interface ContextGitHubInstallation {
+  id: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: string;
+  settingsUrl: string;
+}
+
+/** Installations of the GitHub App for one scene, org, or person credential. */
+export interface ContextGitHubInstallations {
+  connected: boolean;
+  installations: ContextGitHubInstallation[];
+  /** "" | "reconnect" | "not_github_app_token", or another code the page treats as a failure. */
+  error: string;
+  truncated: boolean;
+}
+
+export const EMPTY_CONTEXT_GITHUB_INSTALLATIONS: ContextGitHubInstallations = {
+  connected: false,
+  installations: [],
+  error: "malformed",
+  truncated: false,
+};
+
+export const ContextGitHubInstallationsSchema = z
+  .object({
+    connected: z.boolean(),
+    installations: z
+      .array(
+        z.object({
+          id: z.number().int(),
+          account_login: z.string(),
+          account_type: z.string(),
+          repository_selection: z.string(),
+          settings_url: z.string(),
+        }),
+      )
+      .default([]),
+    error: z.string().optional().default(""),
+    truncated: z.boolean().optional().default(false),
+  })
+  .transform(
+    (value): ContextGitHubInstallations => ({
+      connected: value.connected,
+      installations: value.installations.map((item) => ({
+        id: item.id,
+        accountLogin: item.account_login,
+        accountType: item.account_type,
+        repositorySelection: item.repository_selection,
+        settingsUrl: safeExternalUrl(item.settings_url),
+      })),
+      error: value.error,
+      truncated: value.truncated,
+    }),
+  );
+
 export interface InternalConnectorToolsRefresh {
   /** Tools the upstream server listed. */
   discovered: number;

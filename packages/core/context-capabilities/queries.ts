@@ -25,6 +25,9 @@ export const contextConfigKeys = {
   /** A scene's own OAuth application of an official app. */
   oauthApp: (agentId: string, slug: string, scopeKey: string, orgId: string) =>
     [...contextConfigKeys.agent(agentId), "oauth-app", slug, scopeKey, orgId] as const,
+  /** GitHub App installations of one configure-page credential. */
+  githubInstallations: (agentId: string, scopeKey: string, orgId: string, connectorId: string) =>
+    [...contextConfigKeys.agent(agentId), "github-installations", scopeKey, orgId, connectorId] as const,
   /** A scene's routines (例行任务). */
   sceneRoutines: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scene(agentId, sceneId), "routines"] as const,
@@ -209,6 +212,21 @@ export function contextConfigOAuthAppOptions(agentId: string, slug: string, scop
     queryKey: contextConfigKeys.oauthApp(agentId, slug, scope.scopeKey, scope.orgId ?? ""),
     queryFn: () => api.getContextConfigOAuthApp(agentId, slug, scope),
     enabled: Boolean(agentId && slug && scope.scopeKey),
+  });
+}
+
+/** GitHub App installations covered by one credential. One authorization
+ * already covers every installation the token can access. */
+export function contextConfigGitHubInstallationsOptions(
+  agentId: string,
+  scope: ContextConfigScopeInput,
+  connectorId: string,
+) {
+  return queryOptions({
+    queryKey: contextConfigKeys.githubInstallations(agentId, scope.scopeKey, scope.orgId ?? "", connectorId),
+    queryFn: () => api.listContextGitHubInstallations(agentId, scope, connectorId),
+    enabled: Boolean(agentId && scope.scopeKey && connectorId),
+    staleTime: 30_000,
   });
 }
 

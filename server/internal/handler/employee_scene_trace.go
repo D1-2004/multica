@@ -50,6 +50,9 @@ func employeeTraceFinish(trace *langfuse.Trace, saved employeeSavedOutcome, comm
 			state = "quiet_committed"
 		}
 	}
+	if err == nil && saved.Failure != "" {
+		err = errors.New(saved.Failure)
+	}
 	trace.End(langfuse.EndOptions{Output: employeeTraceSafe(map[string]any{"state": state, "decision": saved.Outcome.Decision, "failure": saved.Failure}), Err: employeeTraceError(err)})
 }
 
@@ -59,7 +62,7 @@ func employeeTracePayloadMetadata(key string, value any) map[string]any {
 	raw, _ := json.Marshal(value)
 	return map[string]any{key + "_bytes": len(raw), key + "_truncated": len(raw) > 64<<10}
 }
-func employeeTraceGeneration(ctx context.Context, job employeeentry.Job, ordinal int, request openai.ChatCompletionNewParams) *langfuse.Observation {
+func employeeTraceGeneration(ctx context.Context, job employeeentry.Job, ordinal int, request openai.ChatCompletionNewParams, extra ...map[string]any) *langfuse.Observation {
 	input := employeeTraceSafe(request)
 	params := make(map[string]any)
 	if fields, ok := input.(map[string]any); ok {
@@ -71,6 +74,13 @@ func employeeTraceGeneration(ctx context.Context, job employeeentry.Job, ordinal
 	}
 	metadata := employeeTracePayloadMetadata("input", input)
 	metadata["ordinal"], metadata["lease_generation"] = ordinal, job.Generation
+	for _, fields := range extra {
+		for key, value := range fields {
+			if _, owned := metadata[key]; !owned {
+				metadata[key] = value
+			}
+		}
+	}
 	return langfuse.TraceFromContext(ctx).StartObservation(langfuse.ObservationOptions{
 		Type: langfuse.TypeGeneration, Name: "employee_model",
 		SpanID: langfuse.DeterministicSpanID(fmt.Sprintf("employee:%s:lease:%d:model:%d", job.ID, job.Generation, ordinal)),
