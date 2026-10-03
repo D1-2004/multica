@@ -17,8 +17,19 @@ func TestEmployeeVisionConfigDecodeIsStrict(t *testing.T) {
 	if err != nil || !cfg.allows("pi", "bailian/deepseek-v4.1-flash") || cfg.allows("pi", "mass/glm-5") || cfg.allows("codex", "bailian/deepseek-v4.1-flash") {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
-	if cfg, err = DecodeEmployeeVision(nil); err != nil || len(cfg.Executors) != 0 {
+	// Absent keeps the probe-verified code default; an explicit empty list
+	// disables vision.
+	if cfg, err = DecodeEmployeeVision(nil); err != nil || !cfg.allows("pi", "bailian/deepseek-v4.1-flash") || len(cfg.Executors) != 1 {
 		t.Fatal("absent config", cfg, err)
+	}
+	if cfg, err = DecodeEmployeeVision(json.RawMessage(`{"executors":[]}`)); err != nil || cfg.allows("pi", "bailian/deepseek-v4.1-flash") {
+		t.Fatal("empty override", cfg, err)
+	}
+	for _, e := range DefaultEmployeeVisionConfig().Executors {
+		raw, _ := json.Marshal(EmployeeVisionConfig{Executors: []EmployeeVisionExecutor{e}})
+		if _, err = DecodeEmployeeVision(raw); err != nil {
+			t.Fatal("code default fails its own validation", err)
+		}
 	}
 	for name, raw := range map[string]string{
 		"unknown field":   `{"executors":[],"models":["x"]}`,
@@ -50,7 +61,8 @@ func TestEmployeeVisionDeferredImagesReachTheBackgroundPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, cfg := range map[string]func() EmployeeVisionConfig{
-		"no config": nil,
+		"code default": nil,
+		"disabled":     func() EmployeeVisionConfig { return EmployeeVisionConfig{} },
 		"other model": func() EmployeeVisionConfig {
 			c := verified
 			c.Executors = []EmployeeVisionExecutor{{RuntimeProvider: "codex", Model: "mass/glm-5"}}

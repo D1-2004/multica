@@ -15,11 +15,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// EmployeeVisionConfig is runtime.employee_vision: the background executors
-// whose real image input a probe verified, each as an exact runtime provider
-// and agent model pair. An image reaches a model only through such a pair; a
-// model name alone never implies vision, and an absent config keeps images
-// unsupported.
+// EmployeeVisionConfig lists the background executors whose real image input
+// a probe verified, each as an exact runtime provider and agent model pair. An
+// image reaches a model only through such a pair; a model name alone never
+// implies vision. The code default below is the verified list;
+// runtime.employee_vision may override it (an empty list disables vision).
 type EmployeeVisionConfig struct {
 	Executors []EmployeeVisionExecutor `json:"executors"`
 }
@@ -32,13 +32,25 @@ type EmployeeVisionExecutor struct {
 	Evidence   string `json:"evidence"`
 }
 
+// DefaultEmployeeVisionConfig is the probe-verified list shipped with the
+// code. Add a pair only with a real background probe: an image carrying a
+// random code and a shape relation, both read back exactly.
+func DefaultEmployeeVisionConfig() EmployeeVisionConfig {
+	return EmployeeVisionConfig{Executors: []EmployeeVisionExecutor{{
+		RuntimeProvider: "pi",
+		Model:           "bailian/deepseek-v4.1-flash",
+		VerifiedAt:      "2026-10-03T19:59:47+08:00",
+		Evidence:        "预发 agent_task 67d3e5f0a43d4d118d7910f590afaf2d (Qwen-Real, FC Pi): dws drive download, Pi read tool image input; read code V5106-5DD7 and green square left / red circle right exactly",
+	}}}
+}
+
 // DecodeEmployeeVision strictly decodes runtime.employee_vision; absent or
-// null is an empty config.
+// null keeps the code default, and an explicit list replaces it.
 func DecodeEmployeeVision(raw json.RawMessage) (EmployeeVisionConfig, error) {
 	var cfg EmployeeVisionConfig
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
-		return cfg, nil
+		return DefaultEmployeeVisionConfig(), nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -77,10 +89,13 @@ func (c EmployeeVisionConfig) allows(runtimeProvider, model string) bool {
 // vision pair. The agent model must be explicit: a default resolved later
 // could differ from the probed model.
 func (w *EmployeeSceneWorker) visionReady(ctx context.Context, job employeeentry.Job) bool {
-	if w == nil || w.VisionConfig == nil || w.handler == nil || w.handler.Queries == nil {
+	if w == nil || w.handler == nil || w.handler.Queries == nil {
 		return false
 	}
-	cfg := w.VisionConfig()
+	cfg := DefaultEmployeeVisionConfig()
+	if w.VisionConfig != nil {
+		cfg = w.VisionConfig()
+	}
 	if len(cfg.Executors) == 0 {
 		return false
 	}

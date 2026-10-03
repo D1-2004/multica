@@ -109,7 +109,7 @@ func (c *appRuntimeConfig) validateCurrent() error {
 func (c *appRuntimeConfig) employeeVision() handler.EmployeeVisionConfig {
 	cfg, err := handler.DecodeEmployeeVision(c.current().Runtime.EmployeeVision)
 	if err != nil {
-		return handler.EmployeeVisionConfig{}
+		return handler.DefaultEmployeeVisionConfig()
 	}
 	return cfg
 }

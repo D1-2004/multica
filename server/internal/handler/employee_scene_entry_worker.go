@@ -59,8 +59,8 @@ type EmployeeSceneWorker struct {
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
-	// VisionConfig returns the live runtime.employee_vision; nil keeps images
-	// unsupported.
+	// VisionConfig returns the live vision executor list; nil uses the code
+	// default (DefaultEmployeeVisionConfig).
 	VisionConfig func() EmployeeVisionConfig
 	handler      *Handler
 	store        *employeeentry.Store
