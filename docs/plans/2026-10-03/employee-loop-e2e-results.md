@@ -6,6 +6,7 @@
 
 - Task / 纠正 / 续接：目标提交 `f4aacecd1abc208ab29816dbdf8fac574f95c90c`，预发流水线 `3110336688` 的构建、部署和集成测试通过。
 - 原生对话轮次：目标提交 `e2cda04a479fa4154ceb0fe92453963f197c010e`，流水线 `3110338376` 的构建、部署和集成测试通过。
+- 独立停止：部署目标 `7074cd29ea844552bda1682d04887e7d4e2965c1`，流水线 `3110341321` 的构建、部署和集成测试通过，协议标记为 11。
 - Coordinator 与 EmployeeLoop 使用同一配置；实测 revision 21 主模型为 `bailian/deepseek-v4.1-flash`。前台最多三次真实模型请求，无额外总结或润色模型。
 - PostgreSQL 持久化独立 Task / Entry / Run；Issue 绑定校验留在适配器。Redis 复用既有跨节点唤醒和加速，不成为任务事实来源，不增加第二个执行器。
 - 对照 GawkBot 固定版本 `71e82a1809565281cbd0bf8185d3c125b715d934`：保留工作定义、追加账本、纠正优先和 ContextUsed；近期对话使用现有 SessionEntry 的真实 user/assistant 轮次。PG 历史不固定条数删除，只限制每轮注入量。
@@ -19,6 +20,7 @@
 | Python 等待 12 秒算平方 → 查进度 → 继续求合计 → 致谢 | 同一 Task 两个 Run，无 Issue。实际工具输出等待 12.00 秒、平方数组及合计 55；进度使用 read_task，致谢没有新执行。前台调用次数 1 / 2 / 2 / 1。 |
 | 群里运行中将苹果 3 / 香蕉 2 改为苹果 5 / 无香蕉 | 同一 Task，旧 Run 取消、后继 Run 成功。FC 两次扫描确认进程退出后才领取后继；旧通知以 steered 原因抑制。只交付最新清单，不重复 60 秒等待。 |
 | CSV 仅文件交付 → 同 Task 增加一行并继承交付要求 | 两份文件实际收到并下载核验，第二份增加 pear,2。两个 Run 都有 suppressed / native_file_delivered 回执，未追加完成总结。 |
+| 长任务 → 不要停止 → 明确停止 → 确认退出 → 致谢 | 否定指令无控制副作用；stop_task 固定原 Task/Run/queue，无后继派发。停止请求先返回 stopping，真实退出后 read_task 返回 stopped，旧结果未补发。模型次数 1 / 1 / 2 / 2 / 1。 |
 
 ### 历史理解与 JSON
 
@@ -63,6 +65,20 @@ Task：`66be2a13-6c61-4d88-ab33-2e78979443fb`。首轮 Run `aab9aa29-94f4-4c55-9
 - 首轮：`5119f1b581eeb4f683fe892e91d9015d8b55ce29356b0297cd71efb38c2b9dcd`
 - 续接：`bbb30127b40e86a86df6d6528d1ee8cd86e4829042a118baaf2264db833163b1`
 
+### 独立停止
+
+Task：`9bc15452-eeda-4667-a3cd-0d4832f6a538`，Run：`f99d5729-525d-4678-91f7-c9924f9848bf`，queue：`73959d01-84dd-4935-8008-9e2135def0c2`。
+
+- 实际 transcript 已出现 Python 的 180 秒等待调用，队列处于 running。
+- 「先不要停止」只有一次理解，没有 stop/steer/continue/dispatch 效果；队列仍 running。
+- 15:17:05.105：记录停止意图，回执仍指原 Run，execution_state=stopping、process_exit_confirmed=false；实际只回复「已请求停止这个任务」。
+- 15:17:10：FC 第一轮扫描终止任务进程；15:17:15.751 的第二轮扫描 runners=0、remaining=0、outcome=ok。
+- 后续 read_task 返回 Task cancelled、无 active Run、execution_state=stopped、process_exit_confirmed=true，之后才实际回复已经停止。
+- 原通知 suppressed / task_stop_requested；观察窗口超过原定完成时刻，未收到旧结果标记。该 Run 只有一个取消终态事件回执 `842a22c3-0895-4fb0-991b-0c098eb7be11`。
+- 停止后的查询与致谢均没有后继派发或新控制效果。独立 PG 回归另验证 Run 数不增长、提交后恢复、前驱仍在退出时保持 stopping。
+
+相关 Trace：[停止请求](https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces/76078ae49c80450fb4c47968f0c58ea1)、[实际退出后查询](https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces/eda2df39df494a979af042f581918a75)。
+
 ## 失败记录与修复边界
 
 1. EmployeeLoop 最初绕过 Coordinator 配置链。Trace `59cfce9e475c4aadaca8630615180cf2` 的首轮模型耗尽 45 秒，无工具或 Task。已接入同一链、单次 20 秒边界和根 Trace ERROR 标记。
@@ -72,7 +88,7 @@ Task：`66be2a13-6c61-4d88-ab33-2e78979443fb`。首轮 Run `aab9aa29-94f4-4c55-9
 
 ## 尚未验收或未完成
 
-- 独立 stop_task：单独停止后不派发后继 Run，与运行中纠正分开验收。
+- 带引用消息的续接和停止目前明确拒绝；本次验证的是当前外层直接请求。
 - 三个真实测试对象的跨场域收集、乱序归集及同一人参与两个 Task 的隔离；测试对象待指定。
 - Cron / Webhook 的 Task Service 接入，以及定时、暂停、重投幂等真实验收。
 - 纯附件问答与轻反馈需独立剧本；本记录的文件验收是产物交付及策略继承。

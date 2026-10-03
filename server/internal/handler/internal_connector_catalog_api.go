@@ -292,35 +292,47 @@ func init() {
 // from a provider redirect (serveConnectorOAuthCallback has already
 // forwarded other deployments' callbacks) and sends the browser to the
 // destination recorded at start with
-// ?connected=<slug> or ?connect_error=<code>. It reads and clears the
-// state's browser binding cookie. An unknown, expired or replayed state has
-// no trusted destination and gets a small page linking back to the app
-// instead. The work runs detached from the browser request (bounded by its
-// own timeout), because the state is consumed first and a dropped
-// connection must not lose a code that was already accepted.
+// ?connected=<slug> or ?connect_error=<code>. It reads the state's browser
+// binding cookie and clears it once the callback is finished. A GitHub
+// installation return that still has to collect the user authorization
+// keeps the cookie: the same state completes on the next redirect. An
+// unknown, expired or replayed state has no trusted destination and gets a
+// small page linking back to the app instead. The work runs detached from
+// the browser request (bounded by its own timeout). A code that was already
+// accepted has its state consumed, so a dropped connection does not lose it.
 func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
-	callback := connectorOAuthCallback{Via: via, State: query.Get("state"), Code: query.Get("code"), Error: query.Get("error")}
+	callback := connectorOAuthCallback{
+		Via: via, State: query.Get("state"), Code: query.Get("code"), Error: query.Get("error"),
+		InstallationID: parseConnectorOAuthInstallationID(query.Get("installation_id")),
+		SetupAction:    parseConnectorOAuthSetupAction(query.Get("setup_action")),
+	}
 	if len(callback.Code) > connectorOAuthMaxCode {
 		// Treated like a provider error: the state is still consumed.
 		callback.Code, callback.Error = "", "invalid_request"
 	}
+	var clearBinding func()
 	if validConnectorOAuthState(callback.State) {
 		stateHash := hashConnectorOAuthState(callback.State)
 		if cookie, err := r.Cookie(connectorOAuthCookieName(stateHash)); err == nil {
 			callback.BrowserNonce = cookie.Value
 			origin, path := h.connectorOAuthCallbackTarget(via)
-			http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
-			if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
-				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
+			clearBinding = func() {
+				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
+				if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
+					http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
+				}
 			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), connectorOAuthCallbackTimeout)
 	defer cancel()
 	outcome := h.completeConnectorOAuth(ctx, callback)
+	if !outcome.Continue && clearBinding != nil {
+		clearBinding()
+	}
 	if outcome.RedirectURL == "" {
 		h.writeConnectorOAuthInvalidPage(w, r)
 		return

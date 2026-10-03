@@ -320,15 +320,19 @@ func chooseTokenEndpointAuthMethod(supported []string) string {
 	return "none"
 }
 
-// ExchangeOAuthCode redeems an authorization code with its PKCE verifier.
-// resource is omitted when empty (pre-registered clients such as GitHub).
+// ExchangeOAuthCode redeems an authorization code. verifier is the PKCE
+// verifier; an empty verifier omits code_verifier (a GitHub App installation
+// code is not PKCE). resource is omitted when empty (pre-registered clients
+// such as GitHub).
 func (c *ExternalClient) ExchangeOAuthCode(ctx context.Context, tokenEndpoint, resource, code, redirectURI, verifier string, registration OAuthClientRegistration) (OAuthTokenResponse, error) {
 	values := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"client_id":     {registration.ClientID},
-		"code_verifier": {verifier},
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {redirectURI},
+		"client_id":    {registration.ClientID},
+	}
+	if verifier != "" {
+		values.Set("code_verifier", verifier)
 	}
 	if resource != "" {
 		values.Set("resource", resource)
