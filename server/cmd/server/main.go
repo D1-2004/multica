@@ -583,6 +583,7 @@ func main() {
 	}
 	if h.EmployeeSceneWorker != nil {
 		go h.EmployeeSceneWorker.Run(sweepCtx)
+		go h.RunEmployeeDirectoryRefresh(sweepCtx)
 	}
 	if h.SceneMemoryWorker != nil {
 		go h.SceneMemoryWorker.Run(sweepCtx)

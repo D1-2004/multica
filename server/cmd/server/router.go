@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
+	"github.com/multica-ai/multica/server/internal/employeedirectory"
 	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -1079,6 +1080,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DWSNativeStaffID = func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error) {
 					return native.StaffID(ctx, id, mint, openDingTalkID, names, conversationID)
 				}
+				// EmployeeLoop directory facts (agent profile, group rosters)
+				// read as the identity, through the same sessions.
+				h.EmployeeDirectory = employeedirectory.DWSDirectory{Client: func(ctx context.Context, id dwsclient.Identity) (*dws.Client, error) {
+					return native.Client(ctx, id, mint)
+				}}
 			}
 		}
 	}
