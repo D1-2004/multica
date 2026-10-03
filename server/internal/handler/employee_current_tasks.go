@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
+	"github.com/multica-ai/multica/server/internal/taskinput"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -172,6 +173,11 @@ func (h *employeeSceneHost) readCurrentTask(ctx context.Context, tx pgx.Tx, sour
 	}
 	output := map[string]any{"task_ref": ref, "read_ref": call.NativeToolCallID, "state": snapshot.Task.State, "version": snapshot.Task.Version, "goal_revision": snapshot.Task.GoalRevision, "goal": employeeTaskData(snapshot.Task.Definition.Goal, 4000), "has_active_run": snapshot.Task.ActiveRunID != "", "history_truncated": snapshot.Truncated}
 	output["execution_state"], output["queue_state"], output["process_exit_confirmed"], output["stop_requested"], output["pending_predecessor"] = execution.State, execution.QueueState, execution.ExitConfirmed, execution.StopRequested, execution.PendingPredecessor
+	collections, err := taskinput.NewStore(tx).TaskWaits(ctx, employeeTaskinputScope(h.job.Scope), snapshot.Task.ID)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	output["collections"] = collections
 	output["execution_attribution"] = "Workflow/run state does not prove process activity. Use execution_state and process_exit_confirmed; a recorded cancellation or timeout alone is not exit proof."
 	if snapshot.LatestRun != nil {
 		output["run_state"] = snapshot.LatestRun.State

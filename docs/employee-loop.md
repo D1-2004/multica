@@ -265,7 +265,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 
 ## 场域例行任务改走 Employee Direct（marker 12）
 
-**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 15）。
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 16）。
 
 **新路径的行为**
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
@@ -358,3 +358,6 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 **冻结与重放**：读取在事务外进行，在 lease 内重新校验后冻结到 `employee_message_resource`。新快照以「Host 读取的资源（数据）」放入，不增加模型调用。
 
 **能力边界**：图片一律标注 `vision_unavailable`；当前模型链没有经过验证的视觉路径。
+
+
+**原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；全部在线副本16后恢复旧snapshot/journal。独立memory marker仍按自己的累积规则。

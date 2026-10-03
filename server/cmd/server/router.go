@@ -981,6 +981,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// the collection's creating transaction.
 	h.EmployeeSceneWorker.CollectionReminders = handler.RecordCollectionReminders
 	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
+	// The exact current marker includes v16 cancel_collection readers. Mixed
+	// versions pause safely; persisted old snapshots resume after rollout.
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
 			return errors.New("employee replica capability verification is unavailable")

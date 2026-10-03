@@ -24,7 +24,7 @@
 
 invitation lifecycle：pending_delivery→delivered→answered；取消/撤权为revoked，明确到期为expired。发送unknown不可重发猜测是否送达；先查询原action。只有可信delivery映射或明确邀请引用才能关联。
 
-collection lifecycle：open→ready→summarizing→completed；cancelled/revoked/expired不复活。expected slots首次冻结；同invitation重复答复不增加人数，明确更正按input版本替换有效槽位但保留历史。更正在summary发送前会改变revision，旧summary CAS失败；发送后新更正只形成用户明确授权的修订流程，不偷偷再次汇总。
+collection lifecycle：open→ready→summarizing→completed；cancelled/revoked/expired不复活。请求人取消自己的收集，前台用本 wake 的 source-bound read_task→cancel_collection，复用目标停止事务一并关闭收集与 waits/ready intent；不 dispatch 新后台取消任务。真实取消receipt后才回复已取消，迟答不再汇总。reader-first marker16与验证见22-collection-cancel.md。expected slots首次冻结；同invitation重复答复不增加人数，明确更正按input版本替换有效槽位但保留历史。更正在summary发送前会改变revision，旧summary CAS失败；发送后新更正只形成用户明确授权的修订流程，不偷偷再次汇总。
 
 拟服务方法（名称可在首次接口提交中统一，语义不可省）：CreateCollectionTx、RecordInviteDeliveryTx、AcceptInputTx、ReadOriginInputs、ReadParticipantInvitation、CloseCollectionTx。每个写法都含ExpectedRevision、Source和Host授权证据；跨scope返回not_found，同源有效内容不同conflict，late/expired返回closed而非新Task。
 
