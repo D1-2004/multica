@@ -99,6 +99,8 @@ M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombston
 
 当前投影窗口只限制候选回复，不能截断其来源证明。候选 B 引用窗外 A 时，按冻结的精确 action/message ID 向外读取祖先；每个祖先必须在同 workspace/agent/tenant/scene、同目标会话，有实际 delivered 事实及可核对的源 job。不得扩大日期全扫或按内容猜源；祖先集合、层数有界，缺失、外场域、未送达、关联冲突、未知来源或超限时整个相关历史返回 unavailable。原件及已冻结 job 不改。该跨窗闭合要求替代 Plan20 曾声明的跨窗局限，验证见 [21 跨窗来源闭合](plans/2026-10-03/employee-loop-backend-delivery/21-reply-ancestor-closure.md)。
 
+祖先的非空 input 不能作为来源已知的证明。只认可显式 manifest、显式空 Memory、没有未关联 Memory 明文的合法结构化历史，或当版明确零记录的 memory_stats；旧非空 Memory 或未知字段没有这些证明时 unavailable，不扫描正文猜测记录 ID，也不改变旧 job 恢复的快照字节。
+
 ## 纯停止当前事项
 
 `stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。reaction 与结构 continuation 不能停止任何事项，不推断其他场域的目标。

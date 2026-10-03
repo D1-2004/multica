@@ -222,6 +222,13 @@ The original frozen snapshots and audit actions remain unchanged. Real DB
 cross-window counterexamples and the previous projection suite are recorded in
 Plan21; they do not replace deployment/real-model M5 acceptance.
 
+Ancestor snapshot recognition is explicit: a manifest, an explicitly empty
+Memory field, a valid user/assistant history array without unassociated Memory
+text, or current Host statistics proving zero pinned/retrieved/verified records
+and no person view. Arbitrary nonempty input and legacy plaintext Memory are
+unknown, not silently treated as an empty dependency set. No text-to-record-ID
+heuristic is used; old job replay bytes remain untouched.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without

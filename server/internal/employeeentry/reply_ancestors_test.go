@@ -142,3 +142,38 @@ func TestRecentConversationReplyAncestorDepthBound(t *testing.T) {
 		t.Fatalf("partial deep ancestor graph became available: %v", err)
 	}
 }
+
+func TestRecentConversationAncestorSnapshotNeedsExplicitStructure(t *testing.T) {
+	emptyHistory, _ := json.Marshal(RecentConversation{Messages: []RecentConversationMessage{}})
+	for _, tc := range []struct {
+		name     string
+		snapshot any
+		known    bool
+	}{
+		{"unknown-nonempty-input", map[string]any{"input": map[string]any{"unrecognized": "old context"}}, false},
+		{"legacy-plaintext-memory", map[string]any{"input": map[string]any{"Memory": "周二 17 点"}}, false},
+		{"explicit-empty-memory", map[string]any{"input": map[string]any{"Memory": ""}}, true},
+		{"structured-history-only", map[string]any{"input": map[string]any{"RecentConversation": string(emptyHistory)}}, true},
+		{"current-zero-injection", map[string]any{"input": map[string]any{"Memory": "Host status; no matching records."}, "memory_stats": map[string]any{"pinned": 0, "retrieved": 0, "verified": 0}}, true},
+		{"incomplete-stats", map[string]any{"input": map[string]any{"Memory": "周二 17 点"}, "memory_stats": map[string]any{"pinned": 0}}, false},
+		{"unmanifested-records", map[string]any{"input": map[string]any{"Memory": "周二 17 点"}, "memory_stats": map[string]any{"pinned": 0, "retrieved": 1, "verified": 0}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, request, action := crossWindowReplies(t, false)
+			raw, _ := json.Marshal(tc.snapshot)
+			if _, err := f.pool.Exec(context.Background(), `UPDATE employee_scene_job SET input_snapshot=$2::jsonb WHERE id::text=(SELECT input->>'scene_notice_id' FROM response_action WHERE id=$1)`, action, raw); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.store.RecentConversation(context.Background(), request)
+			if !tc.known {
+				if !errors.Is(err, errReplyAncestorUnavailable) {
+					t.Fatalf("unknown nonempty ancestor became available: %+v %v", got, err)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(historyTexts(t, got), "recent-B") || !strings.Contains(historyTexts(t, got), "independent-C") {
+				t.Fatalf("explicit supported structure became unavailable or was value-matched: %+v %v", got, err)
+			}
+		})
+	}
+}

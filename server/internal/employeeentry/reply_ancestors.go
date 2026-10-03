@@ -184,6 +184,57 @@ func knownReplySnapshot(snapshot []byte) bool {
 	if json.Unmarshal(snapshot, &saved) != nil {
 		return false
 	}
-	return strings.HasPrefix(strings.TrimSpace(string(saved["memory_manifest"])), "[") ||
-		(strings.HasPrefix(strings.TrimSpace(string(saved["input"])), "{") && strings.TrimSpace(string(saved["input"])) != "{}")
+	if strings.HasPrefix(strings.TrimSpace(string(saved["memory_manifest"])), "[") {
+		return true
+	}
+	var input map[string]json.RawMessage
+	if json.Unmarshal(saved["input"], &input) != nil || input == nil {
+		return false
+	}
+	var memory string
+	if raw, present := input["Memory"]; present {
+		if json.Unmarshal(raw, &memory) != nil {
+			return false
+		}
+		if memory == "" {
+			return true
+		}
+		// Current snapshots omit an empty manifest, but persist explicit Host
+		// counts. Accept only proof of zero injected records, never legacy text.
+		var stats map[string]json.RawMessage
+		if json.Unmarshal(saved["memory_stats"], &stats) != nil {
+			return false
+		}
+		for _, key := range []string{"pinned", "retrieved", "verified"} {
+			var count int
+			if raw, exists := stats[key]; !exists || json.Unmarshal(raw, &count) != nil || count != 0 {
+				return false
+			}
+		}
+		var personView bool
+		if raw, present := stats["person_view"]; present && (json.Unmarshal(raw, &personView) != nil || personView) {
+			return false
+		}
+		return true
+	}
+	// A supported history-only projection must actually have a structured
+	// message array; arbitrary nonempty input fields are not provenance.
+	var history string
+	if json.Unmarshal(input["RecentConversation"], &history) != nil {
+		return false
+	}
+	var prior map[string]json.RawMessage
+	if json.Unmarshal([]byte(history), &prior) != nil || !strings.HasPrefix(strings.TrimSpace(string(prior["messages"])), "[") {
+		return false
+	}
+	var messages []RecentConversationMessage
+	if json.Unmarshal(prior["messages"], &messages) != nil {
+		return false
+	}
+	for _, message := range messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			return false
+		}
+	}
+	return true
 }
