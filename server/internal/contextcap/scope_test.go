@@ -149,7 +149,7 @@ func TestScopeFromTaskContext(t *testing.T) {
 				"conversation":{"openConversationId":"cidGroupA","type":"group","title":"Multica 预发群测试"},
 				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
 				"messages":[{"openMsgId":"m1","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","mentions":[{"uid":"598441033"}]}]}}`,
-			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Multica 预发群测试", PersonKey: "Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Multica 预发群测试", PersonKey: "odt:Dv6WPxM5cBX83sOS9u0PAAwiEiE",
 				PersonName: "冬翔", ConversationType: "group", DispatchOrgID: "439446171"},
 		},
 		{
@@ -158,14 +158,14 @@ func TestScopeFromTaskContext(t *testing.T) {
 				"conversation":{"openConversationId":"cidDirect","type":"single"},
 				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
 				"messages":[{"openMsgId":"m2","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"}]}}`,
-			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", PersonKey: "Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", PersonKey: "odt:Dv6WPxM5cBX83sOS9u0PAAwiEiE",
 				PersonName: "冬翔", ConversationType: "single", DispatchOrgID: "439446171"},
 		},
 		{
 			name: "merged native window of one sender",
 			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
 				"messages":[{"senderOpenDingTalkId":"DopenA"},{"senderOpenDingTalkId":"DopenA"}]}}`,
-			want: Scope{PersonKey: "DopenA", ConversationType: "group"},
+			want: Scope{PersonKey: "odt:DopenA", ConversationType: "group"},
 		},
 		{
 			name: "merged native window of two senders has no person",
@@ -198,7 +198,20 @@ func TestScopeFromTaskContext(t *testing.T) {
 		{
 			name: "only senderOpenDingTalkId is enough",
 			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"senderOpenDingTalkId":"DopenA"}}}`,
-			want: Scope{PersonKey: "DopenA", ConversationType: "single"},
+			want: Scope{PersonKey: "odt:DopenA", ConversationType: "single"},
+		},
+		{
+			// A work item cut from a merged window keeps the window's sender;
+			// its one message, whose own sender is unknown, proves nothing.
+			name: "a native message without its own openDingTalkId has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"anon","text":"who sent this?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "a staff id carrying the openDingTalkId prefix is refused",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"staffId":"odt:DopenA","openDingTalkId":"DopenA"}}}`,
+			want: Scope{ConversationType: "single"},
 		},
 		{
 			name: "the literal null is no openDingTalkId",
@@ -354,6 +367,23 @@ func TestIsDirectConversationType(t *testing.T) {
 	} {
 		if got := IsDirectConversationType(tc.kind); got != tc.want {
 			t.Errorf("IsDirectConversationType(%q) = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestTriggerPersonKey(t *testing.T) {
+	for _, tc := range []struct{ staff, open, want string }{
+		{"staff-1", "DopenA", "staff-1"},
+		{" staff-1 ", "", "staff-1"},
+		{"", " DopenA ", "odt:DopenA"},
+		{"", "NULL", ""},
+		{"", "", ""},
+		{"odt:DopenA", "", ""},
+		{"a\u0007b", "DopenA", ""},
+		{"", "a b", ""},
+	} {
+		if got := TriggerPersonKey(tc.staff, tc.open); got != tc.want {
+			t.Errorf("TriggerPersonKey(%q, %q) = %q, want %q", tc.staff, tc.open, got, tc.want)
 		}
 	}
 }

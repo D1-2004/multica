@@ -291,10 +291,10 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 **可信事实（COORD.F01）。**
 
-- 发言人只有 `senderOpenDingTalkId` 与显示名（DingTalk 省略时的字面 `null` 视为缺失），不补造 uid 或 staffId，人员归属按 staffId/openDingTalkId 的现有别名规则。openDingTalkId 相对接收账号：同一个人在本账号的单聊和群里是同一个 ID（2026-10-03 实测），换一个账号看到的是另一个 ID。它就是这次触发者的个人能力 key（`contextcap.TriggerPersonKey`：有 staffId 用 staffId，否则用 openDingTalkId，`docs/context-capabilities.md` §2）；只作用于个人能力层，例行任务从不带个人层。
+- 发言人只有 `senderOpenDingTalkId` 与显示名（DingTalk 省略时的字面 `null` 视为缺失），不补造 uid 或 staffId，人员归属按 staffId/openDingTalkId 的现有别名规则。openDingTalkId 相对接收账号：同一个人在本账号的单聊和群里是同一个 ID（2026-10-03 实测），换一个账号看到的是另一个 ID。它就是这次触发者的个人能力 key（`contextcap.TriggerPersonKey`：有 staffId 用 staffId，否则用 `odt:` + openDingTalkId，`docs/context-capabilities.md` §2）；每条消息都必须自带同一个 openDingTalkId 才认人，群里没有发言人 ID 的消息不会继承窗口里别人的身份；只作用于个人能力层，例行任务从不带个人层。
 - 群消息的「@ 本员工」来自订阅键本身，记为对接收 uid 的可信 mention。同句是否还 @ 了别人未知，不能据此断言只 @ 了员工。单聊的 mentions 是已知的空列表，按单聊恒需回应。
 - 被引用消息只有在其 openMessageId 命中本员工已记录的出站回执（`response_action` / `sandbox_send_receipt` 的 provider_message_id）时才标为员工本人；与当前发言人 openDingTalkId 相同则标当前发言人；否则保持未知，不当作他人。
-- 事件没有附件与会话名：纯媒体或空内容事件确认后丢弃，不进入窗口。群事件派发前以本员工身份读一次群名（`get_conversation_info`，内部群被拒时回退到本人的群列表；`h.DWSNativeConversationTitle` → `dwsclient.Shared.ConversationTitle`），作为派发的会话标题，`scene.Resolve` 据此写入 `agent_scene.title`，场域配置页不再显示无名「群聊」。读取限时 3 秒，结果按（Agent、账号、会话）在进程内缓存 10 分钟（失败或无名 1 分钟）；读不到时照常派发，场域保留原名，记 Warn `dws_native_conversation_title_failed`。单聊仍以发言人显示名命名。
+- 事件没有附件与会话名：纯媒体或空内容事件确认后丢弃，不进入窗口。群事件派发前以本员工身份读一次群名（`get_conversation_info`，内部群被拒时回退到本人的群列表；`h.DWSNativeConversationTitle` → `dwsclient.Shared.ConversationTitle`），作为派发的会话标题，`scene.Resolve` 据此写入 `agent_scene.title`，场域配置页不再显示无名「群聊」。读取与事件流的 context 脱钩、限时 3 秒，结果按（Agent、账号、会话）在进程内缓存 10 分钟（读失败 1 分钟）；读不到时照常派发，场域保留原名，记 Warn `dws_native_conversation_title_failed`。Coordinator follow-up 合批只比较会话 ID 与类型，不比较标题，改名或某次没读到群名不会把同一会话拆成两批。单聊仍以发言人显示名命名。
 
 **每条事件都复查。** 账号归属（见上）与托管回复资格。任一不满足即确认并记 `dws_native_event_skipped`，不投递。事件流按账号建立、只在下次巡检时更新所属 Agent；账号若已转到另一个 Agent 的原生订阅，这条事件按当前所有者处理（`dws_native_event_owner_moved`），不会两条都不处理。开启原生订阅时先清掉同一账号已不再拥有它的旧行（Agent 已归档或身份已换绑），运营身份换绑到其他账号时清掉本 Agent 的原生订阅，列表只在旧行仍对应当前身份时显示已开启。
 
