@@ -45,6 +45,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 	"unicode/utf8"
@@ -399,4 +400,45 @@ func webhookConflictResponse(auditID pgtype.UUID) (int, map[string]any) {
 		"delivery_id": uuidToString(auditID),
 		"reason":      webhookEventIDConflict,
 	}
+}
+
+// logWebhookOutcome records how the ingress answered a persisted delivery:
+// ids, identity, signature and route. Never the body, the event id, the
+// secret or the token.
+func logWebhookOutcome(ctx context.Context, delivery db.WebhookDelivery, b WebhookEndpointBinding, digest string, code int, resp map[string]any) {
+	attrs := []any{
+		"http_status", code,
+		"outcome", resp["status"],
+		"delivery_id", uuidToString(delivery.ID),
+		"trigger_id", b.TriggerID,
+		"autopilot_id", b.AutopilotID,
+		"assignee_id", b.AssigneeID,
+		"dispatch", b.Dispatch,
+		"identity_policy", webhookIdentityPolicy(delivery.DedupeKey.String),
+		"event_id_source", delivery.DedupeSource.String,
+		"signature", delivery.SignatureStatus,
+		"source_digest", shortWebhookDigest(digest),
+	}
+	if b.SecretRevision != "" {
+		attrs = append(attrs, "secret_revision", b.SecretRevision)
+	}
+	if b.RoutineID != "" {
+		attrs = append(attrs, "routine_id", b.RoutineID, "scene_id", b.SceneID, "tenant_org_id", b.TenantOrgID)
+	}
+	if v, ok := resp["run_id"].(string); ok {
+		attrs = append(attrs, "run_id", v)
+	}
+	if v, ok := resp["reason"].(string); ok {
+		attrs = append(attrs, "reason", v)
+	}
+	slog.InfoContext(ctx, "webhook delivery answered", attrs...)
+}
+
+// shortWebhookDigest keeps enough of a digest to correlate deliveries.
+func shortWebhookDigest(digest string) string {
+	const keep = len("sha256:") + 12
+	if len(digest) > keep {
+		return digest[:keep]
+	}
+	return digest
 }

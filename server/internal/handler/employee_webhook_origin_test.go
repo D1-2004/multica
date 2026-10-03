@@ -776,9 +776,24 @@ func TestEmployeeWebhookLogsCarryNoBodySecretOrToken(t *testing.T) {
 	e.process(t, uuidToString(pending.ID))
 
 	logs := sink.String()
-	for name, sentinel := range map[string]string{"body": bodySentinel, "secret": secret, "token": e.token} {
+	for name, sentinel := range map[string]string{"body": bodySentinel, "secret": secret, "token": e.token, "event id": key} {
 		if strings.Contains(logs, sentinel) {
 			t.Fatalf("logs contain the %s:\n%s", name, logs)
+		}
+	}
+	// The answers are still observable by id: accepted, rejected, conflict
+	// and duplicate each leave one outcome line, and the worker refusal is
+	// logged too.
+	for _, want := range []string{
+		"outcome=accepted delivery_id=" + accepted["delivery_id"].(string),
+		"outcome=rejected", "reason=invalid_signature",
+		"outcome=conflict", "reason=event_id_conflict",
+		"outcome=duplicate delivery_id=" + accepted["delivery_id"].(string),
+		"secret_revision=sha256:", "routine_id=", "scene_id=" + ctxcapScene,
+		"stored delivery no longer rebuilds its accepted input",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("logs miss %q:\n%s", want, logs)
 		}
 	}
 }

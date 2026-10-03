@@ -496,6 +496,13 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Every answer from here on is about a persisted delivery; log it with
+	// ids, identity and route only.
+	respond := func(code int, body map[string]any) {
+		logWebhookOutcome(r.Context(), delivery, binding, digest, code, body)
+		writeJSON(w, code, body)
+	}
+
 	// Signature failure → rejected delivery + 401. No dispatch, no replay.
 	// Providers will look for 4xx feedback when their secret is wrong.
 	if signatureFailed {
@@ -512,7 +519,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 			h.WebhookIPRateLimiter.Allow(r.Context(), ip)
 		}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusRejected, http.StatusUnauthorized, respBody, reason)
-		writeJSON(w, http.StatusUnauthorized, respBody)
+		respond(http.StatusUnauthorized, respBody)
 		return
 	}
 
@@ -522,7 +529,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		// the accepted one and its run are untouched.
 		code, respBody := webhookConflictResponse(delivery.ID)
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusRejected, code, respBody, webhookEventIDConflict)
-		writeJSON(w, code, respBody)
+		respond(code, respBody)
 		return
 	}
 	if outcome == persistDuplicate {
@@ -556,7 +563,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		if delivery.Status == deliveryStatusQueued && h.WebhookDeliveryWorker != nil {
 			h.WebhookDeliveryWorker.Notify()
 		}
-		writeJSON(w, http.StatusOK, resp)
+		respond(http.StatusOK, resp)
 		return
 	}
 
@@ -567,25 +574,25 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	if !trigRow.Enabled {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "trigger_disabled"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "trigger_disabled")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 	if autopilot.Status == "archived" {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "autopilot_archived"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "autopilot_archived")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 	if autopilot.Status != "active" {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "autopilot_paused"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "autopilot_paused")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 	if bindingProblem != "" {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": bindingProblem}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, bindingProblem)
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 
@@ -600,7 +607,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 			"event":       envelope.Event,
 		}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "event_filtered")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 
@@ -671,7 +678,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	if h.WebhookDeliveryWorker != nil {
 		h.WebhookDeliveryWorker.Notify()
 	}
-	writeJSON(w, http.StatusOK, respBody)
+	respond(http.StatusOK, respBody)
 }
 
 // ── Event filter helpers ────────────────────────────────────────────────────

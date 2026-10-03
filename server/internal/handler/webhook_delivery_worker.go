@@ -165,6 +165,10 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		source, err := w.h.loadWebhookFrozenSource(ctx, delivery)
 		switch {
 		case errors.Is(err, errWebhookSourceDrift):
+			slog.Warn("webhook worker: stored delivery no longer rebuilds its accepted input",
+				"delivery_id", uuidToString(delivery.ID),
+				"trigger_id", uuidToString(delivery.TriggerID),
+			)
 			return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, webhookSourceDigestMismatch)
 		case errors.Is(err, errWebhookStoredBodyInvalid):
 			return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, err.Error())
@@ -190,6 +194,12 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, problem)
 		}
 		if source.Binding.Version > 0 && current.routeKey() != source.Binding.routeKey() {
+			slog.Warn("webhook worker: endpoint route changed before admission",
+				"delivery_id", uuidToString(delivery.ID),
+				"trigger_id", uuidToString(delivery.TriggerID),
+				"accepted_scene_id", source.Binding.SceneID,
+				"current_scene_id", current.SceneID,
+			)
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, webhookBindingChanged)
 		}
 	}
