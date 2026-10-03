@@ -519,6 +519,11 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 // GitHub-tab split would land users on the default profile tab instead of
 // the place that shows the connection they just completed.
 func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
+	// A pre-release install returns here with no state. The shared-domain
+	// cookie is the only signal production has; without it this stays local.
+	if h.forwardGitHubPreEnvCookie(w, r) {
+		return
+	}
 	// The App setup URL lands here. A connector install (mcpc state, or the
 	// resume cookie when GitHub omitted state) is not a workspace install.
 	restoreGitHubInstallState(r)
