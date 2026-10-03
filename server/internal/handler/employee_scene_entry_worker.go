@@ -240,6 +240,7 @@ type employeeSavedInput struct {
 	Invitations []employeeInvitationBinding `json:"invitations,omitempty"`
 	// TaskWake is the typed return target of a task_wake job; nil for chat.
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
+	employeeMemoryInputMeta
 }
 type employeeSavedOutcome struct {
 	Outcome employeeloop.Outcome `json:"outcome"`
