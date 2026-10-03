@@ -13,6 +13,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -376,5 +377,54 @@ func TestEmployeeCurrentTaskBlockedContinuationExplainsState(t *testing.T) {
 				t.Fatal("continuation refusal hid actual state", outcome.Outcome.Reply)
 			}
 		})
+	}
+}
+
+// A finished candidate's result reaches new work through builds_on, also when
+// it is the only candidate (R1003-P1G5b: the single-upstream retrospective
+// copied the numbers from chat instead).
+func TestEmployeeCurrentTasksGuidanceRequiresBuildsOn(t *testing.T) {
+	for _, want := range []string{"dispatch_task builds_on", "even when it is the only one", "do not copy its numbers"} {
+		if !strings.Contains(employeeCurrentTaskGuidance, want) {
+			t.Fatalf("candidate guidance lacks %q", want)
+		}
+	}
+}
+
+// The guidance is frozen into the wake's input snapshot: a replayed wake sends
+// the bytes it was admitted with, never the current text.
+func TestEmployeeCurrentTasksFrozenGuidanceReplaysStoredBytes(t *testing.T) {
+	f := employeeNoticeDatabase(t, "succeeded", false, false)
+	ctx := context.Background()
+	source := employeeSecondRequest(t, f, "frozen-guidance", "基于刚才的结果写一段复盘")
+	var requests []string
+	f.h.EmployeeSceneWorker.model = employeeReplyModelFunc(func(_ context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+		raw, _ := json.Marshal(p.Messages)
+		requests = append(requests, string(raw))
+		return employeeReplyCompletion(t, employeeReplyCall(t, "quiet-"+strconv.Itoa(len(requests)), "stay_quiet", map[string]any{})), nil
+	})
+	if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	var jobID, brief string
+	if err := testPool.QueryRow(ctx, `SELECT id::text,input_snapshot#>>'{input,TaskBrief}' FROM employee_scene_job WHERE agent_id=$1::uuid AND id<>$2::uuid ORDER BY created_at DESC LIMIT 1`, f.agentID, f.jobID).Scan(&jobID, &brief); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || !strings.Contains(brief, "even when it is the only one") || !strings.Contains(requests[0], "even when it is the only one") || !strings.Contains(brief, source[:8]) {
+		t.Fatalf("new wake did not freeze the current guidance: requests=%d brief=%q", len(requests), brief)
+	}
+	// Recover the same wake from an older snapshot whose guidance predates builds_on.
+	old := strings.Replace(brief, " When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task.", "", 1)
+	if old == brief {
+		t.Fatal("fixture could not build the older guidance")
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE employee_scene_job SET input_snapshot=jsonb_set(input_snapshot,'{input,TaskBrief}',to_jsonb($2::text)),state='pending',outcome=NULL,model_journal='[]',model_attempts=0,tool_journal='{}',available_at=now() WHERE id=$1::uuid`, jobID, old); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	if len(requests) != 2 || strings.Contains(requests[1], "even when it is the only one") || !strings.Contains(requests[1], "cannot be restarted here. Task result_report") {
+		t.Fatalf("replayed wake did not send its frozen guidance bytes")
 	}
 }
