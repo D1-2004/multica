@@ -961,6 +961,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Only snapshots created before model routing retain the old transport.
 	// Every new Employee wake freezes the Coordinator registry's effective chain.
 	legacyEmployeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
+	h.WebhookSourceReady = func(ctx context.Context) error {
+		if opts.DeploymentFence == nil {
+			return errors.New("webhook source replica verification is unavailable")
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.WebhookSourceReplicaMarker)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return errors.New("live replicas do not all support " + handler.WebhookSourceReplicaMarker)
+		}
+		return nil
+	}
 	h.EmployeeMemory = employeememory.NewStore(pool)
 	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
 	h.EmployeeSceneWorker.ModelRoutes = h.Models

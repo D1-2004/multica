@@ -36,6 +36,7 @@ type employeeWebhookFixture struct {
 func newEmployeeWebhookFixture(t *testing.T) *employeeWebhookFixture {
 	t.Helper()
 	f, a := routineFixture(t)
+	f.h.WebhookSourceReady = func(context.Context) error { return nil }
 	f.h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(f.h)
 	created := createGroupRoutine(t, f, a, sceneRoutineInput{
 		Title:        "Deploy hook " + uuid.NewString()[:8],
@@ -60,6 +61,9 @@ func newEmployeeWebhookFixture(t *testing.T) *employeeWebhookFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM webhook_delivery WHERE trigger_id=$1`, full.ID)
+	})
 	return &employeeWebhookFixture{f: f, a: a, token: token, ap: ap, trigger: full}
 }
 
@@ -102,7 +106,7 @@ func (e *employeeWebhookFixture) process(t *testing.T, deliveryID string) db.Web
 		if err != nil {
 			t.Fatalf("load delivery: %v", err)
 		}
-		if delivery.Status != deliveryStatusQueued {
+		if !webhookDeliveryPending(delivery.Status) {
 			return delivery
 		}
 		if _, err := e.f.h.WebhookDeliveryWorker.ProcessNext(ctx); err != nil {
@@ -123,7 +127,7 @@ func (e *employeeWebhookFixture) processOneAttempt(t *testing.T, id pgtype.UUID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.DispatchAttempts > 0 || d.Status != deliveryStatusQueued {
+		if d.DispatchAttempts > 0 || !webhookDeliveryPending(d.Status) {
 			return
 		}
 		if _, err := e.f.h.WebhookDeliveryWorker.ProcessNext(ctx); err != nil {
@@ -548,7 +552,7 @@ func TestEmployeeWebhookDisabledEndpointCreatesNoTask(t *testing.T) {
 	}
 	failAdmission()
 	pending := e.deliveries(t)
-	if len(pending) != 1 || pending[0].Status != deliveryStatusQueued {
+	if len(pending) != 1 || !webhookDeliveryPending(pending[0].Status) {
 		t.Fatalf("pending = %+v", pending)
 	}
 

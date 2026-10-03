@@ -65,6 +65,7 @@ func TestMain(m *testing.M) {
 	bus := events.New()
 	emailSvc := service.NewEmailService()
 	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	testHandler.WebhookSourceReady = func(context.Context) error { return nil }
 	testHandler.TaskCompletionTargetIdentity = testRouterTargetIdentity
 	// httptest.NewRequest defaults RemoteAddr to 192.0.2.1, so every webhook
 	// test in the suite shares one IP bucket. With the production default

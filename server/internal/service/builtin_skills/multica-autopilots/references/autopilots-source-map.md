@@ -80,3 +80,10 @@
   `run_only` autopilot bound to a group or 1:1 chat scene, its run context,
   start and end notices; `requireAutopilotWrite` answers 409
   `managed_by_scene` for them.
+
+## Frozen webhook source release safety
+
+- `server/internal/handler/autopilot_webhook.go`, `employee_webhook_origin.go`: every authenticated source requires the `[webhook-source:1]` live-reader gate, freezes the Host binding and persists the isolated queue.
+- `server/migrations/9997_webhook_frozen_queue.up.sql`: exact v1 binding guard also isolates older producers' queued INSERT/binding UPDATE; rollback refuses pending frozen sources. `9998` builds the concurrent queue index and `9999` validates the widened status constraint.
+- `server/pkg/db/queries/webhook_delivery.sql`, `handler/webhook_delivery.go`: compatible claim/lease mutations retain isolated status; public status remains queued. `deploymentfence/fence.go` counts frozen leases for draining.
+- `docs/webhook-source-release-safety.md`, `handler/webhook_source_release_test.go`: rolling old/new producer/reader evidence, pre-migration leased-work limits and safe rollback.

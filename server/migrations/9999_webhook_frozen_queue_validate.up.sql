@@ -1,0 +1,1 @@
+ALTER TABLE webhook_delivery VALIDATE CONSTRAINT webhook_delivery_status_check;
