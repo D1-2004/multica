@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_task_scene_terminal_idx ON employee_task (updated_at) WHERE owner_loop = 'employee' AND scope_kind = 'scene' AND state IN ('succeeded', 'failed', 'cancelled');
