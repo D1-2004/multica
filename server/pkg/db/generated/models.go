@@ -167,6 +167,32 @@ type A2aTaskTurn struct {
 	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
 }
 
+type A2uiInteraction struct {
+	ID             pgtype.UUID        `json:"id"`
+	PublicID       string             `json:"public_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	SenderUid      string             `json:"sender_uid"`
+	SenderOrgID    string             `json:"sender_org_id"`
+	SceneID        string             `json:"scene_id"`
+	ConversationID string             `json:"conversation_id"`
+	MessageID      string             `json:"message_id"`
+	ThreadID       string             `json:"thread_id"`
+	SourceRef      string             `json:"source_ref"`
+	Kind           string             `json:"kind"`
+	Status         string             `json:"status"`
+	Header         string             `json:"header"`
+	Question       string             `json:"question"`
+	Request        []byte             `json:"request"`
+	CardBizID      string             `json:"card_biz_id"`
+	EventID        string             `json:"event_id"`
+	Result         []byte             `json:"result"`
+	OperatorUid    string             `json:"operator_uid"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type ActivityLog struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

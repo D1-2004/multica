@@ -58,6 +58,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/a2ui"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -977,6 +978,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		decisionEnv = "staging"
 	}
 	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	h.A2UI = a2ui.New(h.Queries)
 	// With runtime.use_dws_for_tag, card actions arrive over the server's
 	// DWS event source: one event stream per identity across replicas.
 	if rdb != nil {
@@ -1040,6 +1042,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Consumers: []dwseventsource.Consumer{
 					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
 					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
+					{EventKey: a2ui.NativeEventKey, Identities: identities, Handle: func(ctx context.Context, id dwsclient.Identity, line []byte) error {
+						return h.HandleDWSNativeCardAction(ctx, id, line, func(ctx context.Context, bizID, surfaceID string) error {
+							client, err := native.Client(ctx, id, mint)
+							if err != nil {
+								return err
+							}
+							return client.Messages.FinishA2UI(ctx, bizID, surfaceID)
+						})
+					}},
 				},
 			})
 			if err != nil {
