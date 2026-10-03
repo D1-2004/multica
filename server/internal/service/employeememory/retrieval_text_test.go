@@ -43,3 +43,18 @@ func TestRankTextsMinOverlapTwoChinese(t *testing.T) {
 		t.Fatalf("tie = %+v", tied)
 	}
 }
+
+// A short question has one topical unit; its minimum overlap may drop to one
+// without letting question forms ("哪天") match by themselves.
+func TestRetrievalTopicalUnits(t *testing.T) {
+	if n := RetrievalTopicalUnits("发版哪天？"); n != 1 {
+		t.Fatalf("short question topical units = %d", n)
+	}
+	if n := RetrievalTopicalUnits("值班核对：本场候选中，漏了哪一项回执？"); n < 2 {
+		t.Fatalf("long question topical units = %d", n)
+	}
+	hits := RankTextsMinOverlap("发版哪天？", []string{"发版定在周四", "哪天都行", "周四下午开会"}, 5, 1)
+	if len(hits) != 1 || hits[0].Index != 0 {
+		t.Fatalf("hits = %+v", hits)
+	}
+}
