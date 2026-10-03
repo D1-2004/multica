@@ -4705,28 +4705,12 @@ func (s *TaskService) failTask(
 	// retry. The overlay build can do network I/O (Composio), so we resolve it
 	// here — before the transaction — and only for retryable failures, so the
 	// common agent_error path skips this work entirely.
-	var (
-		wantRetry        bool
-		retryOverlay     runtimeMCPOverlayData
-		retryFireAt      pgtype.Timestamptz
-		retryMaxAttempts pgtype.Int4
-	)
+	var retryOverlay runtimeMCPOverlayData
 	if retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
 		} else if retryEligible(failureReason, parent) {
-			wantRetry = true
-			// Persist the reason-aware effective budget into the child so the
-			// retry chain self-describes (e.g. provider_network → max_attempts=3),
-			// rather than leaking a contradictory attempt=N/max_attempts=2 row.
-			retryMaxAttempts = pgtype.Int4{Int32: retryAttemptCeiling(failureReason, parent.MaxAttempts), Valid: true}
-			// Defer this attempt when the reason's schedule calls for a backoff
-			// (provider_network's final attempt waits ~5s); a zero delay leaves
-			// fire_at NULL so the child is created immediately-claimable.
-			if delay := retryDelayForAttempt(failureReason, parent.Attempt); delay > 0 {
-				retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
-			}
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
 				// Best-effort: a missing overlay is not retry-fatal — the child
 				// simply runs without the Composio overlay.
@@ -4741,6 +4725,7 @@ func (s *TaskService) failTask(
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
+	var retryCreated bool
 	var completionQueued bool
 	var executionUpdateReady bool
 	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
@@ -4856,25 +4841,13 @@ func (s *TaskService) failTask(
 			}
 		}
 
-		// Create the retry child atomically with the fail. CreateRetryTask reads
-		// the just-failed parent row (same tx), so it inherits chat_input_task_id
-		// and the bumped chat-retry priority; broadcast/notify happen after commit.
-		if wantRetry {
-			child, cerr := qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-				ID:                   taskID,
-				FireAt:               retryFireAt,
-				MaxAttempts:          retryMaxAttempts,
-				RuntimeMcpOverlay:    retryOverlay.Overlay,
-				RuntimeConnectedApps: retryOverlay.ConnectedApps,
-			})
-			if cerr != nil {
-				return fmt.Errorf("create retry task: %w", cerr)
-			}
-			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
-				return err
-			}
-			retried = &child
-		} else {
+		// FailAgentTask holds the parent row lock. Re-read its persisted
+		// eligibility and child receipt through the same boundary as recovery.
+		retried, retryCreated, err = retryChildForLockedTask(ctx, qtx, terminalTx, t, retryOverlay)
+		if err != nil {
+			return err
+		}
+		if retried == nil {
 			if t.ChatSessionID.Valid {
 				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, nil)
 				if freezeErr != nil {
@@ -4971,7 +4944,7 @@ func (s *TaskService) failTask(
 	// ordering rationale. A deferred child (backoff armed via fire_at) is NOT
 	// queued yet: PromoteDueDeferredTasksForRuntime emits its queued event and
 	// daemon wakeup when fire_at arrives, so announcing it here would be wrong.
-	if retried != nil {
+	if retryCreated && retried != nil {
 		slog.Info("task auto-retry enqueued",
 			"parent_task_id", util.UUIDToString(task.ID),
 			"child_task_id", util.UUIDToString(retried.ID),
@@ -5164,101 +5137,42 @@ func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 // Autopilot tasks are NOT auto-retried here; the autopilot scheduler owns
 // its own re-run cadence and we don't want to double-fire it.
 func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentTaskQueue) (*db.AgentTaskQueue, error) {
-	if parent.Status != "failed" {
-		return nil, nil
+	// The supplied snapshot identifies the parent only. Prepare external MCP
+	// facts outside the lock, then decide from its current persisted row.
+	current, err := s.Queries.GetAgentTask(ctx, parent.ID)
+	if err != nil {
+		return nil, err
 	}
-	reason := ""
-	if parent.FailureReason.Valid {
-		reason = parent.FailureReason.String
+	var overlay runtimeMCPOverlayData
+	if current.Status == "failed" && retryEligible(current.FailureReason.String, current) {
+		if agent, agentErr := s.Queries.GetAgent(ctx, current.AgentID); agentErr != nil {
+			slog.Warn("task auto-retry: load agent for overlay failed",
+				"parent_task_id", util.UUIDToString(current.ID), "error", agentErr)
+		} else {
+			overlay = s.buildRuntimeMCPOverlay(ctx, current.OriginatorUserID, agent)
+		}
 	}
-	if !retryableReasons[reason] {
-		return nil, nil
-	}
-	// Use the reason-aware ceiling, not the raw max_attempts column, so an
-	// orphaned provider_network task recovered on its 2nd attempt is still
-	// allowed its deferred 3rd attempt (retryAttemptCeiling raises the ceiling
-	// to 3). Kept in sync with retryEligible below, which applies the same
-	// ceiling to the primary FailTask path.
-	if parent.Attempt >= retryAttemptCeiling(reason, parent.MaxAttempts) {
-		slog.Info("task auto-retry skipped: budget exhausted",
-			"task_id", util.UUIDToString(parent.ID),
-			"attempt", parent.Attempt,
-			"max_attempts", parent.MaxAttempts,
-			"ceiling", retryAttemptCeiling(reason, parent.MaxAttempts),
-		)
-		return nil, nil
-	}
-	// Autopilot has its own retry semantics (don't double-trigger) and a task
-	// with no issue/chat link has nowhere to report its retry — retryEligible
-	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
-	if !retryEligible(reason, parent) {
-		return nil, nil
-	}
-
-	var runtimeMCPOverlay runtimeMCPOverlayData
-	agent, agentErr := s.Queries.GetAgent(ctx, parent.AgentID)
-	if agentErr != nil {
-		// Best-effort: failing to resolve the agent for the overlay is not
-		// retry-fatal. Log and continue — the daemon will reject the claim
-		// later if the agent is genuinely gone.
-		slog.Warn("task auto-retry: load agent for overlay failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"agent_id", util.UUIDToString(parent.AgentID),
-			"error", agentErr,
-		)
-	} else {
-		runtimeMCPOverlay = s.buildRuntimeMCPOverlay(ctx, parent.OriginatorUserID, agent)
-	}
-	// Mirror FailTask's in-tx backoff + effective-budget persistence: defer the
-	// final provider_network attempt ~5s via fire_at (zero delay leaves fire_at
-	// NULL for an immediate child), and write the reason-aware ceiling into the
-	// child's max_attempts so the retry chain stays self-consistent.
-	var retryFireAt pgtype.Timestamptz
-	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
-		retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
-	}
-	var child db.AgentTaskQueue
-	err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
-		if err := lockEmployeeRunWorkspace(ctx, terminalTx, parent.ID); err != nil {
+	var child *db.AgentTaskQueue
+	var created bool
+	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, tx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, tx, parent.ID); err != nil {
 			return err
 		}
-		var err error
-		child, err = qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-			ID:                   parent.ID,
-			FireAt:               retryFireAt,
-			MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
-			RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
-			RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
-		})
+		locked, err := qtx.GetAgentTaskForCompletionFinalization(ctx, parent.ID)
 		if err != nil {
 			return err
 		}
-		return observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child)
+		child, created, err = retryChildForLockedTask(ctx, qtx, tx, locked, overlay)
+		return err
 	})
 	if err != nil {
-		slog.Warn("task auto-retry failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"error", err,
-		)
 		return nil, err
 	}
-	slog.Info("task auto-retry enqueued",
-		"parent_task_id", util.UUIDToString(parent.ID),
-		"child_task_id", util.UUIDToString(child.ID),
-		"reason", reason,
-		"attempt", child.Attempt,
-		"max_attempts", child.MaxAttempts,
-		"status", child.Status,
-	)
-	// A queued child transitions ∅ → queued (same as EnqueueTaskFor*): broadcast
-	// queued first, then notify the daemon — see EnqueueTaskForIssue for ordering
-	// rationale. A deferred child (backoff armed) stays inert until
-	// PromoteDueDeferredTasksForRuntime fires its queued event + wakeup.
-	if child.Status == "queued" {
-		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
-		s.NotifyTaskEnqueued(ctx, child)
+	if created && child != nil && child.Status == "queued" {
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, *child)
+		s.NotifyTaskEnqueued(ctx, *child)
 	}
-	return &child, nil
+	return child, nil
 }
 
 // RerunIssue creates a fresh queued task for an agent on the issue. Used by

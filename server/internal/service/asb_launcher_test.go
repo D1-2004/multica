@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -458,13 +459,27 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 	}
 }
 
+func seedASBLauncherAgent(t *testing.T, pool *pgxpool.Pool, workspaceID, userID, runtimeID pgtype.UUID) pgtype.UUID {
+	t.Helper()
+	var agentID pgtype.UUID
+	if err := pool.QueryRow(context.Background(), `INSERT INTO agent
+		(workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id)
+		VALUES ($1, 'ASB launcher fixture', 'cloud', '{}'::jsonb, $2, 'private', 1, $3) RETURNING id`,
+		workspaceID, runtimeID, userID).Scan(&agentID); err != nil {
+		t.Fatalf("seed ASB agent: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM agent WHERE id=$1`, agentID) })
+	return agentID
+}
+
 func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 	pool := newSandboxLockPool(t)
-	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
+	workspaceID, userID, runtimeID := seedFCE2BSandboxRuntime(
 		t,
 		pool,
 		"Bound ASB Identity Source Lease",
 	)
+	agentID := seedASBLauncherAgent(t, pool, workspaceID, userID, runtimeID)
 	queries := db.New(pool)
 	runtime, err := queries.GetAgentRuntime(context.Background(), runtimeID)
 	if err != nil {
@@ -697,6 +712,7 @@ func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 		pool,
 		"Unavailable ASB Warm Session",
 	)
+	agentID := seedASBLauncherAgent(t, pool, workspaceID, userID, runtimeID)
 	baseQueries := db.New(pool)
 	runtime, err := baseQueries.GetAgentRuntime(context.Background(), runtimeID)
 	if err != nil {
@@ -800,7 +816,7 @@ func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 				metadata,
 				scope,
 				true,
-				userID,
+				agentID,
 				pgtype.UUID{},
 				unboundASBResolvedIdentity(),
 				conn,
