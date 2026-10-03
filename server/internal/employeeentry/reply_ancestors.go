@@ -193,7 +193,7 @@ func knownReplySnapshot(snapshot []byte) bool {
 	}
 	var memory string
 	if raw, present := input["Memory"]; present {
-		if json.Unmarshal(raw, &memory) != nil {
+		if strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, &memory) != nil {
 			return false
 		}
 		if memory == "" {
@@ -207,12 +207,12 @@ func knownReplySnapshot(snapshot []byte) bool {
 		}
 		for _, key := range []string{"pinned", "retrieved", "verified"} {
 			var count int
-			if raw, exists := stats[key]; !exists || json.Unmarshal(raw, &count) != nil || count != 0 {
+			if raw, exists := stats[key]; !exists || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, &count) != nil || count != 0 {
 				return false
 			}
 		}
 		var personView bool
-		if raw, present := stats["person_view"]; present && (json.Unmarshal(raw, &personView) != nil || personView) {
+		if raw, present := stats["person_view"]; present && (strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, &personView) != nil || personView) {
 			return false
 		}
 		return true

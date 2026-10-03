@@ -20,4 +20,6 @@
 
 结构收紧小片已完成。真实 DB 的 unknown-nonempty-input、legacy-plaintext-memory 两组原判定均 baseline FAIL；候选拒绝它们以及缺字段统计、统计证明已有未列 ID 的记录。显式空 Memory、合法结构化历史、当版零注入 memory_stats 三路径仍可用，且不按相同正文 value 擦除回复。证据 `~/d1/employee-e2e-evidence/CODEX-CLOSEOUT-20261004-SNAPSHOT-PROOF/` 保留 baseline.log/candidate.log。最窄 snapshot/原 read-reply 回归通过，无 skip；gofmt、受影响编译与 diff check 通过，无 Mac 或 DB 环境阻断；SHA 由本地原子提交输出记录。
 
+收尾同一判定加上 JSON null 护栏：null 不能借 Go 默认零值被认作明确空 Memory 或零记录统计；两个真实 DB 子例均 unavailable。只追加小提交，不改已交付 SHA，不扩展业务范围。
+
 独立本地 `multica_foreground_ancestors_20261004` 复验：旧 20 项与新跨窗/无法闭合/深度上限三组共 23 项 top-level 检查全部通过，无 skip。祖先缺失、外会话、未 delivered、未知 job、未知快照、action/message 配对冲突六种情况均 unavailable；65 层旧链触发深度上限，不能以部分图放行。gofmt、受影响编译与 diff check 通过，没有 Mac 编译或 DB 环境阻断。证据 `~/d1/employee-e2e-evidence/CODEX-CLOSEOUT-20261004-ANCESTOR-CLOSURE/` 的 baseline.log/candidate.log 保留全部结果。没有新增模型、IM、schema、marker，旧冻结 job 与审计原件不改。提交 SHA 由输出记录，主代理独立审查/集成/发布及原 M5 真实质量仍 pending。

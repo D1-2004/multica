@@ -152,6 +152,8 @@ func TestRecentConversationAncestorSnapshotNeedsExplicitStructure(t *testing.T) 
 	}{
 		{"unknown-nonempty-input", map[string]any{"input": map[string]any{"unrecognized": "old context"}}, false},
 		{"legacy-plaintext-memory", map[string]any{"input": map[string]any{"Memory": "周二 17 点"}}, false},
+		{"null-memory-is-not-empty", map[string]any{"input": map[string]any{"Memory": nil}}, false},
+		{"null-counts-are-not-zero", map[string]any{"input": map[string]any{"Memory": "周二 17 点"}, "memory_stats": map[string]any{"pinned": nil, "retrieved": nil, "verified": nil}}, false},
 		{"explicit-empty-memory", map[string]any{"input": map[string]any{"Memory": ""}}, true},
 		{"structured-history-only", map[string]any{"input": map[string]any{"RecentConversation": string(emptyHistory)}}, true},
 		{"current-zero-injection", map[string]any{"input": map[string]any{"Memory": "Host status; no matching records."}, "memory_stats": map[string]any{"pinned": 0, "retrieved": 0, "verified": 0}}, true},
