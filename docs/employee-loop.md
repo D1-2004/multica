@@ -265,11 +265,13 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
 - `(trigger, planned_at)` 只受理一次。
 - 认领时只使用冻结的工作包，不读当前的 Autopilot 说明。
+- 工作包冻结场域的 openConversationId（受理时从场域目录读取，绝不是 scene_id），执行方用它读取本场域的消息。
 - 开始/结束通知由例行任务自己发送，并且是唯一发送方。这类执行不进入 Execution Event，也不进入私有学习。
 
 **跳过与失败**
 - 上一次还在运行时，本次记为 `skipped_overlap`。
 - 暂停、场域或租户不可用、授权撤销、runtime 离线：记为 skipped。
+- 计划时刻处于暂停状态的时点记为 skipped（`routine was paused at its planned time`，依据 rule version 记录的暂停/恢复时刻）。调度器允许时点迟到 5 分钟发出，在这个窗口内恢复也不会补跑被越过的时点。
 - 配置错误：记为 failed。
 - 以上情况都保持原有节拍。
 
