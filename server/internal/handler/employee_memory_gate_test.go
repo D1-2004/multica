@@ -16,7 +16,9 @@ func TestEmployeeMemoryV2ToolsGatedByMemoryMarker(t *testing.T) {
 	ctx := context.Background()
 	host, _, _ := employeeMemoryHost(t, f, dc, []DispatchMessage{{OpenMsgID: "gate", Text: "记住 color=BLUE", SenderOpenDingTalkID: "requester-open-id"}})
 	worker := host.worker
-	v1 := employeeSceneToolsForMemory(false)
+	// No current sender has a collection invitation, so the snapshot never
+	// offers accept_collection_input; every other tool keeps its v1 order.
+	v1 := employeeWithoutTool(employeeSceneToolsForMemory(false), "accept_collection_input")
 	for name, ready := range map[string]func(context.Context) (bool, error){
 		"unwired":   nil,
 		"not_ready": func(context.Context) (bool, error) { return false, nil },
