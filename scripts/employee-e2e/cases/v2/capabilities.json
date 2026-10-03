@@ -3,7 +3,7 @@
   "note": "Default capability switches for cases-v2. harness: P0 entries are forced on by the code that implements them; the rest are P1/P2 and stay off until implemented. platform/release/ops reflect 预发 and must be flipped per run with `--capabilities name=on` once proven (e.g. G_memory after batch 5). A check whose `requires` is not met is graded vacuous; a case whose release/ops requirement is off is not run.",
   "harness": {
     "var_sets": true, "quote_reply": true, "deap_multi": true, "grader_v2": true,
-    "memory_reset": true, "pg_read": true, "evidence_v2": false, "segments": true, "file_send": false,
+    "memory_reset": true, "pg_read": true, "evidence_v2": true, "segments": true, "file_send": false,
     "file_download": false, "recall": false, "react": false, "forward": false, "combine_forward": false,
     "at_all": false, "setup_group": false, "burst": false, "negative_observe": false, "webhook": false,
     "aitable_insert": false, "config_snapshot": false

@@ -117,11 +117,41 @@ def text_check(check: dict[str, Any], msgs: list[dict[str, Any]], ctx: dict[str,
         {"predicate": p, "status": s, "detail": d} for p, s, d in subs]})
 
 
-def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
+def _step_wakes(loops: list[dict[str, Any]], steps: list[str]) -> list[dict[str, Any]]:
+    return [t for t in loops if set(steps) & set(t.get("matched_steps") or [])]
+
+
+def _executed(wakes: list[dict[str, Any]], names: set[str] | None = None) -> list[str]:
+    """Tools the Host executed (TOOL observations), not merely proposed by the model."""
+    return [x for t in wakes for x in t.get("tools") or [] if names is None or x in names]
+
+
+def _tool_args(wakes: list[dict[str, Any]], tool: str) -> list[dict[str, Any]]:
+    """Arguments of `tool` calls in these wakes, preferring the executed TOOL input."""
+    out = []
+    for t in wakes:
+        for x in t.get("tools_full") or []:
+            if x.get("name") == tool:
+                try:
+                    out.append(json.loads(x.get("input") or "{}"))
+                except ValueError:
+                    pass
+        if not out:
+            for tc in t.get("tool_calls_full") or []:
+                if tc.get("name") == tool:
+                    try:
+                        out.append(json.loads(tc.get("arguments") or "{}"))
+                    except ValueError:
+                        pass
+    return [a if isinstance(a, dict) else {} for a in out]
+
+
+def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any], api: dict[str, Any] | None = None) -> dict[str, Any]:
     kind = check["evidence"]
-    label = f"evidence {kind}" + (f" @{check['step']}" if check.get("step") else "")
+    where = check.get("step") or "+".join(check.get("steps") or [])
+    label = f"evidence {kind}" + (f" @{where}" if where else "")
     if kind not in cases_v2.EVIDENCE_IMPLEMENTED:
-        return _result(check, label, "unsupported", "evidence_v2 (P1) not implemented")
+        return _result(check, label, "unsupported", f"evidence kind {kind} not implemented")
     if not ev.get("collected"):
         return _result(check, label, "pending_evidence", "run `e2e.py collect` then `e2e.py v2 grade`")
     loops = [t for t in ev["traces"] if t["name"] == "employee_loop"]
@@ -129,10 +159,10 @@ def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any]) -> dict[str, An
         worst = max([t["model_calls"] or 0 for t in loops], default=0)
         return _result(check, label, "pass" if worst <= check["max"] else "fail", {"max": worst})
     if kind == "no_effect_for_step":
-        hits = [t for t in loops if check["step"] in (t.get("matched_steps") or [])]
+        hits = _step_wakes(loops, [check["step"]])
         if not hits:
             return _result(check, label, "vacuous", "no employee_loop wake attributed to the step")
-        effects = [tc for t in hits for tc in t["tool_calls"] if tc in EFFECT_TOOLS]
+        effects = _executed(hits, set(EFFECT_TOOLS))
         return _result(check, label, "fail" if effects else "pass",
                        {"wakes": [t["trace_id"] for t in hits], "effects": effects})
     if kind == "same_task_runs":
@@ -142,6 +172,42 @@ def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any]) -> dict[str, An
             return _result(check, label, "na", "nothing was dispatched")
         ok = len(tasks) == 1 and len(runs) >= check.get("min_runs", 2)
         return _result(check, label, "pass" if ok else "fail", {"tasks": tasks, "runs": runs})
+    if kind == "tool_called":
+        wakes = _step_wakes(loops, check["steps"])
+        if not wakes:
+            return _result(check, label, "vacuous", "no employee_loop wake attributed to the steps")
+        n = len(_executed(wakes, {check["tool"]}))
+        lo, hi = check["count"]
+        return _result(check, label, "pass" if lo <= n <= hi else "fail", {"count": n, "range": [lo, hi]})
+    if kind == "effect_for_step":
+        if check.get("if_dispatched_at"):
+            first = _step_wakes(loops, [check["if_dispatched_at"]])
+            if not _executed(first, {"dispatch_task", "continue_task"}):
+                return _result(check, label, "na", f"nothing was dispatched at {check['if_dispatched_at']}")
+        wakes = _step_wakes(loops, [check["step"]])
+        if not wakes:
+            return _result(check, label, "fail", "no employee_loop wake attributed to the step")
+        hit = _executed(wakes, set(check["tools"]))
+        return _result(check, label, "pass" if hit else "fail",
+                       {"executed": _executed(wakes), "wanted": check["tools"], "target_task": check.get("target_task")})
+    if kind in ("tool_arg_present", "tool_arg_contains"):
+        wakes = _step_wakes(loops, [check["step"]])
+        args = _tool_args(wakes, check["tool"])
+        if not args:
+            if check.get("if_dispatched"):
+                return _result(check, label, "na", f"{check['tool']} was not called at {check['step']}")
+            return _result(check, label, "fail", f"{check['tool']} was not called at {check['step']}")
+        if kind == "tool_arg_present":
+            ok = any(a.get(check["arg"]) not in (None, "", [], {}) for a in args)
+            return _result(check, label, "pass" if ok else "fail", {"calls": len(args)})
+        text = "\n".join(json.dumps(a.get(check["arg"]), ensure_ascii=False) for a in args)
+        missing = [v for v in check["values"] if v not in text]
+        return _result(check, label, "fail" if missing else "pass", {"missing": missing})
+    if kind == "task_count":
+        ids = {x for t in ev["traces"] for x in (t.get("task_ids") or [])}
+        ids |= {t["summary"]["task_id"] for t in (api or {}).get("tasks") or []}
+        lo, hi = check.get("min", 0), check.get("max", 10 ** 6)
+        return _result(check, label, "pass" if lo <= len(ids) <= hi else "fail", {"tasks": sorted(ids)})
     return _result(check, label, "unsupported", None)
 
 
@@ -229,7 +295,9 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     ev = grader.evidence_summary(rd, rec)
     api = load_json(rd / "evidence" / f"{rec['case_id']}.a{rec['attempt']}.api.json")
     ctx = {"pattern_sets": spec["defaults"].get("pattern_sets") or {},
-           "step_message_ids": {s["id"]: s["msg"]["messageId"] for s in rec["steps"] if s.get("msg")}}
+           "step_message_ids": {s["id"]: s["msg"]["messageId"] for s in rec["steps"] if s.get("msg")},
+           "evaluate_pending": lambda c: evidence_check_v2(c, ev, api)
+           if c.get("evidence") in cases_v2.EVIDENCE_IMPLEMENTED else None}
     results = []
     for check in rendered.get("checks", []):
         if check.get("requires") and not cases_v2.requires_ok(check["requires"], caps):
@@ -240,7 +308,7 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
             results.append(sentinel_check(check, rec, transcripts, reg))
             continue
         if "evidence" in check:
-            results.append(evidence_check_v2(check, ev))
+            results.append(evidence_check_v2(check, ev, api))
             continue
         cond = check.get("only_if")
         if cond:

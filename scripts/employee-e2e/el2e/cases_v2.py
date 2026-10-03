@@ -48,14 +48,14 @@ TEXT_CHECK_KEYS = {"steps", "replies", "max_chars", "include_all", "include_any"
                    "tier", "note"}
 SENTINEL_KEYS = {"sentinel", "parts", "conversation", "scope", "requires", "tier", "note"}
 EVIDENCE_KEYS = {"evidence", "step", "steps", "max", "min", "min_runs", "if_dispatched", "if_dispatched_at", "tool",
-                 "tools", "arg", "requires", "tier", "note"}
+                 "tools", "arg", "values", "count", "target_task", "requires", "tier", "note"}
 EVIDENCE_KINDS = {"max_calls_per_wake", "no_effect_for_step", "same_task_runs", "tool_arg_present", "task_count",
-                  "effect_for_step"}
-EVIDENCE_IMPLEMENTED = {"max_calls_per_wake", "no_effect_for_step", "same_task_runs"}
+                  "effect_for_step", "tool_called", "tool_arg_contains"}
+EVIDENCE_IMPLEMENTED = set(EVIDENCE_KINDS)
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")

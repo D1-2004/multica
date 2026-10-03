@@ -147,5 +147,41 @@ class SegmentTests(unittest.TestCase):
         self.assertEqual(v["invalid_segments"], ["d2"])
 
 
+class EvidenceV2Tests(unittest.TestCase):
+    def ev(self) -> dict:
+        dispatch = {"name": "dispatch_task", "level": "DEFAULT",
+                    "input": '{"source_ref": "r", "goal": "g", "prompt": "改到 10/14，宣传册给林晓", "builds_on": "t1"}'}
+        return {"collected": True, "traces": [
+            {"trace_id": "w1", "name": "employee_loop", "matched_steps": ["m1"], "model_calls": 1,
+             "tools": ["dispatch_task"], "tools_full": [dispatch], "tool_calls_full": [], "task_ids": ["T1"], "run_ids": ["R1"]},
+            {"trace_id": "w2", "name": "employee_loop", "matched_steps": ["m2"], "model_calls": 2,
+             "tools": ["memory_capture", "reply"], "tools_full": [], "task_ids": [],
+             "tool_calls_full": [{"name": "stop_task", "arguments": "{}"}]},
+        ]}
+
+    def check(self, **c) -> str:
+        from el2e import grader_v2
+        return grader_v2.evidence_check_v2(c, self.ev(), {"tasks": [{"summary": {"task_id": "T2"}}]})["status"]
+
+    def test_tool_called_counts_executed_tools_only(self) -> None:
+        self.assertEqual(self.check(evidence="tool_called", steps=["m2"], tool="memory_capture", count=[1, 1]), "pass")
+        self.assertEqual(self.check(evidence="tool_called", steps=["m1"], tool="memory_capture", count=[1, 1]), "fail")
+        self.assertEqual(self.check(evidence="tool_called", steps=["zz"], tool="memory_capture", count=[0, 0]), "vacuous")
+
+    def test_effect_for_step_ignores_proposed_but_rejected_calls(self) -> None:
+        self.assertEqual(self.check(evidence="effect_for_step", step="m2", tools=["stop_task"]), "fail")
+        self.assertEqual(self.check(evidence="effect_for_step", step="m1", tools=["dispatch_task"]), "pass")
+        self.assertEqual(self.check(evidence="effect_for_step", step="m2", tools=["stop_task"], if_dispatched_at="m2"), "na")
+
+    def test_tool_args_and_task_count(self) -> None:
+        self.assertEqual(self.check(evidence="tool_arg_present", step="m1", tool="dispatch_task", arg="builds_on"), "pass")
+        self.assertEqual(self.check(evidence="tool_arg_present", step="m1", tool="dispatch_task", arg="follow_up_steps"), "fail")
+        self.assertEqual(self.check(evidence="tool_arg_contains", step="m1", tool="dispatch_task", arg="prompt",
+                                    values=["10/14", "林晓"]), "pass")
+        self.assertEqual(self.check(evidence="tool_arg_contains", step="m2", tool="dispatch_task", arg="prompt",
+                                    values=["x"], if_dispatched=True), "na")
+        self.assertEqual(self.check(evidence="task_count", min=2, max=2), "pass")
+
+
 if __name__ == "__main__":
     unittest.main()

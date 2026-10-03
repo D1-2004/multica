@@ -66,7 +66,7 @@ def _gen_summary(obs: dict[str, Any]) -> dict[str, Any]:
     if isinstance(out, dict) and out.get("choices"):
         msg = (out["choices"][0] or {}).get("message") or {}
     tool_calls = [{"name": (tc.get("function") or {}).get("name"),
-                   "arguments": (tc.get("function") or {}).get("arguments", "")[:600]}
+                   "arguments": (tc.get("function") or {}).get("arguments", "")[:8000]}
                   for tc in (msg.get("tool_calls") or []) if isinstance(tc, dict)]
     usage = obs.get("usageDetails") or {}
     return {"name": obs.get("name"), "model": obs.get("model"), "level": obs.get("level"),
@@ -134,7 +134,7 @@ def summarize(trace: dict[str, Any]) -> dict[str, Any]:
             idx.setdefault(key, []).append(value)
     gens = [_gen_summary(o) for o in obs if o.get("type") == "GENERATION"]
     tools = [{"name": o.get("name"), "level": o.get("level"),
-              "input": json.dumps(o.get("input"), ensure_ascii=False)[:500],
+              "input": json.dumps(o.get("input"), ensure_ascii=False)[:8000],
               "output": json.dumps(o.get("output"), ensure_ascii=False)[:800]}
              for o in obs if o.get("type") == "TOOL"]
     errors = [{"name": o.get("name"), "type": o.get("type"), "status": o.get("statusMessage")}

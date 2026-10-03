@@ -293,6 +293,8 @@ def evidence_summary(rd: Path, rec: dict[str, Any]) -> dict[str, Any]:
                        "model_calls": t.get("generation_count"),
                        "tool_calls": [tc["name"] for g in t.get("generations", []) for tc in g.get("tool_calls", [])],
                        "tools": [x["name"] for x in t.get("tools", [])],
+                       "tool_calls_full": [tc for g in t.get("generations", []) for tc in g.get("tool_calls", [])],
+                       "tools_full": t.get("tools", []),
                        "errors": t.get("errors"), "matched_steps": t.get("matched_steps"),
                        "task_ids": t.get("idx", {}).get("employee_task_id"),
                        "idx_jobs": t.get("idx", {}).get("employee_job_id"),
