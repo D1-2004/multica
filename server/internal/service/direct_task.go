@@ -47,6 +47,10 @@ type DirectTaskContext struct {
 	Prompt           string `json:"direct_task_prompt"`
 	PrincipalID      string `json:"direct_principal_id"`
 	OriginatorUserID string `json:"direct_originator_user_id,omitempty"`
+	// AutomationOrigin locates the verified automation receipt of an execution
+	// that also carries a real autopilot_run_id (a scene routine occurrence).
+	// It is present exactly when the queue row has an autopilot_run_id.
+	AutomationOrigin *AutomationOriginRef `json:"employee_automation_origin,omitempty"`
 }
 
 // IsEmployeeDirectTask identifies the host-owned execution mode even when its
@@ -63,7 +67,14 @@ func IsEmployeeDirectTask(task db.AgentTaskQueue) bool {
 
 func ParseDirectTaskContext(task db.AgentTaskQueue) (DirectTaskContext, bool) {
 	var c DirectTaskContext
-	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || json.Unmarshal(task.Context, &c) != nil || c.Type != DirectTaskContextType {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || json.Unmarshal(task.Context, &c) != nil || c.Type != DirectTaskContextType {
+		return DirectTaskContext{}, false
+	}
+	// A real autopilot_run_id is accepted only together with a well-formed
+	// automation locator for that same run, and a locator only with that run.
+	// Readers still verify the locator against PostgreSQL before acting on it;
+	// this shape check keeps any other combination from parsing as Direct.
+	if task.AutopilotRunID.Valid != (c.AutomationOrigin != nil) || (c.AutomationOrigin != nil && !validAutomationOriginRef(c.AutomationOrigin, task)) {
 		return DirectTaskContext{}, false
 	}
 	if _, err := util.ParseUUID(c.WorkspaceID); err != nil {

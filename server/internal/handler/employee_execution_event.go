@@ -85,6 +85,7 @@ func (h *Handler) ReconcileEmployeeExecutionEvents(ctx context.Context, limit in
  JOIN agent_task_queue q ON q.id=r.queue_task_id AND q.agent_id=t.agent_id
  WHERE t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene'
  AND r.state IN ('succeeded','failed','cancelled') AND q.status IN ('completed','failed','cancelled')
+ AND NOT (q.context ? 'employee_automation_origin')
  AND NOT EXISTS(SELECT 1 FROM employee_scene_job j WHERE j.id::text=q.context->>'employee_job_id' AND j.workspace_id=t.workspace_id AND j.agent_id=t.agent_id AND j.tenant_org_id=t.tenant_org_id AND j.scene_id=t.scene_id AND j.state<>'completed')
  AND NOT EXISTS(SELECT 1 FROM scene_event_receipt e WHERE e.workspace_id=t.workspace_id AND e.agent_id=t.agent_id AND e.source=$1 AND e.source_event_id=r.id::text)
  AND NOT COALESCE(q.context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',r.id::text)
@@ -288,6 +289,11 @@ func (h *Handler) recordEmployeeExecutionEvent(ctx context.Context, workspaceID,
 // or loop forever after a member is removed. No result body is copied or exported.
 func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *employeeExecutionBinding) (string, error) {
 	c, ok := service.ParseDirectTaskContext(b.Queue)
+	// Automation-origin executions (scene routine occurrences) are settled by
+	// their AutopilotRun and routine notices; they never become message facts.
+	if ok && c.AutomationOrigin != nil {
+		return "automation_origin", nil
+	}
 	states := map[string]string{"succeeded": "completed", "failed": "failed", "cancelled": "cancelled"}
 	if !ok || c.EmployeeTaskID != b.TaskID || c.WorkspaceID != b.Scope.WorkspaceID || util.UUIDToString(b.Queue.AgentID) != b.Scope.AgentID || b.Queue.Status != states[b.State] || b.ResultRef != "agent_task_queue:"+b.QueueTaskID || b.FinishedAt.IsZero() {
 		return "invalid_run_queue_binding", nil
