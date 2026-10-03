@@ -101,6 +101,8 @@ M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombston
 
 祖先的非空 input 不能作为来源已知的证明。只认可显式 manifest、显式空 Memory、没有未关联 Memory 明文的合法结构化历史，或当版明确零记录的 memory_stats；旧非空 Memory 或未知字段没有这些证明时 unavailable，不扫描正文猜测记录 ID，也不改变旧 job 恢复的快照字节。
 
+M16 修订失败粒度：未知快照、缺失/冲突/未送达的精确 assistant 祖先只隔离该 assistant 与精确依赖的后继，不使独立真人历史和正常 DWS 转录一起消失。这些 assistant 仍不可回放，记录不含正文的原因/数量；SQL/取消/全图集合或深度超限仍整段 unavailable。参见 [22 局部隔离](plans/2026-10-03/employee-loop-backend-delivery/22-assistant-quarantine.md)。
+
 ## 纯停止当前事项
 
 `stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。reaction 与结构 continuation 不能停止任何事项，不推断其他场域的目标。

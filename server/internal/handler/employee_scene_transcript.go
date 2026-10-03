@@ -225,6 +225,9 @@ func (w *EmployeeSceneWorker) recentConversationSnapshot(ctx context.Context, jo
 		}
 	}
 	metadata := map[string]any{"history_lower_bound": history.Since, "history_segments": merged.Stats.Segments, "history_collapsed": merged.Stats.Collapsed, "history_dropped": merged.Stats.Dropped}
+	if len(history.AssistantProvenanceOmitted) > 0 {
+		metadata["assistant_provenance_omitted"] = history.AssistantProvenanceOmitted
+	}
 	if read != nil {
 		metadata["transcript_status"] = status
 		metadata["transcript_reason"] = reason

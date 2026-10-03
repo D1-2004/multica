@@ -18,7 +18,7 @@ type deliveredMemoryReply struct{ action, message, job string }
 
 // closeReplyAncestors reads only exact IDs referenced by frozen assistant
 // turns. The presentation window bounds candidates, not their provenance.
-func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before time.Time, nodes map[string]*replyMemoryProvenance, replies []deliveredMemoryReply, retired map[string]bool) ([]deliveredMemoryReply, error) {
+func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before time.Time, nodes map[string]*replyMemoryProvenance, replies []deliveredMemoryReply, retired map[string]bool, omitted *withdrawnReplyIDs) ([]deliveredMemoryReply, error) {
 	for depth := 0; depth <= replyAncestorDepthLimit; depth++ {
 		byAction, byMessage := map[string]deliveredMemoryReply{}, map[string][]deliveredMemoryReply{}
 		for _, reply := range replies {
@@ -26,6 +26,13 @@ func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before tim
 			byMessage[reply.message] = append(byMessage[reply.message], reply)
 		}
 		pending := map[string]RecentConversationMessage{}
+		dependents := map[string][]*replyMemoryProvenance{}
+		quarantine := func(node *replyMemoryProvenance, reason string, ref RecentConversationMessage) {
+			if node.QuarantineReason == "" {
+				node.Withdrawn, node.QuarantineReason = true, reason
+				omitted.Reasons[reason]++
+			}
+		}
 		for _, node := range nodes {
 			// An exact withdrawn record already proves this entire reply unusable.
 			if node.Withdrawn {
@@ -40,45 +47,75 @@ func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before tim
 					continue
 				}
 				if (ref.ActionID == "" && ref.MessageID == "") || len(ref.ActionID) > 256 || len(ref.MessageID) > 256 {
-					return nil, errReplyAncestorUnavailable
+					quarantine(node, "invalid_reference", ref)
+					break
 				}
 				var known deliveredMemoryReply
 				if ref.ActionID != "" {
 					known = byAction[ref.ActionID]
 					if known.action != "" && ref.MessageID != "" && known.message != ref.MessageID {
-						return nil, errReplyAncestorUnavailable
+						quarantine(node, "conflicting_reference", ref)
+						break
 					}
 				} else if candidates := byMessage[ref.MessageID]; len(candidates) == 1 {
 					known = candidates[0]
 				} else if len(candidates) > 1 {
-					return nil, errReplyAncestorUnavailable
+					quarantine(node, "ambiguous_reference", ref)
+					break
 				}
 				if source := nodes[known.job]; known.action != "" && source != nil {
 					if !source.SnapshotKnown && !source.Withdrawn {
-						return nil, errReplyAncestorUnavailable
+						quarantine(source, "unknown_snapshot", ref)
+						quarantine(node, "unsafe_ancestor", ref)
+						break
 					}
 					continue
 				}
-				pending[ref.ActionID+"\x00"+ref.MessageID] = ref
+				key := ref.ActionID + "\x00" + ref.MessageID
+				pending[key] = ref
+				dependents[key] = append(dependents[key], node)
 			}
 		}
 		if len(pending) == 0 {
 			return replies, nil
 		}
 		if depth == replyAncestorDepthLimit {
-			return nil, errReplyAncestorUnavailable
+			return nil, errTranscriptEvidenceBound
 		}
 		if len(pending)+len(replies) > transcriptEvidenceCap {
-			return nil, errReplyAncestorUnavailable
+			return nil, errTranscriptEvidenceBound
 		}
-		for _, ref := range pending {
+		for key, ref := range pending {
 			reply, node, err := s.readReplyAncestor(ctx, scope, before, ref, retired)
 			if err != nil {
+				if errors.Is(err, errReplyAncestorUnavailable) {
+					// Only a returned scoped source job proves this is an actual
+					// delivered assistant. Never turn arbitrary frozen ref IDs
+					// into a global tombstone (they may name independent humans).
+					if node.ID != "" && reply.action != "" && reply.message != "" {
+						quarantine(&node, "unknown_snapshot", ref)
+						nodes[node.ID] = &node
+						if _, exists := byAction[reply.action]; !exists {
+							replies = append(replies, reply)
+							byAction[reply.action] = reply
+						}
+						if len(nodes) > transcriptEvidenceCap || len(replies) > transcriptEvidenceCap {
+							return nil, errTranscriptEvidenceBound
+						}
+					}
+					for _, node := range dependents[key] {
+						quarantine(node, "unclosed_ancestor", ref)
+					}
+					continue
+				}
 				return nil, err
 			}
 			if prior, exists := byAction[reply.action]; exists {
 				if prior.message != reply.message {
-					return nil, errReplyAncestorUnavailable
+					for _, node := range dependents[key] {
+						quarantine(node, "conflicting_reference", ref)
+					}
+					continue
 				}
 				// A window action can have an older source job not loaded yet.
 				for index := range replies {
@@ -92,11 +129,11 @@ func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before tim
 			}
 			nodes[node.ID] = &node
 			if len(nodes) > transcriptEvidenceCap || len(replies) > transcriptEvidenceCap {
-				return nil, errReplyAncestorUnavailable
+				return nil, errTranscriptEvidenceBound
 			}
 		}
 	}
-	return nil, errReplyAncestorUnavailable
+	return nil, errTranscriptEvidenceBound
 }
 
 func (s *Store) readReplyAncestor(ctx context.Context, scope Scope, before time.Time, ref RecentConversationMessage, retired map[string]bool) (deliveredMemoryReply, replyMemoryProvenance, error) {
@@ -171,6 +208,9 @@ func (s *Store) readReplyAncestor(ctx context.Context, scope Scope, before time.
 		return reply, replyMemoryProvenance{}, err
 	}
 	node, err := replyProvenance(reply.job, scope.SceneID, snapshot, journal, retired)
+	if err != nil {
+		return reply, node, errReplyAncestorUnavailable
+	}
 	if err == nil && !node.SnapshotKnown && !node.Withdrawn {
 		err = errReplyAncestorUnavailable
 	}

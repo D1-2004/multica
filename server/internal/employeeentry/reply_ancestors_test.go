@@ -42,7 +42,7 @@ func crossWindowReplies(t *testing.T, messageOnly bool) (fixture, RecentConversa
 	historyReplyJob(t, f, recentJob, map[string]any{"input": map[string]any{"RecentConversation": string(history)}}, map[string]any{}, before.Add(-5*time.Minute))
 	recentHistoryReply(t, f, scope, recentJob, "delivered", "B 又说：周二 17 点", "recent-B", "cid-test", before.Add(-4*time.Minute))
 	_, independent := recentHistoryInput(t, f, scope, principal, "另一成员独立项目也在周二 17 点", "independent-question", before.Add(-3*time.Minute))
-	historyReplyJob(t, f, independent, map[string]any{}, map[string]any{}, before.Add(-3*time.Minute))
+	historyReplyJob(t, f, independent, map[string]any{"input": map[string]any{"Memory": ""}}, map[string]any{}, before.Add(-3*time.Minute))
 	recentHistoryReply(t, f, scope, independent, "delivered", "独立 C：周二 17 点", "independent-C", "cid-test", before.Add(-2*time.Minute))
 	tx, err := f.pool.Begin(ctx)
 	if err != nil {
@@ -102,8 +102,9 @@ func TestRecentConversationUnclosedReplyAncestorIsUnavailable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := f.store.RecentConversation(ctx, request); !errors.Is(err, errReplyAncestorUnavailable) {
-				t.Fatalf("unclosed ancestor became available history: %v", err)
+			got, err := f.store.RecentConversation(ctx, request)
+			if err != nil || strings.Contains(historyTexts(t, got), "recent-B") || !strings.Contains(historyTexts(t, got), "independent-C") {
+				t.Fatalf("unclosed assistant leaked or erased independent history: %+v %v", got, err)
 			}
 		})
 	}
@@ -138,7 +139,7 @@ func TestRecentConversationReplyAncestorDepthBound(t *testing.T) {
 	if _, err := f.pool.Exec(ctx, `UPDATE employee_scene_job SET input_snapshot=jsonb_build_object('input',jsonb_build_object('RecentConversation',$2::text)) WHERE id=$1::uuid`, recentJob, string(history)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.RecentConversation(ctx, request); !errors.Is(err, errReplyAncestorUnavailable) {
+	if _, err := f.store.RecentConversation(ctx, request); !errors.Is(err, errTranscriptEvidenceBound) {
 		t.Fatalf("partial deep ancestor graph became available: %v", err)
 	}
 }
@@ -168,8 +169,8 @@ func TestRecentConversationAncestorSnapshotNeedsExplicitStructure(t *testing.T) 
 			}
 			got, err := f.store.RecentConversation(context.Background(), request)
 			if !tc.known {
-				if !errors.Is(err, errReplyAncestorUnavailable) {
-					t.Fatalf("unknown nonempty ancestor became available: %+v %v", got, err)
+				if err != nil || strings.Contains(historyTexts(t, got), "recent-B") || !strings.Contains(historyTexts(t, got), "independent-C") {
+					t.Fatalf("unknown assistant leaked or erased independent history: %+v %v", got, err)
 				}
 				return
 			}

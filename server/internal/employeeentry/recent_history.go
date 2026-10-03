@@ -44,6 +44,7 @@ type RecentConversation struct {
 	MaxBytes                       int                         `json:"max_bytes"`
 	Truncated                      bool                        `json:"truncated"`
 	WithdrawnMemoryEvidenceOmitted bool                        `json:"withdrawn_memory_evidence_omitted,omitempty"`
+	AssistantProvenanceOmitted     map[string]int              `json:"assistant_provenance_omitted,omitempty"`
 	Messages                       []RecentConversationMessage `json:"messages"`
 }
 
@@ -156,6 +157,9 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	if err != nil {
 		return RecentConversation{}, err
 	}
+	if len(withdrawnReplies.Reasons) > 0 {
+		out.AssistantProvenanceOmitted = withdrawnReplies.Reasons
+	}
 	kept := out.Messages[:0]
 	for _, message := range out.Messages {
 		if withdrawnReplies.Sources[message.MessageID] {
@@ -206,6 +210,9 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 		count++
 		if withdrawnReplies.Actions[message.ActionID] || withdrawnReplies.Messages[message.MessageID] {
 			out.WithdrawnMemoryEvidenceOmitted = true
+			if len(withdrawnReplies.Reasons) > 0 {
+				withdrawnReplies.Reasons["omitted_replies"]++
+			}
 			continue
 		}
 		message.Role = "assistant"
