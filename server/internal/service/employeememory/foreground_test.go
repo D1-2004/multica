@@ -355,3 +355,23 @@ func TestForegroundBriefFencedAndBounded(t *testing.T) {
 		t.Fatal("no manifest entries")
 	}
 }
+
+func TestForegroundQueryStripsMentionsAndLinks(t *testing.T) {
+	got := ForegroundQuery([]string{"@Qwen-Real\u2005@张三 周报 https://alidocs.dingtalk.com/i/x?a=1 什么时候交？", "<@0123abc> 发版窗口", "邮件发到a@b.com"}, []string{strings.Repeat("引用", 200)})
+	for _, gone := range []string{"Qwen", "张三", "https", "alidocs", "<@"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("query kept %q: %s", gone, got)
+		}
+	}
+	for _, kept := range []string{"周报", "什么时候交", "发版窗口", "a@b.com", "引用"} {
+		if !strings.Contains(got, kept) {
+			t.Fatalf("query lost %q: %s", kept, got)
+		}
+	}
+	if len(got) > ForegroundQueryBytes || strings.Count(got, "引用") > 256/len("引用") {
+		t.Fatalf("query not bounded: %d bytes", len(got))
+	}
+	if glued := ForegroundQuery([]string{"@张三帮我查周报"}, nil); glued != "@张三帮我查周报" {
+		t.Fatalf("a mention without separator swallowed the request: %q", glued)
+	}
+}

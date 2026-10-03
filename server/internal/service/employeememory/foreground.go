@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -266,8 +267,12 @@ func dedupeForeground(records []foregroundRecord) []foregroundRecord {
 }
 
 var (
-	foregroundURL     = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S+`)
-	foregroundMention = regexp.MustCompile(`@\S+`)
+	foregroundURL = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s\p{Z}]+`)
+	// DWS mention placeholders (<@id>) and "@Name" tokens closed by a space
+	// (DingTalk often uses U+2005). An "@" glued to text is kept, so a missing
+	// separator never swallows the request itself.
+	foregroundMentionToken = regexp.MustCompile(`<@[^>]{0,128}>`)
+	foregroundMention      = regexp.MustCompile(`(^|[\s\p{Z}])@[^\s\p{Z}@<>]{1,32}[\s\p{Z}]`)
 )
 
 // ForegroundQuery builds the retrieval query of a chat wake: the outer text of
@@ -276,8 +281,12 @@ var (
 func ForegroundQuery(current, quoted []string) string {
 	clean := func(text string) string {
 		text = foregroundURL.ReplaceAllString(text, " ")
-		text = foregroundMention.ReplaceAllString(text, " ")
-		return strings.Join(strings.Fields(text), " ")
+		text = foregroundMentionToken.ReplaceAllString(text, " ")
+		// Adjacent mentions share a separator, so strip until stable.
+		for next := foregroundMention.ReplaceAllString(text, " "); next != text; next = foregroundMention.ReplaceAllString(text, " ") {
+			text = next
+		}
+		return strings.Join(strings.FieldsFunc(text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Z, r) }), " ")
 	}
 	parts := make([]string, 0, len(current)+len(quoted))
 	for _, text := range current {
