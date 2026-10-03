@@ -219,10 +219,12 @@ type employeeSavedInput struct {
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
 }
 type employeeSavedOutcome struct {
-	Outcome        employeeloop.Outcome `json:"outcome"`
-	Failure        string               `json:"failure,omitempty"`
-	SourceReplies  map[string]string    `json:"source_replies,omitempty"`
-	ReplyReceiptID string               `json:"reply_receipt_id,omitempty"`
+	Outcome employeeloop.Outcome `json:"outcome"`
+	Failure string               `json:"failure,omitempty"`
+	// Rescue names a deterministic Host correction of the final outcome.
+	Rescue         string            `json:"rescue,omitempty"`
+	SourceReplies  map[string]string `json:"source_replies,omitempty"`
+	ReplyReceiptID string            `json:"reply_receipt_id,omitempty"`
 }
 
 func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, returnErr error) {
@@ -345,6 +347,13 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 					host.attachCapabilityReplies(&saved.Outcome)
 					host.repairCopiedConfigLinks(runCtx, &saved.Outcome)
 				}
+				generated, refused := employeeRefusedReplyText(saved.Outcome)
+				if err == nil && refused && saved.Outcome.Kind == employeeloop.Quiet && (generated != "" || employeeWindowAddressed(envelopes)) {
+					// A tool error must not silence an addressed source or drop a
+					// reply the model already wrote. Deterministic: no model call.
+					saved.Outcome.Kind, saved.Outcome.Reply = employeeloop.Reply, firstNonEmpty(generated, employeeRefusedToolFallbackReply)
+					saved.Rescue = "quiet_after_refused_tool"
+				}
 				if err != nil {
 					saved.Failure = err.Error()
 					replies, unresolved := employeeAcceptedReplies(saved.Outcome)
@@ -359,6 +368,10 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 						saved.Outcome.Reply = employeeContinuationFailureReply(saved.Outcome)
 						if saved.Outcome.Reply == "" {
 							saved.Outcome.Reply = employeeStopFailureReply(saved.Outcome)
+						}
+						if saved.Outcome.Reply == "" && generated != "" {
+							// The budget ended after refusals: send what was written.
+							saved.Outcome.Reply, saved.Rescue = generated, "budget_after_refused_tool"
 						}
 						if saved.Outcome.Reply == "" {
 							saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
@@ -384,6 +397,64 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 	}
 	committed = true
 	return true, nil
+}
+
+const employeeRefusedToolFallbackReply = "抱歉，这条消息我这次没能正常回复，麻烦再发一次。"
+
+// employeeRefusedReplyText reports whether any tool call of the turn failed
+// or was rejected, and the last reply text the model wrote in such a call.
+func employeeRefusedReplyText(outcome employeeloop.Outcome) (string, bool) {
+	executed, failed := map[string]bool{}, map[string]bool{}
+	for _, effect := range outcome.ToolOutcomes {
+		executed[effect.NativeToolCallID] = true
+		if effect.Error != "" {
+			failed[effect.NativeToolCallID] = true
+		}
+	}
+	refused, text := false, ""
+	for _, entry := range outcome.Entries {
+		if entry.Message == nil {
+			continue
+		}
+		for _, call := range entry.Message.ToolCalls {
+			// A call with no Host outcome was rejected before execution.
+			if executed[call.ID] && !failed[call.ID] {
+				continue
+			}
+			refused = true
+			if call.Function.Name != "reply" && call.Function.Name != "describe_capabilities" {
+				continue
+			}
+			var args struct {
+				Reply string `json:"reply"`
+			}
+			if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil && strings.TrimSpace(args.Reply) != "" {
+				text = strings.TrimSpace(args.Reply)
+			}
+		}
+	}
+	return text, refused
+}
+
+// employeeWindowAddressed is true when a source in the window is a 1:1
+// message or @-mentions this employee's DWS identity.
+func employeeWindowAddressed(envelopes []employeeDispatchEnvelope) bool {
+	for _, env := range envelopes {
+		if kind, ok := scene.KindFromConversationType(env.Command.Event.Data.Conversation.Type); ok && kind == scene.KindDM {
+			return true
+		}
+		if env.Command.ExternalIdentity.DWS == nil || env.Command.ExternalIdentity.DWS.UID == "" {
+			continue
+		}
+		for _, message := range env.Command.Event.Data.Messages {
+			for _, mention := range message.Mentions {
+				if mention.UID == env.Command.ExternalIdentity.DWS.UID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // retryPersisted keeps the original retry for a frozen-input defect, bounded

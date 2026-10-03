@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -125,5 +126,106 @@ func TestEmployeeSceneRefusedSourceRefRetriesWithinBudget(t *testing.T) {
 	var reply string
 	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE agent_id=$1::uuid`, f.agentID).Scan(&reply); err != nil || reply != "我来分析这些反馈。" {
 		t.Fatalf("acceptance reply: %q %v", reply, err)
+	}
+}
+
+// A refused tool call must not end an addressed turn in silence or drop a
+// reply the model already wrote; un-addressed group chatter may stay quiet.
+func TestEmployeeSceneRefusedToolNeverSilencesAddressedSource(t *testing.T) {
+	quiet := func(id string) (string, map[string]any) { return wakeToolCall(id, "stay_quiet", map[string]any{}) }
+	for _, tc := range []struct {
+		name        string
+		dm, mention bool
+		respond     func(receipt string) func(int) (string, map[string]any)
+		want        string // "" means no reply is sent
+		calls       int
+		rescue      string
+	}{
+		{name: "dm_quiet_keeps_generated_text", dm: true, calls: 2, want: "合计是 55", rescue: "quiet_after_refused_tool", respond: func(receipt string) func(int) (string, map[string]any) {
+			return func(call int) (string, map[string]any) {
+				if call == 1 {
+					return wakeToolCall("call-bad", "reply", map[string]any{"source_ref": receipt + "/no-such-message", "reply": "合计是 55"})
+				}
+				return quiet("call-quiet")
+			}
+		}},
+		{name: "budget_ends_keeps_generated_text", dm: true, calls: 3, want: "合计是 55", rescue: "budget_after_refused_tool", respond: func(receipt string) func(int) (string, map[string]any) {
+			return func(call int) (string, map[string]any) {
+				return wakeToolCall(fmt.Sprintf("call-bad-%d", call), "reply", map[string]any{"source_ref": receipt + "/no-such-message", "reply": "合计是 55"})
+			}
+		}},
+		{name: "mentioned_group_quiet_gets_honest_reply", mention: true, calls: 2, want: employeeRefusedToolFallbackReply, rescue: "quiet_after_refused_tool", respond: func(receipt string) func(int) (string, map[string]any) {
+			return func(call int) (string, map[string]any) {
+				if call == 1 {
+					return wakeToolCall("call-bad", "memory_lookup", map[string]any{"source_ref": receipt + "/no-such-message", "query": "x"})
+				}
+				return quiet("call-quiet")
+			}
+		}},
+		{name: "unaddressed_group_may_stay_quiet", calls: 2, respond: func(receipt string) func(int) (string, map[string]any) {
+			return func(call int) (string, map[string]any) {
+				if call == 1 {
+					return wakeToolCall("call-bad", "memory_lookup", map[string]any{"source_ref": receipt + "/no-such-message", "query": "x"})
+				}
+				return quiet("call-quiet")
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, dc := employeeFixture(t)
+			ctx := context.Background()
+			f.command.CompletionCallback, f.command.ResponsePolicy = nil, nil
+			if tc.dm {
+				f.command.Event.Data.Conversation.Type = "single"
+			}
+			if tc.mention {
+				f.command.Event.Data.Messages[0].Mentions = []DispatchMention{{UID: "123"}}
+			}
+			if w := employeeHTTP(t, f, dc, uuid.NewString()); w.Code != http.StatusAccepted {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			var receipt string
+			if err := testPool.QueryRow(ctx, `SELECT receipt_id::text FROM employee_event_consumption WHERE agent_id=$1::uuid`, f.agentID).Scan(&receipt); err != nil {
+				t.Fatal(err)
+			}
+			model := &employeeWakeTestModel{respond: tc.respond(receipt)}
+			f.h.EmployeeSceneWorker.model = model
+			if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); err != nil || !worked {
+				t.Fatal(worked, err)
+			}
+			var outcome []byte
+			if err := testPool.QueryRow(ctx, `SELECT outcome FROM employee_scene_job WHERE agent_id=$1::uuid`, f.agentID).Scan(&outcome); err != nil {
+				t.Fatal(err)
+			}
+			var saved employeeSavedOutcome
+			if err := json.Unmarshal(outcome, &saved); err != nil {
+				t.Fatal(err)
+			}
+			var replies []string
+			rows, err := testPool.Query(ctx, `SELECT input->>'text' FROM response_action WHERE agent_id=$1::uuid AND kind='message.send'`, f.agentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var text string
+				if err = rows.Scan(&text); err != nil {
+					t.Fatal(err)
+				}
+				replies = append(replies, text)
+			}
+			rows.Close()
+			if model.calls != tc.calls || saved.Rescue != tc.rescue {
+				t.Fatalf("calls=%d rescue=%q outcome=%s", model.calls, saved.Rescue, outcome)
+			}
+			if tc.want == "" {
+				if len(replies) != 0 || saved.Outcome.Kind != "quiet" {
+					t.Fatalf("un-addressed chatter was answered: %v %s", replies, outcome)
+				}
+				return
+			}
+			if len(replies) != 1 || replies[0] != tc.want {
+				t.Fatalf("addressed turn replies=%v want %q", replies, tc.want)
+			}
+		})
 	}
 }
