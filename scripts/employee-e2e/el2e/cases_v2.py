@@ -55,7 +55,7 @@ EVIDENCE_IMPLEMENTED = {"max_calls_per_wake", "no_effect_for_step", "same_task_r
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")

@@ -352,6 +352,14 @@ def collect_run(run_id: str, *, only: list[str], with_sls: bool = True) -> int:
         out_path = rd / "evidence" / path.name.replace(".driver.json", ".lf.json")
         ev = collect_case(rd, rec, scene_ids)
         write_json(out_path, ev)
+        if rec.get("schema") == "el2e.driver.v2":
+            # pg_read: PG facts through the 预发 HTTP API (PG is unreachable from here).
+            from . import api_facts
+            try:
+                facts = api_facts.collect(rec)
+            except Exception as exc:  # recorded, never fatal for the other cases
+                facts = {"error": str(exc)[:300]}
+            write_json(rd / "evidence" / path.name.replace(".driver.json", ".api.json"), facts)
         windows.append(case_window(rec))
         print(json.dumps({"case": rec["case_id"], "attempt": rec["attempt"], "traces": len(ev["traces"]),
                           "listed": ev["listed"]}, ensure_ascii=False), flush=True)

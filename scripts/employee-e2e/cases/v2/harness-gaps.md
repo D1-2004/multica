@@ -218,3 +218,16 @@ EmployeeLoop 读当前场域最近 20 条 / 16 KiB 和 24 小时历史，还会�
 | 运维 | `deploy_freeze` | 长窗口需在部署冻结窗口跑（预发每天约 28 次部署） | 2 条：T-07、T-09 |
 | 运维 | `routine_pause` | dm_zhujue 批次期间暂停「每小时对话汇报」例行任务 | 21 条：M-14、M-15、M-17、C-04、C-07、C-08、C-11、C-14、C-17、C-18、P-05、P-08、P-09、P-10、P-15、P-17、T-02、T-04、T-05、T-13、T-14 |
 | 运维 | `probe_first` | 先用真人号对照探测事件形态 | 2 条：M-05、M-11 |
+
+## 7. 实现状态与 API 缺口（harness 侧，2026-10-03）
+
+预发 PG 从本机连不上，`pg_read` 一律走预发 HTTP API（`pre-fde` profile），实现在 `el2e/preapi.py`、`el2e/api_facts.py`，由 `e2e.py collect` 写入 `evidence/<case>.a<N>.api.json`。下列事实**没有 API**，对应的待补证据记为 `api_gap`，不伪造：
+
+| 事实 | 需要的用例 | 现有 API 能给的 | 缺口 |
+| --- | --- | --- | --- |
+| verification passed + verified learning（`pg_learning`） | C-16 | `GET /api/employee-tasks/{id}` 的 `latest_run.verification` gate | EmployeeLoop learning 行没有读 API |
+| WorkPacket / ContextUsed 的 learning ref（`workpacket_ref`） | C-16 | `evidence_refs`、`links` | WorkPacket 内容与 ContextUsed 未暴露 |
+| collection / invitation / input 计数（`pg_collection`） | P-05、T-12 | 任务详情 `collections[]`（expected / received / state）、`waiting_counts.open_collections` | invitation 与每个参与者的 input 没有 API |
+| routine occurrence 的 planned_at 与 skipped 原因（`pg_occurrence`） | T-09 | routine runs 的 status / source / failure_reason / created_at / completed_at | planned_at 与跳过原因字段未暴露 |
+| process_exit_confirmed | T-04 | 任务详情 `execution.exit_confirmed` / `stop_requested` / `state` | 无 |
+| 员工私有记忆快照（`memory_reset` 前后） | G-15、C-13、C-14、P-08、P-10 | Coordinator `GET /api/agents/{id}/scene-memory/{sceneId}` | EmployeeLoop 共享/私有 learning 没有读 API；清理用 `/reset-memory` 场域指令，回执即证据 |

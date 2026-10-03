@@ -159,6 +159,32 @@ def sentinel_check(check: dict[str, Any], rec: dict[str, Any], transcripts: dict
                    {"whole": whole, "split": split, "messages_scanned": len(texts), "window": [iso(lo), iso(hi)]})
 
 
+def pending_result(check: dict[str, Any], ev: dict[str, Any], api: dict[str, Any] | None,
+                   ctx: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate a pending (unscored) check where the harness can, else say why not."""
+    from . import api_facts
+    kind = check.get("evidence") or check.get("check")
+    out = {"kind": kind, "why": check.get("why"), "scored": False}
+    if kind in ("pg_learning", "workpacket_ref"):
+        return {**out, "status": "api_gap", "detail": api_facts.API_GAPS[kind]}
+    if kind in ("pg_collection", "pg_occurrence", "process_exit_confirmed"):
+        if not api or api.get("error"):
+            return {**out, "status": "pending_evidence", "detail": (api or {}).get("error") or "run `e2e.py collect`"}
+        if kind == "pg_collection":
+            return {**out, "status": "recorded", "facts": api_facts.collections(api),
+                    "gap": api_facts.API_GAPS["pg_invitation"]}
+        if kind == "pg_occurrence":
+            return {**out, "status": "recorded", "facts": api_facts.routine_runs(api),
+                    "gap": api_facts.API_GAPS["pg_occurrence_planned_at"]}
+        return {**out, "status": "recorded", "facts": api_facts.exit_states(api)}
+    scored = ctx.get("evaluate_pending")
+    if scored:
+        res = scored(check)
+        if res is not None:
+            return {**out, "status": res["status"], "detail": res.get("detail")}
+    return {**out, "status": "unsupported"}
+
+
 def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dict[str, Any],
                   caps: dict[str, dict[str, bool]], fresh: dict[str, list] | None = None,
                   judgements: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -173,6 +199,7 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     attributed = grader.attribute(rec, transcripts, reg, spans)
     by_step = attributed["by_step"]
     ev = grader.evidence_summary(rd, rec)
+    api = load_json(rd / "evidence" / f"{rec['case_id']}.a{rec['attempt']}.api.json")
     ctx = {"pattern_sets": spec["defaults"].get("pattern_sets") or {},
            "step_message_ids": {s["id"]: s["msg"]["messageId"] for s in rec["steps"] if s.get("msg")}}
     results = []
@@ -240,6 +267,9 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
         "verdict": verdict, "auto_verdict": auto, "reason": reason, "check_counts": counts,
         "criteria": rendered.get("criteria"), "semantic_rubric": rendered.get("semantic", []),
         "known_gap": case.get("known_gap"), "pending_checks": case.get("pending_checks", []),
+        "pending_results": [pending_result(cases_v2.render(c, vars_, aliases), ev, api, ctx)
+                            for c in case.get("pending_checks") or []],
+        "api_facts": {"tasks": len((api or {}).get("tasks") or []), "error": (api or {}).get("error")} if api else None,
         "vars": vars_, "var_row": rec.get("var_row"), "roles": rec["roles"], "judgement": judged or None,
         "steps": [{"id": s["id"], "actor": s.get("actor"), "conversation": s.get("conversation"),
                    "sent": (s.get("msg") or {}).get("text"), "messageId": (s.get("msg") or {}).get("messageId"),

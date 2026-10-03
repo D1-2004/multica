@@ -51,5 +51,34 @@ class MemoryResetTests(unittest.TestCase):
         self.assertEqual(convs.count("group_e2e"), 1)
 
 
+class PgReadTests(unittest.TestCase):
+    def test_collect_keeps_only_case_scene_tasks_inside_the_window(self) -> None:
+        from el2e import api_facts
+        rec = {"case_id": "P-05", "attempt": 1, "started_at": "2026-10-03T22:00:00+08:00",
+               "ended_at": "2026-10-03T22:10:00+08:00", "steps": [{"id": "a", "conversation": "group_p_hx"}]}
+        tasks = [
+            {"task_id": "in", "scene_id": "S1", "created_at": "2026-10-03T22:01:00+08:00", "updated_at": "2026-10-03T22:05:00+08:00"},
+            {"task_id": "other-scene", "scene_id": "S9", "created_at": "2026-10-03T22:01:00+08:00", "updated_at": "2026-10-03T22:05:00+08:00"},
+            {"task_id": "old", "scene_id": "S1", "created_at": "2026-10-03T20:00:00+08:00", "updated_at": "2026-10-03T22:02:00+08:00"},
+        ]
+        detail = {"status": 200, "task": {"collections": [{"collection_id": "c1", "state": "open", "expected": 2, "received": 1}],
+                                          "execution": {"exit_confirmed": True}}, "runs": []}
+        with mock.patch.object(api_facts.preapi, "scene_id_for", return_value="S1"), \
+                mock.patch.object(api_facts.preapi, "tasks_since", return_value=tasks), \
+                mock.patch.object(api_facts.preapi, "task_detail", return_value=detail), \
+                mock.patch.object(api_facts.preapi, "routines", return_value=[]):
+            facts = api_facts.collect(rec)
+        self.assertEqual([t["summary"]["task_id"] for t in facts["tasks"]], ["in"])
+        self.assertEqual(api_facts.collections(facts)[0]["received"], 1)
+        self.assertTrue(api_facts.exit_states(facts)[0]["exit_confirmed"])
+
+    def test_pending_checks_without_api_are_api_gaps(self) -> None:
+        from el2e import grader_v2
+        res = grader_v2.pending_result({"evidence": "pg_learning", "why": "x"}, {}, {"tasks": []}, {})
+        self.assertEqual(res["status"], "api_gap")
+        res = grader_v2.pending_result({"evidence": "pg_collection"}, {}, None, {})
+        self.assertEqual(res["status"], "pending_evidence")
+
+
 if __name__ == "__main__":
     unittest.main()
