@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -826,5 +827,42 @@ func TestGoalWaitingIsActiveCandidateAndReopenNeedsAmendment(t *testing.T) {
 	task, entry, err := f.store.CompleteGoal(ctx, task.Scope, task.ID, completion(task, "done-again"))
 	if err != nil || task.State != StateSucceeded || entry.GoalRevision != 2 || entryCount(t, f.pool, task.ID, "goal_completed") != 2 {
 		t.Fatalf("revision 2 completion: %+v %+v %v", task, entry, err)
+	}
+}
+
+// A Task-to-Task blocked_by wait is an ordinary mandatory wait fact: the
+// dependent goal cannot complete until the upstream release is recorded.
+func TestUpstreamTaskWaitBlocksCompletionUntilSatisfied(t *testing.T) {
+	f := database(t)
+	ctx := context.Background()
+	upstream := createTask(t, f)
+	goal := createGoal(t, f, "downstream")
+	goal, _ = runToTerminal(t, f, goal, "own-work", StateSucceeded)
+	blocked := WaitParams{Source: Source{"task_dependency", upstream.ID + "/open"}, Kind: WaitUpstreamTask, RefID: upstream.ID, Mandatory: true, AuthorityRef: authorityOf(goal)}
+	for name, ref := range map[string]string{"not a uuid": "upstream-1", "self": goal.ID, "uppercase": strings.ToUpper(upstream.ID)} {
+		invalid := blocked
+		invalid.Source.Key, invalid.RefID = name, ref
+		if _, _, err := f.store.WaitTask(ctx, goal.Scope, goal.ID, invalid); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s upstream ref accepted: %v", name, err)
+		}
+	}
+	goal, wait, err := f.store.WaitTask(ctx, goal.Scope, goal.ID, blocked)
+	if err != nil || goal.State != StateWaiting || wait.Kind != WaitUpstreamTask || wait.RefID != upstream.ID {
+		t.Fatalf("blocked_by wait: %+v %+v %v", goal, wait, err)
+	}
+	_, _, err = f.store.CompleteGoal(ctx, goal.Scope, goal.ID, completion(goal, "before-upstream"))
+	requireRefusal(t, err, CodeNotReady, ReasonOpenMandatoryWait)
+	goal, _, err = f.store.ReadyTask(ctx, goal.Scope, goal.ID, ReadyParams{Source: Source{"task_dependency", upstream.ID + "/released"}, Kind: WaitUpstreamTask, RefID: upstream.ID, Outcome: WaitSatisfied, EvidenceRef: "employee_task:" + upstream.ID + "/succeeded", AuthorityRef: authorityOf(goal)})
+	if err != nil || goal.State != StateReady {
+		t.Fatalf("release: %+v %v", goal, err)
+	}
+	done, _, err := f.store.CompleteGoal(ctx, goal.Scope, goal.ID, completion(goal, "after-upstream"))
+	if err != nil || done.State != StateSucceeded {
+		t.Fatalf("complete after release: %+v %v", done, err)
+	}
+	var pgErr *pgconn.PgError
+	_, err = f.pool.Exec(ctx, `INSERT INTO employee_task_wait(workspace_id,agent_id,tenant_org_id,task_id,kind,ref_id,mandatory,goal_revision,opened_seq) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'task','not-a-task',true,1,1)`, goal.Scope.WorkspaceID, goal.Scope.AgentID, goal.Scope.TenantOrgID, goal.ID)
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("database accepted a non-UUID upstream task ref: %v", err)
 	}
 }

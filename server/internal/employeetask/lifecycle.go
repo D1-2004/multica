@@ -247,7 +247,11 @@ const (
 	WaitCollection WaitKind = "collection"
 	WaitHumanInput WaitKind = "human_input"
 	WaitSchedule   WaitKind = "schedule"
-	WaitExternal   WaitKind = "external"
+	// WaitUpstreamTask is a Task-to-Task blocked_by dependency: RefID is the
+	// upstream Task UUID. Only the upstream's real terminal fact may satisfy it
+	// (GawkBot BlockedOn/unblockDependentsLocked); that release is not wired yet.
+	WaitUpstreamTask WaitKind = "task"
+	WaitExternal     WaitKind = "external"
 )
 
 // WaitState is a wait's own lifecycle; satisfied and cancelled are final.
@@ -496,6 +500,8 @@ func goalGate(task *Task, expected int64) error {
 func validWaitRef(kind WaitKind, ref string) bool {
 	switch kind {
 	case WaitCollection, WaitHumanInput, WaitSchedule, WaitExternal:
+	case WaitUpstreamTask:
+		return validUUID(ref)
 	default:
 		return false
 	}
@@ -532,6 +538,10 @@ func (s *Store) WaitTask(ctx context.Context, scope Scope, id string, p WaitPara
 		}
 		if task.State == StateSucceeded {
 			return Entry{}, lifecycleErr(CodeConflict, ReasonAlreadyCompleted)
+		}
+		if p.Kind == WaitUpstreamTask && p.RefID == id {
+			// A goal blocked on itself could never complete.
+			return Entry{}, ErrInvalid
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO employee_task_wait(workspace_id,agent_id,tenant_org_id,task_id,kind,ref_id,mandatory,goal_revision,opened_seq)
  VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8,$9)`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.Kind, p.RefID, p.Mandatory, task.GoalRevision, task.LastEntrySeq+1); err != nil {
