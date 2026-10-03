@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -112,8 +111,8 @@ func TestEmployeeRunNoticeSameRevisionFollowupKeepsResultScopedToItsRun(t *testi
 	if err = testPool.QueryRow(context.Background(), `SELECT body FROM employee_run_notice WHERE run_id=$1::uuid`, f.runID).Scan(&body); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(body, "本次执行结果：") || !strings.Contains(body, "真实已存结果") {
-		t.Fatal("notice presents unscoped Task completion", body)
+	if body != "真实已存结果" {
+		t.Fatal("notice changed the frozen run output", body)
 	}
 	provider := &employeeNoticeProvider{}
 	actionID := startEmployeeNoticeDelivery(t, f, provider)
