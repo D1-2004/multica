@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -233,6 +234,36 @@ func (r *employeeMessageResourceReader) Read(ctx context.Context, job employeeen
 			"state", item.State, "reason", item.Reason, "size_bytes", item.SizeBytes, "sha256", item.SHA256, "text_bytes", len(item.Text), "retryable", item.Retryable)
 	}
 	return out, nil
+}
+
+// resourceContext returns the ResourceContext JSON for a new input snapshot,
+// or "" when the window carries no resources. Snapshots stay readable by the
+// replicas that replay them: the context is produced only once every live
+// replica understands Input.Resources, else an older replica would rebuild a
+// request without it and conflict with the journal.
+func (w *EmployeeSceneWorker) resourceContext(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) (string, error) {
+	if !employeeWindowMayCarryResources(envelopes) || w.ReplicaReady == nil || w.ReplicaReady(ctx) != nil {
+		return "", nil
+	}
+	provider := w.ResourceProvider
+	if provider == nil && w.handler.DingTalkResponses != nil {
+		provider = w.handler.DingTalkResponses
+	}
+	resources, err := newEmployeeMessageResourceReader(w, provider).Read(ctx, job, envelopes)
+	if errors.Is(err, employeeentry.ErrLease) || ctx.Err() != nil {
+		return "", err
+	}
+	if err != nil {
+		// The wake goes on and says the attachment could not be read, rather
+		// than letting the model guess from the file notation in the text.
+		slog.WarnContext(ctx, "employee message resources unavailable", "event", "employee_message_resource_failed", "job_id", job.ID, "error", err)
+		resources = employeeresource.Context{Version: employeeresource.ContextVersion, Items: []employeeresource.Item{{Kind: "unknown", State: employeeresource.Unavailable, Reason: employeeresource.ReasonProviderUnavailable, Retryable: true}}}
+	}
+	if len(resources.Items) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(resources)
+	return string(raw), err
 }
 
 func (r *employeeMessageResourceReader) messageItem(source employeeSourceMessage, relation employeeresource.Relation, item employeeresource.Item) employeeresource.Item {

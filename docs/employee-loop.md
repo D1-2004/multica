@@ -220,3 +220,97 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 - 已受理的 run 沿用冻结时的输入。
 
 **仍待完成**：Webhook 例行任务目前仍走 Autopilot run_only，Employee producer（F2）要等读取端在全部副本上就绪后才开启。
+
+## 场域例行任务改走 Employee Direct（marker 12）
+
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备 `[employee-loop:12]`。
+
+**新路径的行为**
+- 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
+- `(trigger, planned_at)` 只受理一次。
+- 认领时只使用冻结的工作包，不读当前的 Autopilot 说明。
+- 开始/结束通知由例行任务自己发送，并且是唯一发送方。这类执行不进入 Execution Event，也不进入私有学习。
+
+**跳过与失败**
+- 上一次还在运行时，本次记为 `skipped_overlap`。
+- 暂停、场域或租户不可用、授权撤销、runtime 离线：记为 skipped。
+- 配置错误：记为 failed。
+- 以上情况都保持原有节拍。
+
+**门禁关闭时**：保持原 Autopilot run_only 路径。
+
+**注意**：runtime 没有 `employee-direct-v1` 能力时，occurrence 记为 skipped，不会回退到旧路径。
+
+## 内部唤醒的场域历史与 Host 主动消息
+
+内部唤醒（task_wake）的快照组成：
+- origin 场域的近期对话，按原受理 principal 读取，截止时间为唤醒受理时刻；
+- Task 快照，作为 Background follow-up 数据放入，不是人的指令；
+- 工具只有 reply 和 stay_quiet。
+
+Host 主动发出的消息会进入之后的近期历史。范围包括：唤醒回复、邀请、停滞提醒。
+
+- 这些消息写入 `employee_host_notice` 事实表。
+- 只有同一场域、同一 principal、已送达且有 provider message id 的消息才会进入历史，角色为 assistant。
+
+Task 来源的读取按 source namespace 注册，`history_policy` 有三种显式取值：`scene_principal`、`scene_endpoint_principal`、`not_applicable`。
+
+## 停滞提示（watchdog）
+
+**什么算进展**
+- 算进展：真实执行输出、工具结果、artifact，以及 Host 受理的人类 Task 输入。
+- 不算进展：心跳、lease、扫描、通知、账本记账，以及问进展或致谢这类闲聊。
+
+**episode 与提示**
+- 每个 Task 同时最多一个 open episode。状态变化或出现新进展时，静默关闭当前 episode。
+- 每个 episode 最多发一条确定性中文提示：不调用模型，不报百分比或 ETA，不说「卡住」。同一边界最多 3 条。
+- FC 执行在凭据有效期之后仍没有输出，判为执行环境不可达，提示里不会说「还在执行」。
+
+**发送前重查**：发送前重新确认 episode 仍是 open、没有更新的进展、交付合同允许发送、目标未变。
+
+**不发提示的情况**
+- 用户要求「只发文件」时，记为 held，不发送。
+- 每个 agent 有启用水位；水位之前开始的工作不判定。
+
+**扫描条件**：扫描间隔 30 秒，前提是全部副本具备 marker。
+
+**阈值配置**
+- 配置位置是 Diamond 的 `runtime.employee_watchdog`，采用严格解析。
+- 默认值：running 900s，queued 600s，waiting 3600s。
+- 可以按 agent 单独覆盖。
+- 必须等两个副本都已运行新二进制后，才能写入这个键。
+
+## Host 验证与可信提炼
+
+**验证规格的来源**，只认三种：
+- 请求者本人原话中明确写出的完成标准，由确定性规则推导；
+- 自动化配置；
+- Host 预置算例。
+
+模型提出的检查必须经请求者确认后才生效。
+
+**怎样才算通过**
+- 证据必须绑定到确切的 Task/Run/queue/goal revision，由确定性 checker 核验。assistant 的自述、沙箱 exit 0 都不算。
+- 送达不等于正确。
+- 检查期间规格或证据发生变化，本次结果作废。
+
+**通过之后**：验证通过的 Run 经持久意图提炼为请求者私有的可信学习（confidence 7）。自动化来源永远不进入人的私有命名空间。
+
+**运行方式**：验证与提炼由 worker 周期对账执行，两者都是幂等的 PG 消费者。
+
+## 当前消息的附件（文本）
+
+**读取范围**
+- 只读当前消息自己的资源，或外层消息精确引用的那条消息的资源。
+- 资源来自 `im/list_messages_by_ids` 的结构化 `resources`。
+- 正文里的 URL 和 fileId 不授予任何读取权。
+
+**限额与格式**
+- 每条消息最多 4 个文件、2 张图。
+- 单个文件不超过 10 MiB。
+- 每次唤醒提取的文本合计不超过 16 KiB。
+- 只支持 UTF-8 的 txt/md/csv/json。
+
+**冻结与重放**：读取在事务外进行，在 lease 内重新校验后冻结到 `employee_message_resource`。新快照以「Host 读取的资源（数据）」放入，不增加模型调用。
+
+**能力边界**：图片一律标注 `vision_unavailable`；当前模型链没有经过验证的视觉路径。

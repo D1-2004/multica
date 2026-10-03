@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/employeeverification"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -338,6 +340,18 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, source employeeSourceM
 	task, err := employeetask.NewStore(storeDB).Create(ctx, employeetask.CreateParams{Scope: h.taskScope(), OwnerLoop: employeetask.LoopEmployee, DispatchMode: employeetask.DispatchDirect, RequesterRef: source.RequesterRef, Definition: packet.Definition, Source: employeetask.Source{Namespace: "employee_scene", Key: sourceKey + "/definition"}, Input: string(evidence)})
 	if err != nil {
 		return employeeloop.ToolResult{}, err
+	}
+	// The requester's own explicit done criteria become the Host verification
+	// contract; nothing is derived from model-written fields. A failure here
+	// never blocks the dispatch: the Run simply stays unverified.
+	if source.SourceRef != "" {
+		if checks := employeeverification.DeriveFromHumanText(source.Message.Text); len(checks) > 0 {
+			if _, specErr := employeeverification.NewStore(storeDB).SetSpec(ctx, h.taskScope(), task.ID, employeeverification.SetSpecParams{
+				Origin: employeeverification.OriginHumanCue, SourceRef: "employee-message:" + source.SourceRef, AuthorRef: source.RequesterRef, Checks: checks,
+			}); specErr != nil {
+				slog.WarnContext(ctx, "employee verification spec not recorded", "task_id", task.ID, "error", specErr)
+			}
+		}
 	}
 	command := env.Command
 	command.Event.Data.Messages = []DispatchMessage{source.Message}
