@@ -76,3 +76,43 @@ func TestAssistantQuarantineCannotWithdrawIndependentHumanReferenceID(t *testing
 		t.Fatalf("independent human was erased by another node's invalid pair: %+v", transcript)
 	}
 }
+
+func TestUnknownOldJobWithWindowDeliveryIsReboundAndOmitted(t *testing.T) {
+	f, request, action := crossWindowReplies(t, false)
+	ctx := context.Background()
+	if _, err := f.pool.Exec(ctx, `UPDATE employee_scene_job SET input_snapshot=NULL WHERE id::text=(SELECT input->>'scene_notice_id' FROM response_action WHERE id=$1)`, action); err != nil {
+		t.Fatal(err)
+	}
+	// Outside both the 24-hour dialogue and 72-hour transcript job window.
+	if _, err := f.pool.Exec(ctx, `UPDATE employee_scene_job SET created_at=$2 WHERE id::text=(SELECT input->>'scene_notice_id' FROM response_action WHERE id=$1)`, action, request.Before.Add(-76*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var oldJob string
+	if err := f.pool.QueryRow(ctx, `SELECT input->>'scene_notice_id' FROM response_action WHERE id=$1`, action).Scan(&oldJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHostNotice(ctx, f.pool, HostNotice{ActionID: action, Scope: request.Scope, PrincipalID: request.PrincipalID, SourceKind: HostNoticeTaskWake, SourceID: oldJob}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE response_action SET updated_at=$2 WHERE id=$1`, action, request.Before.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.store.RecentConversation(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := historyTexts(t, got)
+	if strings.Contains(raw, "old-A") || strings.Contains(raw, "recent-B") || !strings.Contains(raw, "independent-C") {
+		t.Fatalf("window action retained an unbound unsafe old source: %s", raw)
+	}
+	evidence, err := f.store.SceneTranscriptEvidence(ctx, request.Scope, request.Before.Add(-TranscriptWindow), request.Before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounds := transcriptBounds(request.Before)
+	bounds.Org, bounds.Evidence = request.Scope.TenantOrgID, evidence
+	transcript := BuildSceneTranscript([]TranscriptSource{{ID: "current-human-quote", SentAt: request.Before.Add(-30 * time.Second), SenderOpenID: "other-member", Content: "独立的真人材料", QuotedID: "old-A", QuotedContent: "旧值不该复活"}}, transcriptReader, bounds)
+	if len(transcript.Lines) != 1 || transcript.Lines[0].Quoted != "" {
+		t.Fatalf("unsafe old action reentered through DWS quote: %+v", transcript)
+	}
+}

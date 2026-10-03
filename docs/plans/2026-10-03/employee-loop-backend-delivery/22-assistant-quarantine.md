@@ -13,3 +13,7 @@ spec/Plan 先更新，真实 DB 原反例与核心局部隔离进行中。
 独立 review 补充的 invalid-pair 对抗也纳入：不可信ref中的ActionID/MessageID不能授权全局擦除。只隔离坏节点及其后继；只有同scope、目标会话、实际delivered且关联源job已核对的assistant才把实际provider ID传给transcript过滤。独立真人被伪造为ref.MessageID时仍保留。
 
 验证已完成：独立本地DB multica_quarantine_20261004，发布源码 dfa79d4eb6 的只读overlay真实reset/新真人原反例 FAIL，候选 PASS；包含invalid-pair、新人同值材料、跨窗/旧快照/权限及硬cap、SQL/取消路径共26项top-level无skip通过。unknown source仍隔离；64/2000硬cap专用errTranscriptEvidenceBound不被sentinel catch吞掉。原件和旧字节未改；仅为明确独立来源的测试fixture添加显式empty Memory保存格式，未放宽未知快照。handler受影响编译与diff/gofmt通过。证据 CODEX-CLOSEOUT-20261004-ASSISTANT-QUARANTINE/baseline.log、candidate.log。未新增模型或发IM/线上写入，生产具体未知源仍待新静态reason日志定位；原M5复验由root裁定。
+
+后续窄 review：祖先 job 窗外而其实际 delivery 窗内时，window replies 已有该 action 但 job 为空。error 分支确认未知源 job 后也必须替换该 action 的关联，不能只处理新 append；否则 A 及其DWS引文仍能出现。先补真实DB原反例（未知A、后继B、独立C与quote），再做与success分支一致的exact-action替换，其他隔离/坏ref保护保持。
+
+该增量已完成：真实DB old job 在76小时前（同时超24/72h），实际delivery在窗内，Host notice证明当前可读归属，NULL snapshot A及引用B均剔除，C与独立真人quote正文保留、旧A引文不再复活。基线FAIL、候选PASS；最初26h夹具未击穿72h预取/对话来源门槛，已明确修正，未计空绿。坏ref人话保护、reset局部隔离、跨窗及硬cap五条最窄检查通过，无skip。证据 CODEX-CLOSEOUT-20261004-ACTION-REBIND/baseline.log、candidate.log。源码仅error分支exact-action rebind，无额外范围、IM或部署。

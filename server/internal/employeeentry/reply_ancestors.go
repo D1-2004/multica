@@ -95,10 +95,16 @@ func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before tim
 					if node.ID != "" && reply.action != "" && reply.message != "" {
 						quarantine(&node, "unknown_snapshot", ref)
 						nodes[node.ID] = &node
-						if _, exists := byAction[reply.action]; !exists {
+						if _, exists := byAction[reply.action]; exists {
+							for index := range replies {
+								if replies[index].action == reply.action {
+									replies[index] = reply
+								}
+							}
+						} else {
 							replies = append(replies, reply)
-							byAction[reply.action] = reply
 						}
+						byAction[reply.action] = reply
 						if len(nodes) > transcriptEvidenceCap || len(replies) > transcriptEvidenceCap {
 							return nil, errTranscriptEvidenceBound
 						}
