@@ -119,3 +119,11 @@ multica --profile pre-fde --workspace-id 5f8b5b73-f912-4879-9a29-b763d103fedf ag
 v1/v2 的环境 gate 必须明确 `ok=true` 才进入任何发送或 actor/action；超时、查询失败、异常、最新失败快照或缺部署完成时刻均保存门禁证据并返回 `invalid_env`，进程返回非零。不能只把失败 gate 记进 driver 然后继续。后续 segment 同样先 gate，再续认证、领取演员和执行动作。
 
 v2 schema **不支持 `idle_before_min`**，没有自动等待 DM 空闲的行为。DM 记忆/下一轮召回需外层实际等待至少30分钟且记录该会话最后消息、开始/到期时间、routine干扰与检查读数，或使用明确的 segment/checkpoint。`idle_contract_v2` 仅声明此限制，实际时间名单由当波 manifest 提供；未到期不可发送或判通过。v1 的 `idle_before_min` 不能被当成 v2 能力。
+
+## 消息窗口覆盖：正常分页与缺证
+
+实际 `im.message-list.v1` 回执中 `complete=false + hasMore=true + failures=[] + partial=false + truncated=false` 是一页健康但尚有更早历史，不能当读取失败，也不等于整段历史已完整。`read_window` 只有读到严格早于窗口下界的消息，或 `hasMore=false && complete=true` 的可靠源尾部才标 `covered=true`；只触碰相同秒的下界不算穿过。
+
+继续页用提供方的 `nextPage.time`（保留毫秒与时区）及 older 方向，游标必须严格后退，消息ID去重。缺消息/分页元数据、rc异常、failure/partial/truncated、失败后续页、未知或停滞游标、满页同秒时间桶、页数上限都保持未覆盖，记录 `page_ledger` / `stop_reason`；不能跳过秒桶并凭下一页更老消息假称无漏读。缺字段或尚未覆盖时仍须留 partial，不用最新短页猜没有回复。
+
+依据：ROOT/fourface-audit 中真实已存回读页，旧 code 对 complete=false 的失败判定过严。本devtools修复未发送IM，也不改变或触发应用发布。
