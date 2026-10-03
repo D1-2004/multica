@@ -26,7 +26,10 @@ import (
 
 // EmployeeLoopReplicaMarker 12 adds typed scene jobs: claim filters by kind,
 // human input precedes Task wakes, and only this worker executes task_wake.
-const EmployeeLoopReplicaMarker = "[employee-loop:12]"
+// 13 adds the scene_routine_webhook automation origin: a replica without it
+// fails the claim of a webhook routine's Direct execution closed, so the
+// webhook ingress freezes the Employee path only when all replicas have 13.
+const EmployeeLoopReplicaMarker = "[employee-loop:13]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
