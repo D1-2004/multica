@@ -192,6 +192,8 @@ describe("context capability mobile client", () => {
         settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
       },
     ]);
+    expect(result.totalCount).toBe(0);
+    expect(result.filteredCount).toBe(0);
   });
 
   it("drops a non-https GitHub installation settings URL", async () => {

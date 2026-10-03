@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,13 +19,14 @@ func TestParseGitHubUserInstallationsSkipsSuspendedAndUnsafeURLs(t *testing.T) {
 		{"id":6,"account":{"login":"","type":"User"}},
 		{"id":7,"repository_selection":"nope","account":{"login":"not a login","type":"Bot"}}
 	]}`)
-	views, raw, err := parseGitHubUserInstallations(body)
+	parsed, err := parseGitHubUserInstallations(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw != 8 {
-		t.Fatalf("raw count %d", raw)
+	if parsed.rawCount != 8 || parsed.filteredCount != 4 || parsed.totalCount != nil {
+		t.Fatalf("counts %+v", parsed)
 	}
+	views := parsed.views
 	if len(views) != 4 {
 		t.Fatalf("views %d: %+v", len(views), views)
 	}
@@ -41,6 +43,27 @@ func TestParseGitHubUserInstallationsSkipsSuspendedAndUnsafeURLs(t *testing.T) {
 		if view.AccountLogin == "not a login" || view.AccountLogin == "paused" || view.AccountLogin == "zero" {
 			t.Fatalf("filtered installation kept: %+v", view)
 		}
+	}
+}
+
+func TestParseGitHubUserInstallationsUsesProviderTotal(t *testing.T) {
+	parsed, err := parseGitHubUserInstallations([]byte(`{"total_count":0,"installations":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.totalCount == nil || *parsed.totalCount != 0 || parsed.filteredCount != 0 || parsed.rawCount != 0 {
+		t.Fatalf("empty %+v", parsed)
+	}
+	parsed, err = parseGitHubUserInstallations([]byte(`{"total_count":3,"installations":[
+		{"id":1,"repository_selection":"selected","account":{"login":"acme","type":"Organization"}},
+		{"id":2,"suspended_at":"2026-01-01T00:00:00Z","account":{"login":"paused","type":"Organization"}},
+		{"id":0,"account":{"login":"zero","type":"User"}}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.totalCount == nil || *parsed.totalCount != 3 || parsed.filteredCount != 2 || len(parsed.views) != 1 {
+		t.Fatalf("filtered %+v", parsed)
 	}
 }
 
@@ -77,6 +100,9 @@ func TestListGitHubUserInstallationsPagesAndStops(t *testing.T) {
 	if len(out.Installations) != 2 || out.Installations[1].AccountLogin != "acme" {
 		t.Fatalf("installations %+v", out.Installations)
 	}
+	if out.TotalCount == nil || *out.TotalCount != 3 || out.FilteredCount == nil || *out.FilteredCount != 0 {
+		t.Fatalf("counts total=%v filtered=%v", out.TotalCount, out.FilteredCount)
+	}
 	if strings.Join(pages, ",") != "1,2" {
 		t.Fatalf("pages %v", pages)
 	}
@@ -105,7 +131,7 @@ func TestListGitHubUserInstallationsAuthErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Error != tc.want || len(out.Installations) != 0 || !out.Connected {
+			if out.Error != tc.want || len(out.Installations) != 0 || !out.Connected || out.TotalCount != nil || out.FilteredCount != nil {
 				t.Fatalf("response %+v", out)
 			}
 			if calls != 1 {
@@ -149,5 +175,56 @@ func TestListGitHubUserInstallationsTruncatesAtThePageCap(t *testing.T) {
 	}
 	if !out.Truncated || len(out.Installations) != 1 {
 		t.Fatalf("response %+v", out)
+	}
+	if out.TotalCount == nil || *out.TotalCount != 1 || out.FilteredCount == nil || *out.FilteredCount != 0 {
+		t.Fatalf("counts total=%v filtered=%v", out.TotalCount, out.FilteredCount)
+	}
+}
+
+func TestListGitHubUserInstallationsKeepsProviderTotalAndFilteredCount(t *testing.T) {
+	oldBase := githubAPIBase
+	t.Cleanup(func() { githubAPIBase = oldBase })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"total_count":2,"installations":[
+			{"id":1,"repository_selection":"all","account":{"login":"acme","type":"Organization"}},
+			{"id":2,"suspended_at":"2026-01-01T00:00:00Z","account":{"login":"paused","type":"Organization"}}
+		]}`))
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+	out, err := listGitHubUserInstallations(t.Context(), "ghu_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.TotalCount == nil || *out.TotalCount != 2 || out.FilteredCount == nil || *out.FilteredCount != 1 || len(out.Installations) != 1 {
+		t.Fatalf("response %+v", out)
+	}
+	if !strings.Contains(string(encoded), `"total_count":2`) || !strings.Contains(string(encoded), `"filtered_count":1`) {
+		t.Fatalf("json %s", encoded)
+	}
+}
+
+func TestListGitHubUserInstallationsWritesZeroCounts(t *testing.T) {
+	oldBase := githubAPIBase
+	t.Cleanup(func() { githubAPIBase = oldBase })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"total_count":0,"installations":[]}`))
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+	out, err := listGitHubUserInstallations(t.Context(), "ghu_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"total_count":0`) || !strings.Contains(string(encoded), `"filtered_count":0`) || !strings.Contains(string(encoded), `"installations":[]`) {
+		t.Fatalf("json %s", encoded)
 	}
 }

@@ -1218,11 +1218,12 @@ function GitHubAppInstallations({
   } else {
     body = (
       <>
-        <p>{t(($) => $.context_config.install_covers)}</p>
         {data.installations.length === 0 ? (
           <p>{t(($) => $.context_config.install_empty)}</p>
         ) : (
-          <ul className="space-y-1.5">
+          <>
+            <p>{t(($) => $.context_config.install_covers)}</p>
+            <ul className="space-y-1.5">
             {data.installations.map((item) => (
               <li key={item.id}>
                 <span className="font-medium text-foreground">@{item.accountLogin}</span>
@@ -1242,7 +1243,8 @@ function GitHubAppInstallations({
                 ) : null}
               </li>
             ))}
-          </ul>
+            </ul>
+          </>
         )}
         {data.truncated ? <p>{t(($) => $.context_config.install_truncated)}</p> : null}
       </>

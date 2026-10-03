@@ -56,8 +56,16 @@ type githubUserInstallationView struct {
 type githubUserInstallationsResponse struct {
 	Connected     bool                         `json:"connected"`
 	Installations []githubUserInstallationView `json:"installations"`
-	Error         string                       `json:"error,omitempty"`
-	Truncated     bool                         `json:"truncated,omitempty"`
+	// TotalCount is GitHub's total_count when the payload has one, otherwise
+	// the number of installation objects we actually read. FilteredCount is
+	// how many of those objects were dropped (suspended, id 0, or a login
+	// that cannot be shown). Both are omitted on auth errors so a 403 is not
+	// reported as zero installations. Repeated ids across pages are not
+	// counted as filtered.
+	TotalCount    *int   `json:"total_count,omitempty"`
+	FilteredCount *int   `json:"filtered_count,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
 }
 
 type githubUserInstallationPayload struct {
@@ -194,6 +202,9 @@ func listGitHubUserInstallations(ctx context.Context, token string) (githubUserI
 		},
 	}
 	seen := map[int64]struct{}{}
+	var githubTotal *int
+	rawSum := 0
+	filtered := 0
 	for page := 1; page <= githubUserInstallationPageCap; page++ {
 		endpoint := fmt.Sprintf("%s/user/installations?per_page=%d&page=%d", strings.TrimRight(githubAPIBase, "/"), githubUserInstallationPageSize, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -221,38 +232,64 @@ func listGitHubUserInstallations(ctx context.Context, token string) (githubUserI
 		if resp.StatusCode != http.StatusOK || readErr != nil {
 			return out, errors.New("GitHub installation list failed")
 		}
-		pageViews, rawCount, err := parseGitHubUserInstallations(body)
+		parsed, err := parseGitHubUserInstallations(body)
 		if err != nil {
 			return out, errors.New("GitHub installation list failed")
 		}
-		for _, view := range pageViews {
+		rawSum += parsed.rawCount
+		filtered += parsed.filteredCount
+		if page == 1 {
+			githubTotal = parsed.totalCount
+		}
+		for _, view := range parsed.views {
 			if _, ok := seen[view.ID]; ok {
 				continue
 			}
 			seen[view.ID] = struct{}{}
 			out.Installations = append(out.Installations, view)
 		}
-		if rawCount < githubUserInstallationPageSize {
+		if parsed.rawCount < githubUserInstallationPageSize {
+			out.setInstallationCounts(githubTotal, rawSum, filtered)
 			return out, nil
 		}
 		if page == githubUserInstallationPageCap {
 			out.Truncated = true
 		}
 	}
+	out.setInstallationCounts(githubTotal, rawSum, filtered)
 	return out, nil
 }
 
-func parseGitHubUserInstallations(body []byte) ([]githubUserInstallationView, int, error) {
+func (out *githubUserInstallationsResponse) setInstallationCounts(githubTotal *int, rawSum, filtered int) {
+	total := rawSum
+	if githubTotal != nil {
+		total = *githubTotal
+	}
+	out.TotalCount = &total
+	out.FilteredCount = &filtered
+}
+
+type parsedGitHubUserInstallations struct {
+	views         []githubUserInstallationView
+	rawCount      int
+	filteredCount int
+	totalCount    *int
+}
+
+func parseGitHubUserInstallations(body []byte) (parsedGitHubUserInstallations, error) {
 	var payload struct {
+		TotalCount    *int                            `json:"total_count"`
 		Installations []githubUserInstallationPayload `json:"installations"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, 0, err
+		return parsedGitHubUserInstallations{}, err
 	}
 	views := make([]githubUserInstallationView, 0, len(payload.Installations))
+	filtered := 0
 	for _, item := range payload.Installations {
 		login := strings.TrimSpace(item.Account.Login)
 		if item.SuspendedAt != nil || item.ID == 0 || !githubAccountLoginPattern.MatchString(login) {
+			filtered++
 			continue
 		}
 		views = append(views, githubUserInstallationView{
@@ -263,7 +300,12 @@ func parseGitHubUserInstallations(body []byte) ([]githubUserInstallationView, in
 			SettingsURL:         safeGitHubSettingsURL(item.HTMLURL),
 		})
 	}
-	return views, len(payload.Installations), nil
+	return parsedGitHubUserInstallations{
+		views:         views,
+		rawCount:      len(payload.Installations),
+		filteredCount: filtered,
+		totalCount:    payload.TotalCount,
+	}, nil
 }
 
 func githubAccountType(raw string) string {

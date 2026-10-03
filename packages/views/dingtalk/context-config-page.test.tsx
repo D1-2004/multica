@@ -1023,6 +1023,36 @@ describe("ContextConfigPage", () => {
       );
     });
 
+    it("says no repositories are selected when the GitHub App is not installed", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          person: {
+            ...person,
+            bindings: [connectorOn("conn-github")],
+            credentials: [{ connectorId: "conn-github", hint: "@xdxer", updatedAt: "", kind: "oauth" }],
+          },
+        }),
+      );
+      api.listContextGitHubInstallations.mockResolvedValue({
+        connected: true,
+        installations: [],
+        error: "",
+        truncated: false,
+        totalCount: 0,
+        filteredCount: 0,
+      });
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
+
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
+      const region = await screen.findByRole("region", { name: "Alice" });
+      const dialog = await openConnector(user, region, "GitHub");
+
+      expect(await within(dialog).findByText(copy.install_empty)).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: copy.install_add })).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent(copy.install_covers);
+    });
+
     it("shows the connected account and disconnects only after confirmation", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         oauthDetail({

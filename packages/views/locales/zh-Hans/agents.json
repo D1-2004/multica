@@ -2373,7 +2373,7 @@
     "install_reconnect": "GitHub 授权已失效或被撤销。请重新连接。",
     "install_pat": "GitHub 没有返回这个 App 的安装列表。个人访问令牌就是这样：能看到哪些仓库由令牌自己的权限决定。如果这是 GitHub App 授权，请重新连接。",
     "install_covers": "当前能看到这些账号和组织：",
-    "install_empty": "还没有安装。点「添加组织或账号」，在安装页选上私人仓库或其他组织的仓库。",
+    "install_empty": "还没选择仓库。点「添加组织或账号」，在安装页选择个人账号或组织，再选择全部仓库或指定仓库。",
     "install_org": "组织",
     "install_user": "个人账号",
     "install_all": "全部仓库",
