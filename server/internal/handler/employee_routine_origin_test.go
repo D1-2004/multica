@@ -93,6 +93,39 @@ func (x *employeeRoutineHandlerFixture) noticeID(runID pgtype.UUID, phase string
 	return dingtalkresponse.StableActionID(testWorkspaceID, x.a.ID, dingtalkresponse.RoutineNoticeRequestID(uuidToString(runID), phase), "message.send")
 }
 
+type routineQueueState struct {
+	Status, Runtime, Agent string
+	FireAt, DispatchedAt   pgtype.Timestamptz
+	AgentActive            int
+	RuntimeQueued          int
+}
+
+// queueState reports the queue row and the competing work of its agent and
+// runtime, so an isolation failure names the state that leaked into it.
+func (x *employeeRoutineHandlerFixture) queueState(t *testing.T, id pgtype.UUID) routineQueueState {
+	t.Helper()
+	var s routineQueueState
+	if err := testPool.QueryRow(context.Background(), `SELECT q.status,q.runtime_id::text,q.agent_id::text,q.fire_at,q.dispatched_at,
+ (SELECT count(*) FROM agent_task_queue a WHERE a.agent_id=q.agent_id AND a.id<>q.id AND a.status IN ('queued','dispatched','running','deferred')),
+ (SELECT count(*) FROM agent_task_queue r WHERE r.runtime_id=q.runtime_id AND r.id<>q.id AND r.status IN ('queued','dispatched'))
+ FROM agent_task_queue q WHERE q.id=$1`, id).Scan(&s.Status, &s.Runtime, &s.Agent, &s.FireAt, &s.DispatchedAt, &s.AgentActive, &s.RuntimeQueued); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// claimExact claims this fixture's own execution through the product claim
+// path. The runtime and agent belong to this fixture only; a miss reports the
+// row and any competing work instead of a bare nil.
+func (x *employeeRoutineHandlerFixture) claimExact(t *testing.T, auth service.TaskClaimAuthorization, id pgtype.UUID) *db.AgentTaskQueue {
+	t.Helper()
+	claimed, err := testHandler.TaskService.ClaimTaskForRuntime(context.Background(), x.runtime.ID, auth)
+	if err != nil || claimed == nil || claimed.ID != id {
+		t.Fatalf("routine execution not claimable on its own runtime: claimed=%v err=%v state=%+v", claimed, err, x.queueState(t, id))
+	}
+	return claimed
+}
+
 func (x *employeeRoutineHandlerFixture) count(t *testing.T, sql string, args ...any) int {
 	t.Helper()
 	var n int
@@ -129,20 +162,18 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 	}
 
 	auth := service.TaskClaimAuthorization{EmployeeDirectRuntimeIDs: []pgtype.UUID{x.runtime.ID}}
-	claimed, err := testHandler.TaskService.ClaimTaskForRuntime(ctx, x.runtime.ID, auth)
-	if err != nil || claimed == nil || claimed.ID != run.TaskID {
-		t.Fatal(claimed, err)
-	}
+	claimed := x.claimExact(t, auth, run.TaskID)
 	old := newDaemonTokenRequest(http.MethodPost, "/", nil, testWorkspaceID, x.daemonID)
 	if _, _, _, _, failure := testHandler.buildClaimedTaskResponse(old, claimed, x.runtime, "", uuidToString(x.runtime.ID), testWorkspaceID); failure == nil {
 		t.Fatal("a daemon without Employee Direct received the routine packet")
 	}
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET fire_at=now()-interval '1 second' WHERE id=$1`, run.TaskID); err != nil {
+	if state := x.queueState(t, run.TaskID); state.Status != "deferred" {
+		t.Fatalf("old daemon claim did not defer the routine execution: %+v", state)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET fire_at=now()-interval '1 second' WHERE id=$1 AND status='deferred'`, run.TaskID); err != nil {
 		t.Fatal(err)
 	}
-	if claimed, err = testHandler.TaskService.ClaimTaskForRuntime(ctx, x.runtime.ID, auth); err != nil || claimed == nil || claimed.ID != run.TaskID {
-		t.Fatal("deferred routine execution not reclaimable", claimed, err)
-	}
+	claimed = x.claimExact(t, auth, run.TaskID)
 	req := newDaemonTokenRequest(http.MethodPost, "/", nil, testWorkspaceID, x.daemonID)
 	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1)
 	resp, _, _, _, failure := testHandler.buildClaimedTaskResponse(req, claimed, x.runtime, "", uuidToString(x.runtime.ID), testWorkspaceID)
