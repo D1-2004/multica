@@ -960,6 +960,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.EmployeeMemory = employeememory.NewStore(pool)
 	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
 	h.EmployeeSceneWorker.ModelRoutes = h.Models
+	// Requester-authorized invitation reminders are recorded per invitation in
+	// the collection's creating transaction.
+	h.EmployeeSceneWorker.CollectionReminders = handler.RecordCollectionReminders
 	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
@@ -978,6 +981,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
 	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
+	if opts.RuntimeConfig != nil {
+		h.EmployeeSceneWorker.VisionConfig = opts.RuntimeConfig.employeeVision
+	}
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {

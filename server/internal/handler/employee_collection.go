@@ -73,7 +73,7 @@ func employeeCollectionTools(source map[string]any, stringField func(string) map
 		"time_zone": stringField("IANA time zone, e.g. Asia/Shanghai."),
 	}, "required": []string{"at", "time_zone"}, "additionalProperties": false}
 	return []employeeloop.Tool{
-		{Name: "create_collection", Effect: true, Description: "Ask named people, in their own conversations with you, one bounded question on behalf of the requester of the selected source, and summarize their answers back here once everyone has answered. Use only when this source explicitly asks you to collect answers or information from specific people. Write the question for them: no private details from this conversation, memory or other people's answers. People are resolved only from conversations they have had with you; if the Host reports a name as unknown or ambiguous, ask the requester. Include the acknowledgement to send after the invitations are committed; it does not mean anyone has received or answered yet.", Schema: map[string]any{"type": "object", "properties": map[string]any{
+		{Name: "create_collection", Effect: true, Description: "Ask named people, in their own conversations with you, one bounded question on behalf of the requester of the selected source, and summarize their answers back here once everyone has answered. This is the only way to ask people something and get their replies back (e.g. 帮我私聊问一下某人…回复后汇总给我): a background task cannot receive replies, so never use dispatch_task for it. Use it whenever this source asks you to ask or collect answers or information from specific people; each such request is a new collection, even for a person already asked something else. Write the question for them: no private details from this conversation, memory or other people's answers. People are resolved only from conversations they have had with you; if the Host reports a name as unknown or ambiguous, ask the requester. Include the acknowledgement to send after the invitations are committed; it does not mean anyone has received or answered yet.", Schema: map[string]any{"type": "object", "properties": map[string]any{
 			"source_ref":   source,
 			"goal":         stringField("What the requester wants collected and why, in their words."),
 			"question":     stringField("The exact question each person receives. Self-contained, polite, at most a few sentences."),
@@ -166,7 +166,11 @@ type employeeCollectionPerson struct {
 // employeeCollectionPeople lists where a display name has spoken to this
 // employee in this tenant: the provider-attested sender identities of admitted
 // messages. Nothing is guessed from text or minted from a person.
-func employeeCollectionPeople(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, name string) ([]employeeCollectionPerson, error) {
+func employeeCollectionPeople(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, name string, partial bool) ([]employeeCollectionPerson, error) {
+	match := `lower(btrim(m.value->>'senderDisplayName'))=lower($4)`
+	if partial {
+		match = `strpos(lower(btrim(m.value->>'senderDisplayName')), lower($4))>0`
+	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT ON (c.scene_id, ref) c.scene_id::text, s.scene_kind, s.title, s.external_scene_id, ref, name, open_id FROM (
  SELECT c.scene_id, c.created_at,
   'dingtalk:'||c.tenant_org_id||':'||CASE WHEN btrim(COALESCE(m.value->>'senderUid',''))<>'' THEN 'uid:'||btrim(m.value->>'senderUid') WHEN btrim(COALESCE(m.value->>'senderOpenDingTalkId',''))<>'' THEN 'open_id:'||btrim(m.value->>'senderOpenDingTalkId') WHEN btrim(COALESCE(m.value->>'senderStaffId',''))<>'' THEN 'staff_id:'||btrim(m.value->>'senderStaffId') ELSE '' END AS ref,
@@ -174,7 +178,7 @@ func employeeCollectionPeople(ctx context.Context, tx pgx.Tx, scope employeeentr
  FROM employee_event_consumption c
  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload#>'{command,event,data,messages}')='array' THEN c.payload#>'{command,event,data,messages}' ELSE '[]'::jsonb END) m(value)
  WHERE c.workspace_id=$1::uuid AND c.agent_id=$2::uuid AND c.tenant_org_id=$3 AND c.owner_loop='employee' AND c.reason=''
- AND c.created_at > now() - make_interval(days => $5) AND lower(btrim(m.value->>'senderDisplayName'))=lower($4)
+ AND c.created_at > now() - make_interval(days => $5) AND `+match+`
 ) c JOIN agent_scene s ON s.id=c.scene_id AND s.workspace_id=$1::uuid AND s.agent_id=$2::uuid AND s.tenant_org_id=$3
 WHERE c.ref NOT LIKE '%:' ORDER BY c.scene_id, ref, c.created_at DESC LIMIT 50`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, name, employeeCollectionLookbackDays)
 	if err != nil {
@@ -209,7 +213,12 @@ func employeeResolveCollectionTarget(ctx context.Context, tx pgx.Tx, scope emplo
 	if name == "" || utf8.RuneCountInString(name) > 64 {
 		return employeeCollectionTarget{}, &employeeCollectionResolveError{"participant name is required"}
 	}
-	people, err := employeeCollectionPeople(ctx, tx, scope, name)
+	people, err := employeeCollectionPeople(ctx, tx, scope, name, false)
+	if err == nil && len(people) == 0 && utf8.RuneCountInString(name) >= 2 {
+		// A name the requester shortened ("Director") still identifies one
+		// person when exactly one known sender's display name contains it.
+		people, err = employeeCollectionPeople(ctx, tx, scope, name, true)
+	}
 	if err != nil {
 		return employeeCollectionTarget{}, err
 	}

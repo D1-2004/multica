@@ -347,13 +347,19 @@ func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAge
 // Employee messages must agree on the counterpart.
 const employeeDMSenderWindow = 20
 
-// employeeDMSenders returns the distinct per-message senders among the newest
-// user messages the EmployeeLoop admitted in the scene: unheld consumptions
-// whose ready receipt and envelope name this scene. A message without its own
-// sender (a multi-person window) names nobody.
+// employeeDMSenders returns the distinct senders among the newest user
+// messages the EmployeeLoop admitted in the scene: unheld consumptions whose
+// ready receipt and envelope name this scene. A message's own
+// senderOpenDingTalkId wins; a single-message window falls back to its
+// envelope sender (a DWS native message keeps the address-book staffId on the
+// message and the openDingTalkId on the envelope). In a multi-message window
+// the envelope sender is never attributed to a message.
 func (h *Handler) employeeDMSenders(ctx context.Context, a contextCapAgent, sceneID string) ([]string, error) {
 	rows, err := h.DB.Query(ctx, `SELECT DISTINCT sender FROM (
-		SELECT BTRIM(COALESCE(m.value->>'senderOpenDingTalkId', '')) AS sender
+		SELECT BTRIM(COALESCE(NULLIF(m.value->>'senderOpenDingTalkId', ''),
+			CASE WHEN jsonb_array_length(c.payload #> '{command,event,data,messages}') = 1 THEN
+				COALESCE(NULLIF(c.payload #>> '{command,event,data,sender,openDingTalkId}', ''), c.payload #>> '{command,event,data,sender,senderOpenDingTalkId}')
+			END, '')) AS sender
 		FROM employee_event_consumption c
 		JOIN scene_event_receipt r ON r.id = c.receipt_id AND r.workspace_id = c.workspace_id AND r.agent_id = c.agent_id
 			AND r.tenant_org_id = c.tenant_org_id AND r.scene_id = c.scene_id

@@ -147,3 +147,38 @@ func TestEmployeeResourceContextShapeCarriesNoProviderHandles(t *testing.T) {
 		}
 	}
 }
+
+// An image file is Deferred for a background vision executor only when its
+// bytes really are the named image type; its pixels never become text.
+func TestEmployeeResourceExtractImageForBackgroundVision(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01")
+	jpeg := []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00")
+	limits := DefaultLimits()
+	limits.MaxFileBytes = 64
+	for name, tc := range map[string]struct {
+		file   string
+		data   []byte
+		ok     bool
+		state  State
+		reason string
+		media  string
+	}{
+		"png":          {"shot.PNG", png, true, Deferred, ReasonBackgroundVision, "image/png"},
+		"jpeg":         {"photo.jpeg", jpeg, true, Deferred, ReasonBackgroundVision, "image/jpeg"},
+		"png as jpg":   {"photo.jpg", png, true, Unavailable, ReasonTypeMismatch, ""},
+		"text as png":  {"fake.png", []byte("not an image"), true, Unavailable, ReasonTypeMismatch, ""},
+		"traversal":    {"../shot.png", png, true, Unavailable, ReasonInvalidName, ""},
+		"too large":    {"big.png", append(png, make([]byte, 64)...), true, Unavailable, ReasonTooLarge, ""},
+		"not an image": {"notes.txt", []byte("hello"), false, "", "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := ExtractImage(tc.file, tc.data, limits)
+			if ok != tc.ok || got.State != tc.state || got.Reason != tc.reason || got.MediaType != tc.media || got.Text != "" {
+				t.Fatalf("got %+v ok=%v", got, ok)
+			}
+			if ok && (got.SHA256 == "" || got.SizeBytes != int64(len(tc.data))) {
+				t.Fatalf("hash/size missing: %+v", got)
+			}
+		})
+	}
+}

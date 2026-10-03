@@ -30,9 +30,10 @@ func (c *watchdogClock) Set(t time.Time)                    { c.mu.Lock(); c.now
 func (c *watchdogClock) At(d time.Duration, base time.Time) { c.Set(base.Add(d)) }
 
 type watchdogTargets struct {
-	mu   sync.Mutex
-	hold string
-	cid  string
+	mu        sync.Mutex
+	hold      string
+	cid       string
+	principal string
 }
 
 func (r *watchdogTargets) set(hold, cid string) {
@@ -41,17 +42,18 @@ func (r *watchdogTargets) set(hold, cid string) {
 	r.mu.Unlock()
 }
 
-func (r *watchdogTargets) ResolveEmployeeWatchdogTarget(_ context.Context, _ pgx.Tx, ref EmployeeWatchdogNoticeRef) (dingtalkresponse.ActionInput, error) {
+func (r *watchdogTargets) ResolveEmployeeWatchdogTarget(_ context.Context, _ pgx.Tx, ref EmployeeWatchdogNoticeRef) (EmployeeWatchdogTarget, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.hold != "" {
-		return dingtalkresponse.ActionInput{}, &EmployeeWatchdogHold{Reason: r.hold}
+		return EmployeeWatchdogTarget{}, &EmployeeWatchdogHold{Reason: r.hold}
 	}
 	cid := r.cid
 	if cid == "" {
 		cid = "cid-watchdog-" + ref.Scope.Scene.SceneID
 	}
-	return dingtalkresponse.ActionInput{WorkspaceID: ref.Scope.WorkspaceID, AgentID: ref.Scope.AgentID, DWSUID: "dws-watchdog", DWSOrgID: ref.Scope.TenantOrgID, SceneID: ref.Scope.Scene.SceneID, ConversationID: cid, IsGroup: true}, nil
+	return EmployeeWatchdogTarget{Input: dingtalkresponse.ActionInput{WorkspaceID: ref.Scope.WorkspaceID, AgentID: ref.Scope.AgentID, DWSUID: "dws-watchdog", DWSOrgID: ref.Scope.TenantOrgID, SceneID: ref.Scope.Scene.SceneID, ConversationID: cid, IsGroup: true},
+		HistoryPrincipalID: r.principal}, nil
 }
 
 type watchdogProvider struct {
@@ -125,7 +127,7 @@ func newWatchdogFixture(t *testing.T) *watchdogFixture {
 	ctx := context.Background()
 	f := &watchdogFixture{directFixture: d, t: t, ctx: ctx, ws: d.request.Task.Scope.WorkspaceID, agent: d.request.Task.Scope.AgentID, task: d.request.Task}
 	t.Cleanup(func() {
-		for _, q := range []string{`DELETE FROM employee_watchdog_notice WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM employee_watchdog_episode WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM employee_watchdog_cursor WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM response_action WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM agent_task_runtime_start_attempt WHERE $1::uuid IS NOT NULL AND task_id IN (SELECT id FROM agent_task_queue WHERE agent_id=$2::uuid)`} {
+		for _, q := range []string{`DELETE FROM employee_watchdog_notice WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM employee_watchdog_episode WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM employee_watchdog_cursor WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM response_action WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM employee_host_notice WHERE workspace_id=$1::uuid AND $2::uuid IS NOT NULL`, `DELETE FROM agent_task_runtime_start_attempt WHERE $1::uuid IS NOT NULL AND task_id IN (SELECT id FROM agent_task_queue WHERE agent_id=$2::uuid)`} {
 			if _, err := d.pool.Exec(ctx, q, f.ws, f.agent); err != nil {
 				t.Error(err)
 			}
@@ -143,7 +145,7 @@ func newWatchdogFixture(t *testing.T) *watchdogFixture {
 	f.startQueue(f.queueID, f.runID, f.base)
 	f.exec(`INSERT INTO employee_watchdog_cursor(workspace_id,agent_id,enabled_at) VALUES($1::uuid,$2::uuid,$3)`, f.ws, f.agent, f.base.Add(-time.Hour))
 	f.clock = &watchdogClock{now: f.base}
-	f.targets = &watchdogTargets{}
+	f.targets = &watchdogTargets{principal: util.UUIDToString(d.request.PrincipalID)}
 	f.provider = &watchdogProvider{ws: f.ws}
 	f.outbox = dingtalkresponse.NewService(d.pool, f.provider, nil)
 	f.w = f.watchdog(d.pool, f.outbox)
@@ -804,6 +806,12 @@ func TestWatchdogNoticeCreatesNoTaskRunOrGeneration(t *testing.T) {
 	}
 	if taskID != nil || text != n.Body || request != "scene-notice:"+n.ID {
 		t.Fatal("notice action carries task or wrong provenance", taskID, request)
+	}
+	// The notice is part of the requester's scene dialogue for later turns.
+	var kind, source, principal string
+	if err := f.pool.QueryRow(f.ctx, `SELECT source_kind,source_id,principal_id::text FROM employee_host_notice WHERE action_id=$1 AND scene_id=$2::uuid`, n.ActionID, f.task.Scope.Scene.SceneID).Scan(&kind, &source, &principal); err != nil ||
+		kind != "watchdog" || source != n.ID || principal != util.UUIDToString(f.request.PrincipalID) {
+		t.Fatal("stall notice is not in the scene history", kind, source, principal, err)
 	}
 }
 

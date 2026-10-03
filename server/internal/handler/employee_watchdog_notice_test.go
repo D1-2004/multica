@@ -28,7 +28,7 @@ func employeeWatchdogHandlerDatabase(t *testing.T, router bool) employeeWatchdog
 	f := employeeNoticeDatabase(t, "running", router, false)
 	ctx := context.Background()
 	t.Cleanup(func() {
-		for _, q := range []string{`DELETE FROM employee_watchdog_notice WHERE agent_id=$1::uuid`, `DELETE FROM employee_watchdog_episode WHERE agent_id=$1::uuid`, `DELETE FROM employee_watchdog_cursor WHERE agent_id=$1::uuid`, `DELETE FROM response_action WHERE agent_id=$1::uuid`} {
+		for _, q := range []string{`DELETE FROM employee_watchdog_notice WHERE agent_id=$1::uuid`, `DELETE FROM employee_watchdog_episode WHERE agent_id=$1::uuid`, `DELETE FROM employee_watchdog_cursor WHERE agent_id=$1::uuid`, `DELETE FROM response_action WHERE agent_id=$1::uuid`, `DELETE FROM employee_host_notice WHERE agent_id=$1::uuid`} {
 			if _, err := testPool.Exec(ctx, q, f.agentID); err != nil {
 				t.Error(err)
 			}
@@ -56,7 +56,7 @@ func employeeWatchdogHandlerDatabase(t *testing.T, router bool) employeeWatchdog
 	return out
 }
 
-func (f employeeWatchdogHandlerFixture) resolve(t *testing.T) (dingtalkresponse.ActionInput, error) {
+func (f employeeWatchdogHandlerFixture) resolve(t *testing.T) (service.EmployeeWatchdogTarget, error) {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := testPool.Begin(ctx)
@@ -75,16 +75,38 @@ func TestEmployeeWatchdogNoticeTargetIsTheAcceptedSource(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := employeeWatchdogHandlerDatabase(t, router)
-			in, err := f.resolve(t)
+			target, err := f.resolve(t)
 			if err != nil {
 				t.Fatal(err)
 			}
+			in := target.Input
 			if in.WorkspaceID != f.scope.WorkspaceID || in.AgentID != f.scope.AgentID || in.SceneID != f.scope.Scene.SceneID || in.DWSUID != "123" || in.DWSOrgID != f.scope.TenantOrgID ||
 				in.ConversationID != f.command.Event.Data.Conversation.OpenConversationID || in.SenderOpenDingTalkID == "" {
 				t.Fatalf("anchor is not the accepted source: %+v", in)
 			}
 			if in.TaskID != "" || in.CallbackURL != "" || in.RequestID != "" || in.ReplyToOpenMsgID != "" || in.EmployeeRunNoticeID != "" || in.CloseState != "" {
 				t.Fatalf("watchdog target must not close a dispatch or claim a Run reply: %+v", in)
+			}
+			// The notice joins the requester's scene dialogue: the source
+			// job's admission principal and the source message's receipt.
+			var principal string
+			if err := testPool.QueryRow(context.Background(), `SELECT principal_id::text FROM employee_scene_job WHERE id=$1::uuid`, f.jobID).Scan(&principal); err != nil {
+				t.Fatal(err)
+			}
+			if target.HistoryPrincipalID != principal || target.OriginReceiptID == "" {
+				t.Fatalf("history binding: %+v (principal %s)", target, principal)
+			}
+			// A goal without an active Run is addressed through its Task
+			// origin, which reaches the same conversation and principal.
+			origin := f
+			origin.ref.RunID, origin.ref.QueueTaskID = "", ""
+			byOrigin, err := origin.resolve(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if byOrigin.Input.ConversationID != in.ConversationID || byOrigin.Input.DWSUID != in.DWSUID || byOrigin.Input.SceneID != in.SceneID || byOrigin.Input.IsGroup != in.IsGroup ||
+				byOrigin.HistoryPrincipalID != principal || byOrigin.OriginReceiptID != target.OriginReceiptID {
+				t.Fatalf("origin anchor %+v differs from the run anchor %+v", byOrigin, target)
 			}
 		})
 	}
@@ -110,9 +132,9 @@ func TestEmployeeWatchdogNoticeTargetHoldsRevokedAnchor(t *testing.T) {
 			}
 		})
 	}
-	t.Run("no_execution", func(t *testing.T) {
+	t.Run("half_execution_ref", func(t *testing.T) {
 		f := employeeWatchdogHandlerDatabase(t, false)
-		f.ref.RunID, f.ref.QueueTaskID = "", ""
+		f.ref.QueueTaskID = ""
 		_, err := f.resolve(t)
 		var hold *service.EmployeeWatchdogHold
 		if !errors.As(err, &hold) || hold.Reason != "delivery_anchor_unavailable" {
@@ -182,5 +204,10 @@ func TestEmployeeWatchdogNoticeDeliversOnceToTheAcceptedConversation(t *testing.
 	}
 	if conversation != f.command.Event.Data.Conversation.OpenConversationID || scene != noticeID {
 		t.Fatal(conversation, scene)
+	}
+	// The delivered notice is history of the requester's scene dialogue.
+	var kind, source string
+	if err := testPool.QueryRow(ctx, `SELECT h.source_kind,h.source_id FROM employee_host_notice h JOIN employee_scene_job j ON j.id=$2::uuid AND j.principal_id=h.principal_id AND j.scene_id=h.scene_id WHERE h.action_id=$1`, actionID, f.jobID).Scan(&kind, &source); err != nil || kind != "watchdog" || source != noticeID {
+		t.Fatal("stall notice is not in the requester's scene history", kind, source, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -23,6 +24,12 @@ const (
 	// PATH shims instead keep passing through the Runtime's identity wrapper.
 	dwsProtectedWrapEnv = "MULTICA_DWS_PROTECTED_WRAP"
 	dwsShimActiveEnv    = "MULTICA_DWS_SHIM_ACTIVE"
+	// dwsWrapDepthEnv counts nested wrapper runs. A legitimate chain is the
+	// PATH shim plus at most the Runtime's identity wrapper; anything deeper
+	// is the wrapper finding itself again and would fork until the sandbox
+	// kills the agent.
+	dwsWrapDepthEnv = "MULTICA_DWS_WRAP_DEPTH"
+	maxDWSWrapDepth = 4
 )
 
 const dwsShimScript = `#!/bin/sh
@@ -123,7 +130,7 @@ func MainDWSWrap(args []string) int {
 			cmd.Stdout = stdout
 			cmd.Stderr = stderr
 			cmd.Stdin = os.Stdin
-			cmd.Env = append(os.Environ(), dwsShimActiveEnv+"=1")
+			cmd.Env = append(os.Environ(), dwsShimActiveEnv+"=1", fmt.Sprintf("%s=%d", dwsWrapDepthEnv, dwsWrapDepth(os.Getenv)+1))
 			return cmd.Run()
 		},
 		Bind: func(conversationID, evidenceID string) error {
@@ -148,6 +155,10 @@ func MainDWSWrap(args []string) int {
 // commands are passed through. Bind failures are written to stderr and do not
 // fail a successful send.
 func RunDWSWrap(deps DWSWrapDeps) int {
+	if dwsWrapDepth(deps.Getenv) >= maxDWSWrapDepth {
+		fmt.Fprintln(deps.Stderr, "dws: the PATH wrapper reached itself again; refusing to recurse (do not add another dws-shim directory to PATH)")
+		return 126
+	}
 	args := stripLeadingDashDash(deps.Args)
 	parsed := parseDWSCommand(args)
 	var policy *protocol.DingTalkMessagePolicy
@@ -237,11 +248,36 @@ func stripLeadingDashDash(args []string) []string {
 	return args
 }
 
+func dwsWrapDepth(getenv func(string) string) int {
+	if getenv == nil {
+		return 0
+	}
+	depth, err := strconv.Atoi(strings.TrimSpace(getenv(dwsWrapDepthEnv)))
+	if err != nil || depth < 0 {
+		return 0
+	}
+	return depth
+}
+
+// sameDir reports whether two PATH entries name one directory, however
+// either is spelled (".." segments, trailing slashes, symlinks).
+func sameDir(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ai, bi)
+}
+
 func lookPathExcept(name, exceptDir, pathEnv string) (string, error) {
 	exceptDir = strings.TrimRight(exceptDir, string(os.PathListSeparator))
 	var filtered []string
 	for _, dir := range filepath.SplitList(pathEnv) {
-		if dir == "" || (exceptDir != "" && dir == exceptDir) {
+		// The shim's own directory is skipped under any spelling: an agent
+		// that prepends "workdir/../dws-shim" must not make the wrapper run
+		// itself in an unbounded chain.
+		if dir == "" || (exceptDir != "" && sameDir(dir, exceptDir)) {
 			continue
 		}
 		filtered = append(filtered, dir)

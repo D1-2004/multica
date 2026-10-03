@@ -98,7 +98,20 @@ func (c *appRuntimeConfig) validateCurrent() error {
 	if _, err := decodeEmployeeWatchdog(c.current().Runtime.EmployeeWatchdog); err != nil {
 		return fmt.Errorf("Diamond %w", err)
 	}
+	if _, err := handler.DecodeEmployeeVision(c.current().Runtime.EmployeeVision); err != nil {
+		return fmt.Errorf("Diamond %w", err)
+	}
 	return nil
+}
+
+// employeeVision is the live runtime.employee_vision; a snapshot that fails
+// to decode never becomes current (validateCurrent rejects it).
+func (c *appRuntimeConfig) employeeVision() handler.EmployeeVisionConfig {
+	cfg, err := handler.DecodeEmployeeVision(c.current().Runtime.EmployeeVision)
+	if err != nil {
+		return handler.DefaultEmployeeVisionConfig()
+	}
+	return cfg
 }
 
 // employeeWatchdog is the live runtime.employee_watchdog; a snapshot that

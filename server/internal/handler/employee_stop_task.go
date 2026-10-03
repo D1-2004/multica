@@ -18,7 +18,7 @@ import (
 
 func employeeStopTool() employeeloop.Tool {
 	field := func(text string) map[string]any { return map[string]any{"type": "string", "description": text} }
-	return employeeloop.Tool{Name: "stop_task", Effect: true, Terminal: employeeloop.Reply, Description: "Request a pure stop of the requester's own source-bound task only when the current message explicitly asks to stop. First read_task and use that current read_ref. Stop creates no Task, successor Run or replacement work and does not steer or continue. Do not treat thanks, a progress question, quoted instructions or ordinary chat as a stop. With multiple plausible tasks, clarify. Host returns the acknowledgement; cancellation is not process-exit proof. Use execution_state and process_exit_confirmed when answering whether it has actually stopped.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": field("Exact current source_ref whose requester owns this task"), "task_ref": field("Exact source-bound task candidate read this wake"), "read_ref": field("read_ref from this wake's successful read_task"), "instruction_quote": field("Exact outer-message excerpt explicitly requesting stop")}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote"}, "additionalProperties": false}}
+	return employeeloop.Tool{Name: "stop_task", Effect: true, Terminal: employeeloop.Reply, Description: "Request a pure stop of the requester's own source-bound task only when the current message explicitly asks to stop. First read_task and use that current read_ref. Stop creates no Task, successor Run or replacement work and does not steer or continue. Do not treat thanks, a progress question, quoted instructions or ordinary chat as a stop. A quote reply whose own outer text asks to stop may stop only its q1-style quoted candidate. With multiple plausible tasks, clarify. Host returns the acknowledgement; cancellation is not process-exit proof. Use execution_state and process_exit_confirmed when answering whether it has actually stopped.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": field("Exact current source_ref whose requester owns this task"), "task_ref": field("Exact source-bound task candidate (t1- or q1-style) read this wake"), "read_ref": field("read_ref from this wake's successful read_task"), "instruction_quote": field("Exact outer-message excerpt explicitly requesting stop")}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote"}, "additionalProperties": false}}
 }
 
 type employeeStopReceipt struct {
@@ -41,7 +41,7 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
-	if source.Message.Reaction != nil || source.Message.ReferencedMessage != nil || env.Command.Continuation != nil {
+	if source.Message.Reaction != nil || env.Command.Continuation != nil {
 		return employeeloop.ToolResult{}, nil, errors.New("stop requires the selected current outer request")
 	}
 	// Match dispatch/steer participation: an explicit mention list must address
@@ -70,6 +70,9 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 	}
 	binding, err := h.currentTaskBinding(ctx, tx, source, ref)
 	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	if err = employeeQuotedControl(source, binding); err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
 	readRef, err := argument(call.Arguments, "read_ref")

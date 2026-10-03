@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS employee_task_invitation_reminder;
+DROP TABLE IF EXISTS employee_task_invitation_reminder_policy;

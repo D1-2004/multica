@@ -171,7 +171,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"workspace_tag":                   workspaceDelete,
 
 	// A blank line keeps this longer name from realigning the block above.
-	"employee_task_verification_attempt": workspaceDelete,
+	"employee_task_verification_attempt":       workspaceDelete,
+	"employee_task_invitation_reminder":        workspaceDelete,
+	"employee_task_invitation_reminder_policy": workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {
@@ -265,7 +267,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_task_ready_intent", "employee_task_input", "employee_task_invitation", "employee_task_collection", "employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_wait", "employee_task_link", "employee_watchdog_notice", "employee_watchdog_episode", "employee_watchdog_cursor", "employee_host_notice", "employee_task_follow_up", "employee_task_plan", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_task_ready_intent", "employee_task_input", "employee_task_invitation", "employee_task_collection", "employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_wait", "employee_task_link", "employee_watchdog_notice", "employee_watchdog_episode", "employee_watchdog_cursor", "employee_host_notice", "employee_task_follow_up", "employee_task_plan", "employee_task_invitation_reminder", "employee_task_invitation_reminder_policy", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -373,11 +375,22 @@ func seedWorkspaceTaskInput(t *testing.T, task employeetask.Task) {
 	if err != nil || result.Ready == nil {
 		t.Fatalf("seed collection input: %+v %v", result, err)
 	}
+	// One reminder policy and one held reminder of the invitation.
+	for _, statement := range []string{
+		`INSERT INTO employee_task_invitation_reminder_policy(invitation_id,workspace_id,agent_id,tenant_org_id,task_id,collection_id,first_after_seconds,interval_seconds,authority_actor_ref,source_namespace,source_key,instruction_quote)
+ SELECT id,workspace_id,agent_id,tenant_org_id,task_id,collection_id,1800,3600,'delete-fixture','test','reminder','remind once' FROM employee_task_invitation WHERE id=$1::uuid`,
+		`INSERT INTO employee_task_invitation_reminder(workspace_id,agent_id,tenant_org_id,task_id,collection_id,invitation_id,target_scene_id,ordinal,state,reason)
+ SELECT workspace_id,agent_id,tenant_org_id,task_id,collection_id,id,target_scene_id,1,'held','delete_fixture' FROM employee_task_invitation WHERE id=$1::uuid`,
+	} {
+		if _, err := testPool.Exec(ctx, statement, inv.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_task_collection": 1, "employee_task_invitation": 1, "employee_task_input": 1, "employee_task_ready_intent": 1, "employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_task_wait": 1, "employee_task_link": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1, "employee_watchdog_cursor": 1, "employee_watchdog_episode": 1, "employee_watchdog_notice": 1, "employee_host_notice": 1, "employee_task_plan": 1, "employee_task_follow_up": 1} {
+	for table, multiplier := range map[string]int{"employee_task_collection": 1, "employee_task_invitation": 1, "employee_task_input": 1, "employee_task_ready_intent": 1, "employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_task_wait": 1, "employee_task_link": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1, "employee_watchdog_cursor": 1, "employee_watchdog_episode": 1, "employee_watchdog_notice": 1, "employee_host_notice": 1, "employee_task_plan": 1, "employee_task_follow_up": 1, "employee_task_invitation_reminder": 1, "employee_task_invitation_reminder_policy": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)

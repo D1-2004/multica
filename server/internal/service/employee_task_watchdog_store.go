@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -52,11 +53,20 @@ type EmployeeWatchdogHold struct{ Reason string }
 
 func (e *EmployeeWatchdogHold) Error() string { return "employee watchdog notice held: " + e.Reason }
 
+// EmployeeWatchdogTarget is a resolved delivery anchor. When
+// HistoryPrincipalID is set, the notice is recorded as a Host notice of that
+// principal's scene dialogue, so later turns read it back as history.
+type EmployeeWatchdogTarget struct {
+	Input              dingtalkresponse.ActionInput
+	HistoryPrincipalID string
+	OriginReceiptID    string
+}
+
 // EmployeeWatchdogTargetResolver resolves the original Task authority's
 // delivery anchor under the current permission, identity and tenant fences.
 // Any non-hold error is retried by a later scan or BeforeSend.
 type EmployeeWatchdogTargetResolver interface {
-	ResolveEmployeeWatchdogTarget(context.Context, pgx.Tx, EmployeeWatchdogNoticeRef) (dingtalkresponse.ActionInput, error)
+	ResolveEmployeeWatchdogTarget(context.Context, pgx.Tx, EmployeeWatchdogNoticeRef) (EmployeeWatchdogTarget, error)
 }
 
 // EmployeeWatchdogOutbox is the existing response outbox scene-notice entry.
@@ -74,9 +84,10 @@ type EmployeeWatchdog struct {
 	// LoadConfig, when set, returns the live configuration (for example the
 	// current Diamond snapshot) and takes precedence over Config.
 	LoadConfig func() EmployeeWatchdogConfig
-	Waits      EmployeeTaskWaitReader
-	Targets    EmployeeWatchdogTargetResolver
-	Outbox     EmployeeWatchdogOutbox
+	// Waits is optional; nil reads the PostgreSQL wait facts.
+	Waits   EmployeeTaskWaitReader
+	Targets EmployeeWatchdogTargetResolver
+	Outbox  EmployeeWatchdogOutbox
 	// Ready is the producer gate: it must fail until every live replica runs a
 	// binary whose outbox BeforeSend understands watchdog notices.
 	Ready func(context.Context) error
@@ -112,6 +123,14 @@ func (r *EmployeeWatchdogScanResult) add(o EmployeeWatchdogScanResult) {
 }
 
 const employeeWatchdogRecipientTaskOrigin = "task_origin"
+
+// waits defaults to the PostgreSQL wait facts (P1 waits and taskinput counts).
+func (w *EmployeeWatchdog) waits() EmployeeTaskWaitReader {
+	if w.Waits != nil {
+		return w.Waits
+	}
+	return EmployeeTaskWaitFacts{}
+}
 
 func (w *EmployeeWatchdog) config() EmployeeWatchdogConfig {
 	if w.LoadConfig != nil {
@@ -167,6 +186,9 @@ func (w *EmployeeWatchdog) Scan(ctx context.Context, limit int) (EmployeeWatchdo
 		}
 		out.add(r)
 	}
+	reminders, reminderErrs := w.scanReminders(ctx, now, limit)
+	out.add(reminders)
+	errs = append(errs, reminderErrs...)
 	if out.Enqueued > 0 {
 		if n, ok := w.Outbox.(interface{ Notify() }); ok {
 			n.Notify()
@@ -404,8 +426,8 @@ func (w *EmployeeWatchdog) loadFacts(ctx context.Context, tx pgx.Tx, scope emplo
 		}
 		out.facts.Stop = stop
 	}
-	if w.Waits != nil {
-		wait, ok, err := w.Waits.ReadEmployeeTaskWait(ctx, tx, task)
+	if waits := w.waits(); waits != nil {
+		wait, ok, err := waits.ReadEmployeeTaskWait(ctx, tx, task)
 		if err != nil {
 			return out, err
 		}
@@ -619,10 +641,19 @@ func (w *EmployeeWatchdog) openEpisode(ctx context.Context, tx pgx.Tx, cfg Emplo
 		case err != nil:
 			return "", nil, out, err
 		default:
-			target.Text = body
-			actionID, err = w.Outbox.EnqueueSceneNotice(ctx, tx, target, noticeID)
+			in := target.Input
+			in.Text = body
+			actionID, err = w.Outbox.EnqueueSceneNotice(ctx, tx, in, noticeID)
 			if err != nil {
 				return "", nil, out, err
+			}
+			if target.HistoryPrincipalID != "" {
+				// The notice becomes later dialogue of the requester's scene.
+				if err = employeeentry.RecordHostNotice(ctx, tx, employeeentry.HostNotice{ActionID: actionID,
+					Scope:       employeeentry.Scope{WorkspaceID: task.Scope.WorkspaceID, AgentID: task.Scope.AgentID, TenantOrgID: task.Scope.TenantOrgID, SceneID: task.Scope.Scene.SceneID},
+					PrincipalID: target.HistoryPrincipalID, SourceKind: employeeentry.HostNoticeWatchdog, SourceID: noticeID, OriginReceiptID: target.OriginReceiptID}); err != nil {
+					return "", nil, out, err
+				}
 			}
 			noticeState = "enqueued"
 		}
@@ -663,7 +694,8 @@ func (w *EmployeeWatchdog) BeforeSend(ctx context.Context, in dingtalkresponse.A
 	var workspaceID, taskID string
 	err := w.DB.QueryRow(ctx, `SELECT workspace_id::text,task_id::text FROM employee_watchdog_notice WHERE id=$1::uuid`, in.SceneNoticeID).Scan(&workspaceID, &taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		// Not a stall notice; it may be an invitation reminder.
+		return w.beforeReminderSend(ctx, in)
 	}
 	if err != nil {
 		return true, err
@@ -777,7 +809,7 @@ func (w *EmployeeWatchdog) BeforeSend(ctx context.Context, in dingtalkresponse.A
 	if err != nil {
 		return true, err
 	}
-	if !employeeWatchdogTargetMatches(in, target) {
+	if !employeeWatchdogTargetMatches(in, target.Input) {
 		return suppress("notice_target_changed", nil, "", "", EmployeeActivityWatermark{})
 	}
 	return true, tx.Commit(ctx)

@@ -36,6 +36,9 @@ const (
 	Partial     State = "partial"
 	Unavailable State = "unavailable"
 	Unsupported State = "unsupported"
+	// Deferred: the content is not shown in the foreground but a configured
+	// background executor can read it (an image for a vision executor).
+	Deferred State = "deferred"
 )
 
 // Reasons are stable machine codes; the model reads them as facts.
@@ -51,6 +54,7 @@ const (
 	ReasonCorruptContent      = "corrupt_content"
 	ReasonInvalidName         = "invalid_name"
 	ReasonVisionUnavailable   = "vision_unavailable"
+	ReasonBackgroundVision    = "background_vision"
 	ReasonProviderUnavailable = "provider_unavailable"
 	ReasonQuoteUnverified     = "quote_unverified"
 	ReasonRequesterMismatch   = "requester_mismatch"
@@ -268,4 +272,30 @@ func ValidName(name string) bool {
 		}
 	}
 	return true
+}
+
+var imageTypes = map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+
+// ExtractImage checks a downloaded image file for a background vision
+// executor: a plain image name whose bytes really are that image type. Its
+// pixels never enter the foreground; the result is Deferred with the hash of
+// the whole download so the executor can prove it read the same bytes.
+func ExtractImage(name string, data []byte, limits Limits) (Extraction, bool) {
+	sum := sha256.Sum256(data)
+	out := Extraction{Name: strings.TrimSpace(name), SizeBytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
+	mediaType, ok := imageTypes[strings.ToLower(path.Ext(out.Name))]
+	if !ok {
+		return Extraction{}, false
+	}
+	switch {
+	case int64(len(data)) > limits.MaxFileBytes:
+		out.State, out.Reason = Unavailable, ReasonTooLarge
+	case !ValidName(out.Name):
+		out.Name, out.State, out.Reason = "", Unavailable, ReasonInvalidName
+	case http.DetectContentType(data) != mediaType:
+		out.State, out.Reason = Unavailable, ReasonTypeMismatch
+	default:
+		out.MediaType, out.State, out.Reason = mediaType, Deferred, ReasonBackgroundVision
+	}
+	return out, true
 }

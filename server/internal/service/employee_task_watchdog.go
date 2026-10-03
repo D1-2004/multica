@@ -25,6 +25,15 @@ const (
 	EmployeeWatchdogWaitingInputs        EmployeeWatchdogStateKind = "waiting_inputs"
 	EmployeeWatchdogScheduledWait        EmployeeWatchdogStateKind = "scheduled_wait"
 	EmployeeWatchdogStopping             EmployeeWatchdogStateKind = "stopping"
+	// EmployeeWatchdogWaitingDependency is a goal waiting for another Task or
+	// an external event. Its notice never names the dependency's content.
+	EmployeeWatchdogWaitingDependency EmployeeWatchdogStateKind = "waiting_dependency"
+)
+
+// Dependency wait reasons.
+const (
+	EmployeeWatchdogUpstreamTask  = "upstream_task"
+	EmployeeWatchdogExternalEvent = "external"
 )
 
 // Unreachable reasons.
@@ -43,6 +52,7 @@ type EmployeeWatchdogThresholds struct {
 	WaitingInputsSilenceSeconds int `json:"waiting_inputs_silence_seconds,omitempty"`
 	ScheduledOverdueSeconds     int `json:"scheduled_overdue_seconds,omitempty"`
 	StoppingUnconfirmedSeconds  int `json:"stopping_unconfirmed_seconds,omitempty"`
+	WaitingDependencySeconds    int `json:"waiting_dependency_seconds,omitempty"`
 }
 
 // EmployeeWatchdogConfig is decoded from runtime configuration. Agents holds
@@ -73,6 +83,7 @@ var employeeWatchdogBuiltIn = EmployeeWatchdogConfig{
 		WaitingInputsSilenceSeconds: 3600,
 		ScheduledOverdueSeconds:     600,
 		StoppingUnconfirmedSeconds:  600,
+		WaitingDependencySeconds:    3600,
 	},
 	// Matches fcE2BDaemonTokenTTL: cloud daemon tokens are minted per launch
 	// and are not renewed.
@@ -96,7 +107,7 @@ func validEmployeeWatchdogSeconds(v int) bool {
 }
 
 func (t EmployeeWatchdogThresholds) validate() error {
-	for _, v := range []int{t.QueuedSilenceSeconds, t.RunningSilenceSeconds, t.UnreachableGraceSeconds, t.WaitingInputsSilenceSeconds, t.ScheduledOverdueSeconds, t.StoppingUnconfirmedSeconds} {
+	for _, v := range []int{t.QueuedSilenceSeconds, t.RunningSilenceSeconds, t.UnreachableGraceSeconds, t.WaitingInputsSilenceSeconds, t.ScheduledOverdueSeconds, t.StoppingUnconfirmedSeconds, t.WaitingDependencySeconds} {
 		if !validEmployeeWatchdogSeconds(v) {
 			return fmt.Errorf("employee watchdog threshold %ds is outside [%d,%d]", v, employeeWatchdogMinSeconds, employeeWatchdogMaxSeconds)
 		}
@@ -154,6 +165,8 @@ func (c EmployeeWatchdogConfig) Threshold(agentID string, kind EmployeeWatchdogS
 			return t.ScheduledOverdueSeconds
 		case EmployeeWatchdogStopping:
 			return t.StoppingUnconfirmedSeconds
+		case EmployeeWatchdogWaitingDependency:
+			return t.WaitingDependencySeconds
 		}
 		return -1
 	}
@@ -179,8 +192,13 @@ func (c EmployeeWatchdogConfig) stoppingWindow() time.Duration {
 type EmployeeTaskWaitKind string
 
 const (
+	// EmployeeTaskWaitInputs waits for answers. Expected>0 counts collection
+	// slots; Expected==0 is an uncounted wait for human input.
 	EmployeeTaskWaitInputs   EmployeeTaskWaitKind = "inputs"
 	EmployeeTaskWaitSchedule EmployeeTaskWaitKind = "schedule"
+	// EmployeeTaskWaitDependency waits for another Task or an external event;
+	// Reason says which (EmployeeWatchdogUpstreamTask, EmployeeWatchdogExternalEvent).
+	EmployeeTaskWaitDependency EmployeeTaskWaitKind = "dependency"
 )
 
 // EmployeeTaskWait carries counts only. It deliberately has no field for an
@@ -193,6 +211,8 @@ type EmployeeTaskWait struct {
 	DueAt    time.Time
 	Expected int
 	Received int
+	// Reason qualifies a dependency wait.
+	Reason string
 	// Progress is the newest input the Host accepted for this wait.
 	Progress EmployeeActivityWatermark
 }
@@ -297,7 +317,7 @@ func ClassifyEmployeeWatchdogState(f EmployeeWatchdogFacts, now time.Time, crede
 		state := EmployeeWatchdogState{RunID: f.ActiveRunID, Boundary: "wait:" + w.Key, StartedAt: w.Since}
 		switch w.Kind {
 		case EmployeeTaskWaitInputs:
-			if w.Since.IsZero() || w.Expected < 1 || w.Received < 0 || w.Received > w.Expected {
+			if w.Since.IsZero() || w.Expected < 0 || w.Received < 0 || w.Received > w.Expected {
 				return employeeWatchdogNoState("no_activity_source")
 			}
 			state.Kind, state.QuietFrom, state.ProgressResets = EmployeeWatchdogWaitingInputs, w.Since, true
@@ -311,6 +331,12 @@ func ClassifyEmployeeWatchdogState(f EmployeeWatchdogFacts, now time.Time, crede
 				state.StartedAt = w.DueAt
 			}
 			state.Kind, state.QuietFrom = EmployeeWatchdogScheduledWait, w.DueAt
+			return state
+		case EmployeeTaskWaitDependency:
+			if w.Since.IsZero() || (w.Reason != EmployeeWatchdogUpstreamTask && w.Reason != EmployeeWatchdogExternalEvent) {
+				return employeeWatchdogNoState("no_activity_source")
+			}
+			state.Kind, state.Reason, state.QuietFrom = EmployeeWatchdogWaitingDependency, w.Reason, w.Since
 			return state
 		}
 		return employeeWatchdogNoState("unknown_wait_kind")
@@ -422,7 +448,15 @@ func ComposeEmployeeWatchdogNotice(s EmployeeWatchdogState, goal string, silentF
 		}
 		return fmt.Sprintf("%s的执行环境已无法回报进展，我无法确认这次执行是否还在进行。这是执行环境的限制，不是工作内容本身的问题。", subject)
 	case EmployeeWatchdogWaitingInputs:
+		if s.Expected == 0 {
+			return fmt.Sprintf("%s还在等待补充信息，收到后会继续。", subject)
+		}
 		return fmt.Sprintf("%s还在等待补充信息，目前已收到 %d/%d 份。", subject, s.Received, s.Expected)
+	case EmployeeWatchdogWaitingDependency:
+		if s.Reason == EmployeeWatchdogUpstreamTask {
+			return fmt.Sprintf("%s在等另一项工作完成后再继续。", subject)
+		}
+		return fmt.Sprintf("%s在等一个外部事件，目前还没有收到。", subject)
 	case EmployeeWatchdogScheduledWait:
 		return fmt.Sprintf("%s已过预定的继续时间，目前还没有开始。", subject)
 	case EmployeeWatchdogStopping:

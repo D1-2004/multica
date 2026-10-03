@@ -17,6 +17,15 @@ import (
 // receipt and its Employee consumption carrying the dispatch envelope.
 func insertEmployeeDMMessage(t *testing.T, f *ctxcapFixture, sceneID, sender, reason string, age time.Duration) {
 	t.Helper()
+	insertEmployeeDMWindow(t, f, sceneID, map[string]any{}, []map[string]any{{"senderOpenDingTalkId": sender}}, reason, age)
+}
+
+// insertEmployeeDMWindow stores one admitted window with an envelope sender
+// and per-message identities, e.g. a DWS native message whose sender the
+// address book resolved to a staffId while the envelope keeps the
+// openDingTalkId.
+func insertEmployeeDMWindow(t *testing.T, f *ctxcapFixture, sceneID string, envelopeSender map[string]any, messages []map[string]any, reason string, age time.Duration) {
+	t.Helper()
 	ctx := context.Background()
 	agentID := uuidToString(f.agent)
 	t.Cleanup(func() {
@@ -38,7 +47,8 @@ func insertEmployeeDMMessage(t *testing.T, f *ctxcapFixture, sceneID, sender, re
 			"event_receipt_id": receiptID,
 			"agent_scene":      map[string]any{"scene_id": sceneID},
 			"event": map[string]any{"data": map[string]any{
-				"messages": []map[string]any{{"openMsgId": "msg-" + uuid.NewString()[:8], "text": "hello", "senderOpenDingTalkId": sender}},
+				"sender":   envelopeSender,
+				"messages": windowMessages(messages),
 			}},
 		},
 	})
@@ -146,4 +156,39 @@ func directSceneOf(t *testing.T, f *ctxcapFixture, cid string) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func windowMessages(messages []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		msg := map[string]any{"openMsgId": "msg-" + uuid.NewString()[:8], "text": "hello"}
+		for k, v := range m {
+			msg[k] = v
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+// A DWS native message names its sender by staffId (resolved through the
+// address book), so the window's stamping keeps it and the openDingTalkId
+// stays on the envelope. A single-message window's envelope sender is that
+// message's sender; a multi-person window's envelope names nobody.
+func TestSceneRoutineDMCounterpartFromNativeEmployeeMessages(t *testing.T) {
+	f, a := routineFixture(t)
+	f.registerDirectScene(t)
+	ctx := context.Background()
+	insertEmployeeDMWindow(t, f, ctxcapDirectScene, map[string]any{"openDingTalkId": "$:LWCP_v1:$native-alice", "staffId": "staff-alice"},
+		[]map[string]any{{"senderStaffId": "staff-alice"}}, "", 20*time.Second)
+	cp, err := f.h.sceneRoutineDMCounterpart(ctx, a, ctxcapDirectScene)
+	if err != nil || cp.OpenDingTalkID != "$:LWCP_v1:$native-alice" {
+		t.Fatalf("native counterpart = %+v %v", cp, err)
+	}
+	// A two-message window's envelope sender is not attributed to its
+	// messages, so it adds no second name.
+	insertEmployeeDMWindow(t, f, ctxcapDirectScene, map[string]any{"openDingTalkId": "$:LWCP_v1:$someone-else"},
+		[]map[string]any{{"senderStaffId": "staff-alice"}, {"senderStaffId": "staff-alice"}}, "", 10*time.Second)
+	if cp, err := f.h.sceneRoutineDMCounterpart(ctx, a, ctxcapDirectScene); err != nil || cp.OpenDingTalkID != "$:LWCP_v1:$native-alice" {
+		t.Fatalf("multi-message envelope leaked into the counterpart: %+v %v", cp, err)
+	}
 }

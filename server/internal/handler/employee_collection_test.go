@@ -753,3 +753,26 @@ func TestCollectionSummaryFallsBackWithoutAnotherModelRequest(t *testing.T) {
 		t.Fatalf("collection after fallback summary: %+v", got)
 	}
 }
+
+// A shortened name resolves only when exactly one known sender's display
+// name contains it; two candidates are refused for clarification.
+func TestCollectionParticipantPartialNameMustBeUnique(t *testing.T) {
+	c := newCollectionHarness(t)
+	c.send(collectionMessage{conversation: "cid-director-dm", kind: "single", name: "DingTalk-FDE Director", openID: "director-open", messageID: "director-hello", text: "你好"})
+	c.send(collectionMessage{conversation: "cid-team-group", kind: "group", title: "B组", name: "Sales Lead A", openID: "lead-a-open", messageID: "lead-a-hello", text: "hi"})
+	c.send(collectionMessage{conversation: "cid-team-group", kind: "group", title: "B组", name: "Sales Lead B", openID: "lead-b-open", messageID: "lead-b-hello", text: "hi"})
+	c.process()
+	col := c.origin("帮我问一下 Director 这周签了几单", map[string]any{"name": "Director", "channel": "dm"})
+	invites := c.invitations(col.ID)
+	if len(invites) != 1 || invites["DingTalk-FDE Director"].ParticipantRef != "dingtalk:456:open_id:director-open" {
+		t.Fatalf("partial name: %+v", invites)
+	}
+	source := c.send(collectionMessage{conversation: "cid-origin-dm", kind: "single", name: "Requester", openID: "requester-open-id", messageID: "ambiguous-lead", text: "问一下 Sales Lead"})
+	c.model.set(func(string) (string, map[string]any) {
+		return collectionCall("call-lead", "create_collection", collectionCreateArgs(source, map[string]any{"name": "Sales Lead", "channel": "group", "group": "B组"}))
+	})
+	c.process()
+	if n := c.count(`SELECT count(*) FROM employee_task_collection WHERE agent_id=$1::uuid`, c.f.agentID); n != 1 {
+		t.Fatalf("an ambiguous partial name created a collection: %d", n)
+	}
+}
