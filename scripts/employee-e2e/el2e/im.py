@@ -222,6 +222,48 @@ def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, m
     return record
 
 
+def locate_new(*, reader_profile: str, cid: str, sender_id: str | None, floor: _dt.datetime,
+               claimed: set[str], hint: str | None, timeout_s: int = 40, expect: int = 1) -> list[dict[str, Any]]:
+    """Messages from `sender_id` after `floor` that no earlier step claimed (non-text sends).
+    With `hint`, prefer messages whose raw record mentions it (a file name)."""
+    deadline = time.monotonic() + timeout_s
+    found: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        msgs = [m for m in read_messages(reader_profile, cid, limit=20)["messages"]
+                if parse_dws_time(m["createTime"]) >= floor and m.get("messageId") not in claimed
+                and (sender_id is None or m.get("senderId") == sender_id)]
+        hinted = [m for m in msgs if hint and hint in json.dumps(m, ensure_ascii=False)]
+        found = hinted or msgs
+        if len(found) >= expect:
+            time.sleep(2)
+            break
+        time.sleep(2)
+    return found
+
+
+def send_file(*, profile: str, cid: str, workdir: str, filename: str, marker: str, ai_tag: bool | None,
+              reader_profile: str, sender_id: str | None, claimed_ids: set[str]) -> dict[str, Any]:
+    """Send a local file (cwd-relative, as dws requires) and locate the landing by sender + time."""
+    key = stable_uuid(marker)
+    args = ["chat", "+messages-send", "--as", "user", "--chat-id", cid, "--msg-type", "file", "--file", filename,
+            "--uuid", key, "--yes"]
+    if ai_tag is not None:
+        args.append(f"--ai-tag={'true' if ai_tag else 'false'}")
+    t0 = now()
+    res = dwsgw.dws(profile, args, timeout=90, cwd=workdir)
+    blob = (res.get("stderr") or "") + json.dumps(res.get("json") or {}, ensure_ascii=False)
+    landed = locate_new(reader_profile=reader_profile, cid=cid, sender_id=sender_id,
+                        floor=t0.replace(microsecond=0) - _dt.timedelta(seconds=5), claimed=claimed_ids,
+                        hint=filename, timeout_s=60)
+    return {"marker": marker, "uuid": key, "profile": profile, "reader_profile": reader_profile, "sender_id": sender_id,
+            "cid": cid, "text": f"[file] {filename}", "match_key": filename, "sent_at": iso(t0),
+            "attempts": [{"rc": res["rc"], "error": None if res["rc"] == 0 else blob[-300:]}],
+            "landing_count": len(landed), "ok": len(landed) == 1,
+            "landed": [{"messageId": m.get("messageId"), "createTime": m.get("createTime"), "senderId": m.get("senderId"),
+                        "sender": m.get("sender"), "text": m.get("text"), "raw_type": m.get("messageType") or m.get("msgType")}
+                       for m in landed]}
+
+
 def classify(msg: dict[str, Any], employee_ids: set[str], employee_name: str) -> str:
     text = msg.get("text") or ""
     if is_placeholder(text):

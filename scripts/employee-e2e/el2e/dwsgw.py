@@ -82,7 +82,7 @@ def refresh(profiles: list[str]) -> list[dict[str, Any]]:
     return results
 
 
-def dws(profile: str, args: list[str], *, timeout: int = 60, retries: int = 0) -> dict[str, Any]:
+def dws(profile: str, args: list[str], *, timeout: int = 60, retries: int = 0, cwd: str | None = None) -> dict[str, Any]:
     """Run one dws command as `profile` through the private prod gateway."""
     gw = assert_prod()
     cmd = ["dws", "--profile", profile, *args]
@@ -90,7 +90,7 @@ def dws(profile: str, args: list[str], *, timeout: int = 60, retries: int = 0) -
         cmd += ["--format", "json"]
     attempt = 0
     while True:
-        res = run_cmd(cmd, env=clean_env({"DWS_CONFIG_DIR": gw["config_dir"]}), timeout=timeout)
+        res = run_cmd(cmd, env=clean_env({"DWS_CONFIG_DIR": gw["config_dir"]}), timeout=timeout, cwd=cwd)
         try:
             res["json"] = extract_json(res["stdout"])
         except ValueError:

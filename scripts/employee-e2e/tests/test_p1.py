@@ -183,5 +183,29 @@ class EvidenceV2Tests(unittest.TestCase):
         self.assertEqual(self.check(evidence="task_count", min=2, max=2), "pass")
 
 
+class FileSendTests(unittest.TestCase):
+    def run_for(self, case_id: str, row: int):
+        import json as _json
+        from el2e import cases_v2, driver_v2
+        spec, case = next((sp, c) for sp, c in cases_v2.load_all() if c["id"] == case_id)
+        vars_, _ = cases_v2.select_vars(case, "R", 1)
+        vars_.update({k: str(v) for k, v in case["var_sets"][row].items()})
+        rec = {"vars": vars_, "var_row": row, "steps": [], "run_id": "R", "attempt": 1}
+        return driver_v2.CaseRun(case, spec, rec, Path("/dev/null"), Path("."), log=lambda *_: None), case
+
+    def test_fixtures_follow_the_var_row(self) -> None:
+        from el2e import driver_v2
+        run, case = self.run_for("M-06", 1)
+        name, data = driver_v2.fixture_bytes(run, "bx")
+        self.assertEqual(data.decode(), run.render(case["fixtures"]["bx"]["by_row"][1]))
+        self.assertTrue(name.endswith(".csv") and "{" not in name)
+        run, _ = self.run_for("M-07", 0)
+        name, data = driver_v2.fixture_bytes(run, "minutes")
+        self.assertNotIn("{CUST}", data.decode())
+        run, _ = self.run_for("M-08", 2)
+        name, data = driver_v2.fixture_bytes(run, "shot")
+        self.assertTrue(data.startswith(b"\x89PNG"))
+
+
 if __name__ == "__main__":
     unittest.main()

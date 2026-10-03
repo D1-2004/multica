@@ -303,6 +303,50 @@ class CaseRun:
 
 
 ACTIONS: dict[str, Any] = {}
+FIXTURE_DIR = cases_v2.V2_DIR / "fixtures"
+
+
+def fixture_bytes(run: "CaseRun", key: str) -> tuple[str, bytes]:
+    """(file name, content) of a case fixture for this attempt's var_sets row."""
+    fx = (run.case.get("fixtures") or {}).get(key)
+    if fx is None:
+        raise StepError(f"fixture {key} not declared")
+    name = run.render(fx["name"])
+    row = run.rec.get("var_row") or 0
+    if "template" in fx:
+        return name, run.render(fx["template"]).encode("utf-8")
+    if "by_row" in fx:
+        return name, run.render(fx["by_row"][row]).encode("utf-8")
+    if "render" in fx:
+        path = FIXTURE_DIR / run.case["id"] / f"{key}.row{row}{Path(name).suffix}"
+        if not path.exists():
+            raise StepError(f"pre-rendered fixture {path.name} missing; run cases/v2/fixtures/render_png.py")
+        return name, path.read_bytes()
+    raise StepError(f"fixture {key} has no template/by_row/render")
+
+
+def act_file(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+    conv = reg["conversations"][conv_name]
+    actor = run.case["roles"][step["actor"]]
+    if reg["actors"][actor].get("kind") != "human":
+        raise StepError("file sends are human-only in this harness")
+    name, data = fixture_bytes(run, step["file"])
+    workdir = run.rd / "fixtures" / f"{run.case['id']}.a{run.rec['attempt']}.{step['id']}"
+    workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / name).write_bytes(data)
+    reader = human_reader(reg, conv, actor)
+    sent = im.send_file(profile=reg["actors"][actor]["profile"], cid=conv["cid"], workdir=str(workdir), filename=name,
+                        marker=f"{run.rec['run_id']}:{run.case['id']}:a{run.rec['attempt']}:{step['id']}",
+                        ai_tag=bool(run.spec["defaults"].get("human_send", {}).get("ai_tag", True)),
+                        reader_profile=reg["actors"][reader]["profile"], sender_id=view_id(reg, actor, reader),
+                        claimed_ids=run.claimed)
+    import hashlib
+    sent.update(actor=actor, reader=reader, deap=False, file={"name": name, "bytes": len(data),
+                                                             "sha256": hashlib.sha256(data).hexdigest()})
+    run.record_send(step, conv_name, conv, sent)
+
+
+ACTIONS["file"] = act_file
 
 
 def segment_ids(case: dict[str, Any]) -> list[str]:

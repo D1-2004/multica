@@ -55,7 +55,7 @@ EVIDENCE_IMPLEMENTED = set(EVIDENCE_KINDS)
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2", "file_send"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")
@@ -337,6 +337,14 @@ def render_errors(case: dict[str, Any], spec: dict[str, Any]) -> list[str]:
     base = code_vars("render-check")
     rows = case.get("var_sets") or [{}]
     errors: list[str] = []
+    for key, fx in (case.get("fixtures") or {}).items():
+        if "render" in fx:
+            suffix = Path(fx["name"]).suffix
+            for idx in range(len(rows)):
+                if not (V2_DIR / "fixtures" / case["id"] / f"{key}.row{idx}{suffix}").exists():
+                    errors.append(f"{case['id']}: pre-rendered fixture {key}.row{idx}{suffix} missing")
+        elif "by_row" in fx and len(fx["by_row"]) != len(rows):
+            errors.append(f"{case['id']}: fixture {key} by_row has {len(fx['by_row'])} rows, var_sets {len(rows)}")
     for idx, row in enumerate(rows):
         vars_ = {**base, **{k: str(v) for k, v in row.items()}}
         body = render({"steps": case["steps"], "checks": case["judge"].get("checks", []),
