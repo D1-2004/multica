@@ -28,8 +28,12 @@ type DB interface {
 
 // Store is the collection domain. Lock order in every write transaction:
 // workspace (FOR KEY SHARE, fencing workspace deletion) -> employee_task
-// (FOR SHARE, fencing a concurrent stop) -> collection (FOR UPDATE) ->
-// invitation (FOR UPDATE) -> input / ready intent rows. External I/O never
+// (FOR UPDATE, the same mode employeetask's lifecycle writes take) ->
+// collection (FOR UPDATE) -> invitation (FOR UPDATE) -> input / ready intent
+// rows. A Host transaction that combines these writes with Task lifecycle
+// writes (WaitTaskTx, CompleteGoalTx, Stop) therefore never upgrades a shared
+// Task lock and cannot deadlock against a second such transaction. External
+// I/O never
 // happens inside these transactions.
 type Store struct{ db DB }
 
@@ -244,12 +248,15 @@ type taskFacts struct {
 	goalRevision int64
 }
 
-// lockTask takes FOR SHARE on the Task row: a concurrent stop (FOR UPDATE)
-// either commits first and is observed, or waits until this write commits.
+// lockTask takes FOR UPDATE on the Task row, the mode every employeetask
+// lifecycle write takes. A share lock here would deadlock two Host
+// transactions that each add a collection and then write the Task (both hold
+// SHARE, both wait to upgrade). A concurrent stop either commits first and is
+// observed, or waits until this write commits.
 func lockTask(ctx context.Context, tx pgx.Tx, scope Scope, taskID string) (taskFacts, error) {
 	var t taskFacts
 	err := tx.QueryRow(ctx, `SELECT state, scope_kind, COALESCE(scene_id::text,''), owner_loop, goal_revision
- FROM employee_task WHERE `+scopeWhere+` AND id=$4::uuid FOR SHARE`, scopeArgs(scope, taskID)...).
+ FROM employee_task WHERE `+scopeWhere+` AND id=$4::uuid FOR UPDATE`, scopeArgs(scope, taskID)...).
 		Scan(&t.state, &t.scopeKind, &t.sceneID, &t.ownerLoop, &t.goalRevision)
 	return t, mapError(err)
 }

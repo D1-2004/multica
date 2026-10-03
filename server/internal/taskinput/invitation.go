@@ -93,7 +93,15 @@ func (s *Store) RecordInviteDeliveryTx(ctx context.Context, scope Scope, p Recor
 		return Invitation{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := lockWorkspace(ctx, tx, scope.WorkspaceID); err != nil {
+	// Follow the store-wide lock order (workspace -> task -> collection ->
+	// invitation) so a delivery record combined with other writes in one Host
+	// transaction cannot invert it.
+	var collectionID string
+	if err := tx.QueryRow(ctx, `SELECT collection_id::text FROM employee_task_invitation WHERE `+scopeWhere+` AND id=$4::uuid`,
+		scopeArgs(scope, p.InvitationID)...).Scan(&collectionID); err != nil {
+		return Invitation{}, mapError(err)
+	}
+	if _, _, err := lockCollectionChain(ctx, tx, scope, collectionID); err != nil {
 		return Invitation{}, err
 	}
 	inv, err := loadInvitation(ctx, tx, scope, p.InvitationID, true)
