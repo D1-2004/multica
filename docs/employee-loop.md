@@ -55,6 +55,16 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 通知行新建事务提交后记录 `employee_run_notice_recorded`，包含 `state`（`enqueued` / `suppressed`）、`reason`、执行结果状态及 workspace/agent/scene/job/task/run/queue/action ID。这里的 `task_id` 是 EmployeeTask，`queue_task_id` 是实际执行任务。晚到文件导致已入队通知真正转为抑制时记录 `employee_run_notice_state_changed`；重放和回滚不重复记录成功事件。事件不含正文、请求原句、产物链接或凭据，`enqueued` 仅证明通知意图提交，不等于钉钉送达。
 
 
+## Execution Event 确定性消费
+
+可验证原场域来源的 Employee Direct Run 终态，由现有周期恢复入口补录 `employee.execution` / `execution.terminal` 事件。幂等键是 Run ID；payload 只含原 task/run/queue、goal revision、result_ref、scene、job 和原 receipt 引用，occurred_at 使用 Run 的数据库完成时间。当前 Task revision 只在消费时判定，不进入事实指纹。结果正文保留在原记录中，不重复导出。
+
+Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_started` 账本来源和已提交 `dispatch_task` tool journal 的来源及三个结果 ID。当前处理模式或成员资格变化不替换原 principal/owner，不授权新工作。正常事实和旧目标事实写 `completed`，场域缺失或 tenant 不再匹配写 `held`；两者均 `job_id=NULL`，不进入消息窗口或模型。缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`（version、run_id、固定 reason），保留 `employee_direct_input` 和其他 context；此标记不证明事件消费或消息送达。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
+
+事实及消费同事务提交。提交后 SLS 记录 `employee_execution_event_recorded` 的状态、原因和关联 ID；已受理事实在原 `employee_loop` job trace 中记录零时长 Event，并复用 Langfuse index 关联 Run、queue、新旧 receipt。重投不重复记录成功，回滚不导出成功；观测导出仍是尽力而为，PostgreSQL 记录是事实依据。没有 generation、token usage、新模型 job 或重复通知，结果通知及文件静音继续由既有 notice 路径决定。
+
+此增量沿用已支持的事件类别和消费状态，不新增 schema、前台工具或 Daemon 协议。旧 Worker 只领取实际 job，因此 marker 保持 5。Cron/Webhook 与条件后续工作的模型 wake 尚未由这个事实记录增量启用。
+
 ## 上线与验证边界
 
 处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前私有记忆工具、显式文件完成通知策略、场域工具与私有投递 journal 使用 `[employee-loop:5]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具或遗漏私有附链。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。

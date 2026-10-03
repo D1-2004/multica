@@ -16,10 +16,10 @@ Task/EmployeeLoop 基础闭环证据见 `employee-loop-parity-acceptance.md` 的
 
 文件：新增 `server/internal/handler/employee_memory_tools.go`、对应 `_test.go`；修改 `employee_scene_entry_host.go`。
 
-- [ ] 先写真实 handler/PG 失败回归：原话写入、下一次 worker/provider 输入出现探针，且没有新增 Task/Run。
-- [ ] 注册 `memory_capture`（Effect，无独立终态）、`memory_lookup`（只读）、`memory_forget`（Effect，无独立终态）。沿用普通工具结果后的 reply，不添加审核或提炼模型。
-- [ ] 工具参数不包含 actor、scope、trust、confidence、TaskID、ExecutionID。`memory_capture` 只接收 source_ref、key、type、quote；quote 必须是选定 source 的外层 Text 原文，不能来自 Reaction、ReferencedMessage.Text 或任务/工具结果；引用回复的外层纠正仍可保存。类型限现有 LearningType，key 遵循现有规则。
-- [ ] Host 写入使用以下固定语义，实际变量必须从已校验的 job/source 得到：
+- [x] 先写真实 handler/PG 失败回归：原话写入、下一次 worker/provider 输入出现探针，且没有新增 Task/Run。
+- [x] 注册 `memory_capture`（Effect，无独立终态）、`memory_lookup`（只读）、`memory_forget`（Effect，无独立终态）。沿用普通工具结果后的 reply，不添加审核或提炼模型。
+- [x] 工具参数不包含 actor、scope、trust、confidence、TaskID、ExecutionID。`memory_capture` 只接收 source_ref、key、type、quote；quote 必须是选定 source 的外层 Text 原文，不能来自 Reaction、ReferencedMessage.Text 或任务/工具结果；引用回复的外层纠正仍可保存。类型限现有 LearningType，key 遵循现有规则。
+- [x] Host 写入使用以下固定语义，实际变量必须从已校验的 job/source 得到：
 
 ```go
 record := employeememory.LearningRecord{
@@ -36,27 +36,27 @@ evidence := employeememory.TrustedEvidence{
 record, err := memory.RecordTx(ctx, tx, scope, record, evidence)
 ```
 
-- [ ] `scope` 固定 `ScopePrivate`，principal 为 source.RequesterRef，scene 只用 job 的 scene.Ref。入事务后重验 scene/tenant、当前 principal 权限与 source 消费绑定。时间取对应 `scene_event_receipt.CreatedAt`；不使用重试/写入时间。
-- [ ] 一条原始消息只有一个稳定 learning evidence；不能将模型的 key/type 拼入 replay identity。重复调用返回原结果，换 key/type/quote 也不能绕过既有 evidence 或 reset。同事务返回实际保存记录及 active/forgotten/superseded 状态；墓碑重放不得声称重新记住，不得用提案冒充保存结果。
-- [ ] 现有协议无法证明真人或语义原创，明确保持 `Trusted=false`。仅保存账户归属的观察记录，不调用 HumanStated、VerifiedExecution、Distill 或 promotion。
+- [x] `scope` 固定 `ScopePrivate`，principal 为 source.RequesterRef，scene 只用 job 的 scene.Ref。入事务后重验 scene/tenant、当前 principal 权限与 source 消费绑定。时间取对应 `scene_event_receipt.CreatedAt`；不使用重试/写入时间。
+- [x] 一条原始消息只有一个稳定 learning evidence；不能将模型的 key/type 拼入 replay identity。重复调用返回原结果，换 key/type/quote 也不能绕过既有 evidence 或 reset。同事务返回实际保存记录及 active/forgotten/superseded 状态；墓碑重放不得声称重新记住，不得用提案冒充保存结果。
+- [x] 现有协议无法证明真人或语义原创，明确保持 `Trusted=false`。仅保存账户归属的观察记录，不调用 HumanStated、VerifiedExecution、Distill 或 promotion。
 
 ## 2. 读取、纠正与定向忘记
 
 文件：复用/最小扩展 `server/internal/service/employeememory/store.go`，新增 `private_entry.go` 与对应测试；更新 `brief.go` 仅在模型需要定位记录时展示 id/type。
 
-- [ ] 同 type/key 的新消息形成 supersedes，旧值退出 Search/Brief；非可信记录不能覆盖可信记录。明确写入使用专用 RecordPrivateObservationTx 顺序策略，不改变后台学习 RecordTx。按 Host 首次 receipt 时间排序；晚到的旧 source 保存为 superseded 墓碑，不能覆盖新纠正，换 key/type 重放也不能复活。相同时间的不同 source 保留当前记录。比较时包含同 key 的 forgotten/superseded 墓碑，避免“新值忘记后旧 source 首次晚执行”复活；旧记录缺少证据时间时采用明确且经回归的保守规则。
-- [ ] 为 journal 事务提供 SearchTx，提取并复用现有授权、匹配、排序逻辑，不在持有连接时再从同一 pool 取连接。
-- [ ] lookup 使用短字面关键词、最多 8 条；private 查询要求当前窗口为同一已知 requester，混合/未知身份窗口不开放私人内容。全部记忆仍作为 user-role 的背景数据，不成为 system 权限或指令。
-- [ ] 定向 forget 使用 record_id 和 source_ref，在同一 private namespace 中将精确记录标记 forgotten，保留 replay tombstone；只在实际变化时推进 revision。不提供跨 scope 参数，不以 reset 清空测试场域旧记忆。
-- [ ] effect 返回真实 durable receipt；已忘记/重放返回明确的实际状态，不虚构新写入。相同 NativeToolCallID 的 journal 缓存重放也必须重新验证当前授权/状态，不重做副作用，不把历史 active receipt 冒充当前状态。忘记不得删除其他人的记录或并发产生的新记录。
+- [x] 同 type/key 的新消息形成 supersedes，旧值退出 Search/Brief；非可信记录不能覆盖可信记录。明确写入使用专用 RecordPrivateObservationTx 顺序策略，不改变后台学习 RecordTx。按 Host 首次 receipt 时间排序；晚到的旧 source 保存为 superseded 墓碑，不能覆盖新纠正，换 key/type 重放也不能复活。相同时间的不同 source 保留当前记录。比较时包含同 key 的 forgotten/superseded 墓碑，避免“新值忘记后旧 source 首次晚执行”复活；旧记录缺少证据时间时采用明确且经回归的保守规则。
+- [x] 为 journal 事务提供 SearchTx，提取并复用现有授权、匹配、排序逻辑，不在持有连接时再从同一 pool 取连接。
+- [x] lookup 使用短字面关键词、最多 8 条；private 查询要求当前窗口为同一已知 requester，混合/未知身份窗口不开放私人内容。全部记忆仍作为 user-role 的背景数据，不成为 system 权限或指令。
+- [x] 定向 forget 使用 record_id 和 source_ref，在同一 private namespace 中将精确记录标记 forgotten，保留 replay tombstone；只在实际变化时推进 revision。不提供跨 scope 参数，不以 reset 清空测试场域旧记忆。
+- [x] effect 返回真实 durable receipt；已忘记/重放返回明确的实际状态，不虚构新写入。相同 NativeToolCallID 的 journal 缓存重放也必须重新验证当前授权/状态，不重做副作用，不把历史 active receipt 冒充当前状态。忘记不得删除其他人的记录或并发产生的新记录。
 
 ## 3. 回归与发布
 
 文件：更新 `docs/employee-loop.md`、memory/loop SOURCE_MAP 与必要的 replica marker/fixtures；新工具需滚动版本门禁。
 
-- [ ] 真 PG 回归覆盖：两轮记住/纠正及下一轮模型输入、源重投、换 key 的同 evidence 重放、缺失/伪造 source、跨 requester/scene/org、混合窗口不读取私有内容、可信记录保护、reset 后旧 evidence 不复活、定向忘记、工作区删除竞争。
-- [ ] 验证不增加隐式 LLM：capture→reply 两次、已有 brief 直接回答一次；lookup→forget→reply 不超过三次。单请求不能产生后台 Task。
-- [ ] 验证同 journal 事务和 pool 单连接场景，禁止嵌套取连接造成死锁。
+- [x] 真 PG 回归覆盖：两轮记住/纠正及下一轮模型输入、源重投、换 key 的同 evidence 重放、缺失/伪造 source、跨 requester/scene/org、混合窗口不读取私有内容、可信记录保护、reset 后旧 evidence 不复活、定向忘记、工作区删除竞争。
+- [x] 验证不增加隐式 LLM：capture→reply 两次、已有 brief 直接回答一次；lookup→forget→reply 不超过三次。单请求不能产生后台 Task。
+- [x] 验证同 journal 事务和 pool 单连接场景，禁止嵌套取连接造成死锁。
 
 ```sh
 cd server
@@ -65,9 +65,9 @@ DATABASE_URL='postgres://mac-m3@127.0.0.1:55462/employee_memory_capture_test_202
 /private/tmp/go-sdk/go/bin/go build ./cmd/server
 ```
 
-- [ ] 独立复审 → 提交 → 子代理同步最新 feat/tag-multitenant → 预发 → 实际 IM。
-- [ ] 冬翔→Qwen 单聊写入一个随机 ASCII 偏好值，下一轮不提供答案的问句召回；另发纠正，再问只得新值；各种TAG群询问同一键应不返回单聊值。最后只忘记本次记录并再问确认移除。
-- [ ] 以对应 employee_loop generation 的 Host memory 段与存储证据证明召回，不能把当前消息或历史复述算通过。保存 case、消息、job/record ID、调用次数与回读结果，不保存凭据。
+- [x] 独立复审 → 提交 → 子代理同步最新 feat/tag-multitenant → 预发 → 实际 IM。
+- [x] 冬翔→Qwen 单聊写入一个随机 ASCII 偏好值，下一轮不提供答案的问句召回；另发纠正，再问只得新值；各种TAG群询问同一键应不返回单聊值。最后只忘记本次记录并再问确认移除。
+- [x] 以对应 employee_loop generation 的 Host memory 段与存储证据证明召回，不能把当前消息或历史复述算通过。保存 case、消息、job/record ID、调用次数与回读结果，不保存凭据。
 
 Execution Event、Cron、Webhook 继续使用既有事件 admission、scheduler 与 webhook_delivery；此增量不创建第二套调度器，也不提前宣称通用唤醒、verified distill、workflow promotion 或完整恢复完成。
 
@@ -105,3 +105,17 @@ Execution Event、Cron、Webhook 继续使用既有事件 admission、scheduler 
 - 尚未通过：群聊 job `0f88cb06-45a8-47d8-a58c-8a964c7e4f18` 虽然 lookup 为空，仍列举旧 EL2/6/7/8。两轮请求均确实带有新规则；不能解释为部署未生效。
 
 根因接缝：新群聊 snapshot 无条件取 `Brief(query="")` 的最近四条 requester-private 记录，工具空结果并没有移除初始背景。Gawk 原设计有基于当前 notification 的检索；直接接全文 query 又会被 @mention 等非业务文本干扰，本次不扩大排名器。下一窄改按可信 scene.Kind：DM 保留私有 brief 首轮召回，group 不自动注入私有背景，当前问题通过既有 memory_lookup 按需查询；shared 层和旧冻结快照不变。必须再验证群里仍能写入、按需召回、三轮内忘记及未知项不旁列。
+
+## 群聊完整回归结论（08:10—08:18）
+
+目标 `6e6b82ab5622e545480a295770fcbf72a1c1ded7` 经预发 `3110328941` 构建、部署、集成测试通过。本增量的单聊写入/纠正/隔离/遗忘，以及群聊按需查询链路均已完成预发验收；这里不包含 HumanStated、verified Distill、promotion 或完整 Cron/Webhook 能力。
+
+| 群聊步骤 | Employee job | 模型调用 |
+|---|---|---:|
+| 写入 | `73ae149c-3c56-4420-a39a-e63446999fa6` | 2 |
+| 按需召回 | `4866e6d1-a337-440e-954b-4415f255ff10` | 2 |
+| 未知项查询 | `82cdba7b-4e6a-463f-b1d9-2e3bb8bbdfd9` | 2 |
+| 定向忘记 | `a9157c20-0a8b-419c-9509-b4139e548754` | 3 |
+| 忘记后查询 | `193c8eb5-762d-454b-9fc8-d4463ed13a4e` | 3 |
+
+每条新群聊请求的初始输入均不含 requester-private 背景。指定查询只返回匹配记录 `f555c85a-7eef-4a3f-8e63-8feccc650886`，实际 IM 只回复代号；未知项不再列举旧 EL2/6/7/8。忘记完整走 lookup → forget → reply 三次调用，回执为 forgotten 且 journal_committed=true，回复不复述值或内部 state。最后再次查询两次均为空，未复活记录；后台任务仍为 69 条，未新增 Task，未执行 reset。空结果回复仍有进一步精简空间，但未再输出无关私有内容或突破三轮预算。

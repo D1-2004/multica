@@ -86,6 +86,13 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				slog.WarnContext(ctx, "employee artifact cleanup failed", "error", err)
 			}
 			cleanupCancel()
+			// Terminal facts have no model job or outbound effect. Run after the
+			// existing notice path so fact recovery never gates result delivery.
+			executionCtx, executionCancel := context.WithTimeout(ctx, 2*time.Second)
+			if _, err := w.handler.ReconcileEmployeeExecutionEvents(executionCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee execution event reconciliation failed", "error", err)
+			}
+			executionCancel()
 			select {
 			case <-ctx.Done():
 				return
