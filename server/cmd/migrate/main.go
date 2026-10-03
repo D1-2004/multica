@@ -188,6 +188,7 @@ type migrationVersionAlias struct {
 // both stems: the new binary skips replaying the migration, while a binary
 // rollback still sees the historical stem it understands.
 var migrationVersionAliases = []migrationVersionAlias{
+	{Legacy: "9821_employee_routine_occurrence_decision", Current: "9996_employee_routine_occurrence_decision"},
 	{Legacy: "271_task_completion_canceled_status", Current: "9540_task_completion_canceled_status"},
 	{Legacy: "175_webhook_delivery_worker", Current: "176_webhook_delivery_worker"},
 	{Legacy: "176_autopilot_run_webhook_delivery_index", Current: "177_autopilot_run_webhook_delivery_index"},
