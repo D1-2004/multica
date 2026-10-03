@@ -176,6 +176,10 @@ func TestPinnedPreferenceWithoutOverlap(t *testing.T) {
 	if manifestIDs(group)[groupPref.ID] != ForegroundPinned || strings.Contains(group.Text, "BOB_PRIVATE") || strings.Contains(group.Text, "NON_PREFERENCE_NOTE") {
 		t.Fatalf("group pinned section wrong: %s", group.Text)
 	}
+	labelled := e.brief(t, ForegroundRequest{Scene: e.dm, SceneKind: scene.KindDM, Query: "What is the capital of France?", Requester: alice, Labels: true})
+	if !strings.Contains(labelled.Text, "- [m1] 偏好｜本人") || strings.Contains(labelled.Text, "(id=") || labelled.Manifest[0].Label != "m1" || labelled.Manifest[0].ID != pref.ID {
+		t.Fatalf("labelled brief: %s %+v", labelled.Text, labelled.Manifest)
+	}
 	// A DM window without one known requester has no pinned private section.
 	mixed := e.brief(t, ForegroundRequest{Scene: e.dm, SceneKind: scene.KindDM, Query: "What is the capital of France?"})
 	if strings.Contains(mixed.Text, "先说结论") {

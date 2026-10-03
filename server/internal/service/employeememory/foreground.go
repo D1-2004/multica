@@ -66,12 +66,17 @@ type ForegroundRequest struct {
 	// in every other scene kind: a group never receives private memory, even
 	// from a single speaker.
 	Requester string
+	// Labels renders each entry with its manifest label ("[m1] ") instead of
+	// its record UUID. Only snapshots whose memory tools resolve labels may
+	// set it; v1 memory_forget accepts UUIDs only.
+	Labels bool
 	// Now drives decay and rendered dates; zero means time.Now().
 	Now time.Time
 }
 
 // ManifestEntry identifies one injected record. It is frozen beside the input
-// and sent to Langfuse; it never reaches the model.
+// and sent to Langfuse; it never reaches the model. Labels are "m1".."mN",
+// unique within one brief; Kind is the brief section.
 type ManifestEntry struct {
 	Label   string `json:"label"`
 	Kind    string `json:"kind"`
@@ -379,17 +384,17 @@ func renderForeground(out ForegroundBrief, req ForegroundRequest, query string, 
 	out.Stats.BytesBySection = map[string]int{}
 	lines := []string{foregroundOpen}
 	privateShown := false
-	section := func(kind, prefix, header string, records []foregroundRecord, runes, budget int) int {
+	section := func(kind, header string, records []foregroundRecord, runes, budget int) int {
 		var body []string
 		used := len(header) + 1
 		for _, r := range records {
-			line := foregroundLine(r, req, runes)
+			label := foregroundLabel(len(out.Manifest) + 1)
+			line := foregroundLine(r, req, label, runes)
 			if used+len(line)+1 > budget {
 				break
 			}
 			used += len(line) + 1
 			body = append(body, line)
-			label := fmt.Sprintf("%s%d", prefix, len(body))
 			out.Items = append(out.Items, ForegroundItem{Section: kind, Label: label, Layer: r.layer, SceneID: r.sceneID, Record: r.LearningSearchResult})
 			out.Manifest = append(out.Manifest, ManifestEntry{Label: label, Kind: kind, ID: r.ID, Scope: string(r.layer), SceneID: r.sceneID, Bytes: len(line)})
 			privateShown = privateShown || r.layer == ScopePrivate
@@ -402,9 +407,9 @@ func renderForeground(out ForegroundBrief, req ForegroundRequest, query string, 
 		out.Stats.BytesBySection[kind] = used
 		return len(body)
 	}
-	out.Stats.Pinned = section(ForegroundPinned, "P", "[置顶偏好与约定｜默认生效，除非当前消息明确改变]", pinned, foregroundPinnedRunes, foregroundPinnedBytes)
+	out.Stats.Pinned = section(ForegroundPinned, "[置顶偏好与约定｜默认生效，除非当前消息明确改变]", pinned, foregroundPinnedRunes, foregroundPinnedBytes)
 	terms := neutralizeForeground(strings.Join(out.Stats.QueryTerms, " "))
-	out.Stats.Retrieved = section(ForegroundRetrieved, "R", "[与当前消息相关的记忆]（检索："+terms+"）", retrieved, foregroundItemRunes, foregroundRetrievedBytes)
+	out.Stats.Retrieved = section(ForegroundRetrieved, "[与当前消息相关的记忆]（检索："+terms+"）", retrieved, foregroundItemRunes, foregroundRetrievedBytes)
 	if out.Stats.Retrieved == 0 {
 		line := "[与当前消息相关的记忆]（检索：无可检索词）"
 		if out.Stats.Searchable {
@@ -413,7 +418,7 @@ func renderForeground(out ForegroundBrief, req ForegroundRequest, query string, 
 		lines = append(lines, line)
 		out.Stats.BytesBySection[ForegroundRetrieved] = len(line) + 1
 	}
-	out.Stats.Verified = section(ForegroundVerified, "V", "[已验证经验｜Host 验证通过的任务结果，只在条件相符时参考]", verified, foregroundItemRunes, foregroundVerifiedBytes)
+	out.Stats.Verified = section(ForegroundVerified, "[已验证经验｜Host 验证通过的任务结果，只在条件相符时参考]", verified, foregroundItemRunes, foregroundVerifiedBytes)
 	if privateShown {
 		lines = append(lines, "标「本人」的条目只属于当前私聊的这位用户，不要向其他参与者透露。")
 	}
@@ -433,30 +438,35 @@ var foregroundTypeLabels = map[LearningType]string{
 
 var foregroundZone = time.FixedZone("Asia/Shanghai", 8*3600)
 
+func foregroundLabel(n int) string { return fmt.Sprintf("m%d", n) }
+
 // foregroundLine renders attribution and date, never evidence, source IDs,
-// confidence or requester refs. The record UUID stays because the v1
-// memory_forget tool accepts only UUIDs.
-func foregroundLine(r foregroundRecord, req ForegroundRequest, runes int) string {
-	label, ok := foregroundTypeLabels[r.Type]
+// confidence or requester refs. Without Labels the record UUID stays because
+// the v1 memory_forget tool accepts only UUIDs.
+func foregroundLine(r foregroundRecord, req ForegroundRequest, label string, runes int) string {
+	kind, ok := foregroundTypeLabels[r.Type]
 	if !ok {
-		label = neutralizeForeground(string(r.Type))
+		kind = neutralizeForeground(string(r.Type))
 	}
 	date := r.CreatedAt.In(foregroundZone).Format("01-02")
 	var who string
 	switch {
 	case r.Trusted && r.Source == LearningSourceExecution:
-		label, who = "已验证", date+" 任务"
+		kind, who = "已验证", date+" 任务"
 	case r.layer == ScopePrivate && r.sceneID != req.Scene.Scene.SceneID:
 		who = "本人 " + date + " 在其他场域说"
 	case r.layer == ScopePrivate:
 		who = "本人 " + date + " 说"
 	case r.Source == LearningSourceSynthesis:
-		label, who = "候选", date+" 整理"
+		kind, who = "候选", date+" 整理"
 	default:
 		who = "本场域 " + date + " 记录"
 	}
 	text := neutralizeForeground(strings.Join(strings.Fields(r.Insight), " "))
-	return fmt.Sprintf("- %s｜%s：%s (id=%s)", label, who, truncate(text, runes), r.ID)
+	if req.Labels {
+		return fmt.Sprintf("- [%s] %s｜%s：%s", label, kind, who, truncate(text, runes))
+	}
+	return fmt.Sprintf("- %s｜%s：%s (id=%s)", kind, who, truncate(text, runes), r.ID)
 }
 
 func neutralizeForeground(text string) string {
