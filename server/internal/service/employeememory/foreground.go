@@ -485,7 +485,11 @@ func foregroundLine(r foregroundRecord, req ForegroundRequest, label string, run
 	if r.conflict {
 		kind = "说法不一·" + kind
 	}
-	text := neutralizeForeground(strings.Join(strings.Fields(r.Insight), " "))
+	text := strings.Join(strings.Fields(r.Insight), " ")
+	if subject := strings.Join(strings.Fields(r.Subject), " "); subject != "" && !strings.Contains(text, subject) {
+		text = subject + " —— " + text
+	}
+	text = neutralizeForeground(text)
 	if req.Labels {
 		return fmt.Sprintf("- [%s] %s｜%s：%s", label, kind, who, truncate(text, runes))
 	}

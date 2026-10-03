@@ -220,7 +220,9 @@ type RetrievalHit struct {
 }
 
 func retrievalHaystack(rec LearningRecord) string {
-	parts := []string{rec.Insight, rec.PlaybookSlug}
+	// Subject is the topic label of a scene fact; its verbatim quote alone
+	// often shares a single unit with a later question about that topic.
+	parts := []string{rec.Subject, rec.Insight, rec.PlaybookSlug}
 	parts = append(parts, rec.Files...)
 	parts = append(parts, rec.Entities...)
 	// The key's readable prefix helps; its Host digest suffix never matches.

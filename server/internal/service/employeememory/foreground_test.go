@@ -390,3 +390,16 @@ func TestForegroundShowsAttributionAndConflictPeers(t *testing.T) {
 		t.Fatalf("speaker attribution missing or raw ref exposed: %s", got.Text)
 	}
 }
+
+func TestForegroundRecallsSceneFactBySubject(t *testing.T) {
+	e := newForegroundEnv(t)
+	said := time.Date(2026, 10, 3, 6, 0, 0, 0, time.UTC)
+	fact := e.put(t, e.group, LearningRecord{Type: LearningTypeDecision, Key: "d-release", Subject: "发版时间", Insight: "定了：周四发版", Confidence: 3, Source: LearningSourceSynthesis, SpeakerRef: fgBob, SpeakerName: "陈思远", SaidAt: said}, "system:flush")
+	got := e.brief(t, ForegroundRequest{Scene: e.group, SceneKind: scene.KindGroup, Query: "发版时间定了吗？"})
+	if manifestIDs(got)[fact.ID] != ForegroundRetrieved {
+		t.Fatalf("subject-labelled fact not recalled: %s", got.Text)
+	}
+	if !strings.Contains(got.Text, "发版时间 —— 定了：周四发版") || !strings.Contains(got.Text, "陈思远 10-03 说（候选）") {
+		t.Fatalf("subject, quote, speaker or 候选 missing: %s", got.Text)
+	}
+}
