@@ -193,3 +193,42 @@ func TestTranscriptFallsBackToCoordinatorHistoryLoader(t *testing.T) {
 		t.Fatal("the Coordinator's DWS history loader must serve the employee transcript")
 	}
 }
+
+// A group wake's provider read becomes durable group transcript only after
+// its snapshot is frozen: human lines are stored as wake_read, bots are not.
+func TestGroupWakeStoresTranscriptAfterSnapshot(t *testing.T) {
+	f, _, dc := employeeFixture(t)
+	ctx := context.Background()
+	f.h.EmployeeSceneWorker.SceneTranscript = &fakeTranscriptLoader{page: groupMaterialPage(time.Now())}
+	f.command.Event.Data.Messages[0].Text = "@Qwen 哪项缺回执？"
+	job := claimEmployeeJob(t, f, dc)
+	if _, err := f.h.EmployeeSceneWorker.processClaimed(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := testPool.Query(ctx, `SELECT provider_message_id, source FROM employee_scene_message WHERE agent_id=$1::uuid AND scene_id=$2::uuid ORDER BY sent_at`, f.agentID, job.Scope.SceneID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	stored := map[string]string{}
+	for rows.Next() {
+		var id, source string
+		if err := rows.Scan(&id, &source); err != nil {
+			t.Fatal(err)
+		}
+		stored[id] = source
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if stored["mat-1"] != employeeentry.SceneMessageSourceWakeRead || stored["mat-2"] != employeeentry.SceneMessageSourceWakeRead {
+		t.Fatalf("human transcript lines not stored after the snapshot: %v", stored)
+	}
+	if _, ok := stored["bot-1"]; ok {
+		t.Fatalf("bot line stored: %v", stored)
+	}
+	var snapshot []byte
+	if err := testPool.QueryRow(ctx, `SELECT input_snapshot FROM employee_scene_job WHERE id=$1::uuid`, job.ID).Scan(&snapshot); err != nil || len(snapshot) == 0 {
+		t.Fatalf("snapshot not frozen: %v", err)
+	}
+}

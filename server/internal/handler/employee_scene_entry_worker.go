@@ -391,6 +391,11 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 					if err == nil {
 						_, err = w.store.SaveInput(runCtx, job, raw)
 					}
+					if err == nil {
+						// The wake's provider read becomes durable group
+						// transcript only once its snapshot is frozen.
+						w.handler.recordEmployeeSceneHistory(runCtx, job.Scope, input.sceneMessages)
+					}
 				}
 			}
 			if errors.Is(err, errEmployeeWindowTooLarge) {
