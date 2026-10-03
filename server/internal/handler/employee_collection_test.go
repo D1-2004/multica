@@ -379,7 +379,7 @@ func TestCollectionEndToEndOriginInvitationsAnswersOneSummary(t *testing.T) {
 		t.Fatalf("wake jobs: %d", n)
 	}
 	c.process()
-	if wakeCalls != 1 {
+	if wakeCalls != 1 || c.count(`SELECT model_attempts FROM employee_scene_job WHERE agent_id=$1::uuid AND kind='task_wake'`, c.f.agentID) != 1 {
 		t.Fatalf("summary model calls: %d", wakeCalls)
 	}
 	got, _ = taskinput.NewStore(testPool).GetCollection(ctx, c.scope(), col.ID)
@@ -720,5 +720,36 @@ func TestCollectionAmbiguousDMNeedsSendersOwnReference(t *testing.T) {
 	var binding, collection string
 	if err := testPool.QueryRow(context.Background(), `SELECT binding,collection_id::text FROM employee_task_input WHERE agent_id=$1::uuid`, c.f.agentID).Scan(&binding, &collection); err != nil || binding != string(taskinput.BindInviteReference) || collection != first.ID {
 		t.Fatalf("named answer: binding=%s collection=%s err=%v", binding, collection, err)
+	}
+}
+
+// A summary wake whose model never produces a reply spends at most three
+// requests and still delivers the authorized answers, rendered by the Host.
+func TestCollectionSummaryFallsBackWithoutAnotherModelRequest(t *testing.T) {
+	c := newCollectionHarness(t)
+	c.seed()
+	col := c.origin("问 Carol 本周签了几单", collectionParticipants[0])
+	c.deliver(col.ID, map[string]string{"Carol": "cid-carol-dm"})
+	carol := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-answer", text: "7 单"})
+	c.model.set(c.accept(carol, "i1"))
+	c.process()
+	failures := 0
+	c.model.set(func(string) (string, map[string]any) {
+		failures++
+		return "stop", map[string]any{"role": "assistant", "content": ""}
+	})
+	if _, err := c.f.h.EmployeeSceneWorker.ReconcileEmployeeCollections(context.Background(), 50); err != nil {
+		t.Fatal(err)
+	}
+	c.process()
+	if attempts := c.count(`SELECT model_attempts FROM employee_scene_job WHERE agent_id=$1::uuid AND kind='task_wake'`, c.f.agentID); attempts > 3 || failures > 3 {
+		t.Fatalf("summary wake exceeded its budget: attempts=%d calls=%d", attempts, failures)
+	}
+	if n := c.count(`SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'conversation_id'='cid-origin-dm' AND input->>'text' LIKE '%收集结果：%Carol：7 单%'`, c.f.agentID); n != 1 {
+		t.Fatalf("fallback summaries: %d", n)
+	}
+	got, _ := taskinput.NewStore(testPool).GetCollection(context.Background(), c.scope(), col.ID)
+	if got.State != taskinput.CollectionCompleted {
+		t.Fatalf("collection after fallback summary: %+v", got)
 	}
 }

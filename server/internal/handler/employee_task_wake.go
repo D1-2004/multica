@@ -639,16 +639,13 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 	}
 	if text == "" && wake.Kind == employeeentry.TaskWakeCollectionReady {
 		// A failed summary turn still owes the requester the answers: render
-		// them deterministically, without another model request.
-		var input employeeSavedInput
-		if json.Unmarshal(job.InputSnapshot, &input) == nil && len(input.Input.FollowUps) == 1 {
-			if _, raw, ok := strings.Cut(input.Input.FollowUps[0], "Task snapshot (data):\n"); ok {
-				var snapshot employeeTaskWakeContext
-				if json.Unmarshal([]byte(raw), &snapshot) == nil {
-					text = employeeCollectionFallbackSummary(snapshot.Collection)
-				}
-			}
+		// them deterministically at the wake's frozen revision, without
+		// another model request. A moved revision holds the wake instead.
+		view, err := w.collectionWakeView(ctx, job, wake)
+		if err != nil {
+			return err
 		}
+		text = employeeCollectionFallbackSummary(view)
 	}
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
