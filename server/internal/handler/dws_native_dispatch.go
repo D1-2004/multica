@@ -190,6 +190,9 @@ type nativeMessageInput struct {
 	// QuotedOwn: the quoted message is one this agent sent (its provider
 	// receipt named it), so its author is the employee itself.
 	QuotedOwn bool
+	// ConversationTitle is a group's title as the identity sees it
+	// (nativeConversationTitle); the event itself carries none.
+	ConversationTitle string
 }
 
 // buildNativeDispatchCommand turns one native IM message into the Dispatch
@@ -197,8 +200,12 @@ type nativeMessageInput struct {
 // function of its input, so a redelivered event yields the same command and
 // the acceptance fingerprint replays instead of conflicting.
 //
-// The event carries no sender uid, mention list or attachments. The sender
-// is identified by openDingTalkId only (no uid is invented). A group event
+// The event carries no sender uid, staffId, mention list, conversation
+// title or attachments. The sender is identified by openDingTalkId only (no
+// uid or staffId is invented); that id is relative to the receiving
+// account and the same in its 1:1 chats and groups, so it keys the trigger
+// person's capabilities (contextcap.ScopeFromTaskContext). A group's title
+// is the one the server read for it (in.ConversationTitle). A group event
 // exists only because this account was @-mentioned
 // (user_im_message_receive_at), which is recorded as a trusted mention of the
 // receiving uid; other mentions in the same line stay unknown.
@@ -219,10 +226,12 @@ func buildNativeDispatchCommand(in nativeMessageInput) (DispatchCommand, error) 
 	}
 	senderOpenID := strings.TrimSpace(m.SenderOpenDingTalkID)
 	conversationType := "single"
+	conversationTitle := ""
 	mentions := []DispatchMention{}
 	switch in.EventKey {
 	case dws.EventIMAt:
 		conversationType = "group"
+		conversationTitle = strings.TrimSpace(in.ConversationTitle)
 		mentions = []DispatchMention{{UID: in.UID}}
 	case dws.EventIMAllSingleChats:
 		if senderOpenID == "" {
@@ -262,7 +271,7 @@ func buildNativeDispatchCommand(in nativeMessageInput) (DispatchCommand, error) 
 		AgentID:       in.AgentID,
 		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
-			Conversation: DispatchConversation{OpenConversationID: conversationID, Type: conversationType},
+			Conversation: DispatchConversation{OpenConversationID: conversationID, Type: conversationType, Title: conversationTitle},
 			Sender:       DispatchSender{DisplayName: senderName, OpenDingTalkID: senderOpenID, SenderOpenDingTalkID: senderOpenID},
 			Messages:     []DispatchMessage{message},
 		}},
@@ -409,9 +418,14 @@ func (h *Handler) acceptNativeMessage(ctx context.Context, id dwsclient.Identity
 			quotedOwn = true
 		}
 	}
+	conversationTitle := ""
+	if ev.Key == dws.EventIMAt {
+		conversationTitle = h.nativeConversationTitle(ctx, id, conversationID)
+	}
 	command, err := buildNativeDispatchCommand(nativeMessageInput{
 		AgentID: util.UUIDToString(agent.ID), UID: id.UID, OrgID: id.OrgID,
 		EventKey: ev.Key, Message: m, Policy: policy, QuotedOwn: quotedOwn,
+		ConversationTitle: conversationTitle,
 	})
 	var skipped nativeSkip
 	if errors.As(err, &skipped) {

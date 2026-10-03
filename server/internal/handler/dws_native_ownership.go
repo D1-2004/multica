@@ -106,9 +106,12 @@ func (h *Handler) nativeSourceRunning() bool {
 
 // nativeFingerprintEvent is the event a native acceptance fingerprint covers.
 // The quoted author is resolved from receipts that can appear between two
-// deliveries of one message, so it stays out: a redelivery replays the first
-// acceptance instead of conflicting with it.
+// deliveries of one message, and the group title is read from DingTalk at
+// delivery (a rename or a failed read differs between deliveries), so both
+// stay out: a redelivery replays the first acceptance instead of conflicting
+// with it.
 func nativeFingerprintEvent(event DispatchEvent) DispatchEvent {
+	event.Data.Conversation.Title = ""
 	messages := make([]DispatchMessage, len(event.Data.Messages))
 	copy(messages, event.Data.Messages)
 	for i := range messages {

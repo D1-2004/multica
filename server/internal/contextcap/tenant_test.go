@@ -170,6 +170,10 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	homeGroup := f.insertScene(t, "org-home", "group", "cidHomeGroup", "Home", time.Hour)
 	annDM := f.insertScene(t, "org-home", "dm", "cidHomeDirect", "Ann", 2*time.Hour)
 	f.directSceneJob(t, "cidHomeDirect", annDM, "staff-ann", "Ann", "", 2*time.Hour)
+	// A DWS native subscription 1:1 chat names its sender only by the
+	// openDingTalkId the agent's account sees: that id is the person.
+	deeDM := f.insertScene(t, "org-home", "dm", "cidHomeNative", "Dee", 30*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNative", deeDM, "DopenDee", "Dee", "org-home", 30*time.Minute)
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, nil, []string{f.skillID}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +192,7 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := activity["org-home"]; got.GroupCount != 1 || got.PersonCount != 2 {
+	if got := activity["org-home"]; got.GroupCount != 1 || got.PersonCount != 3 {
 		t.Fatalf("org-home activity=%+v", got)
 	}
 	if got := activity["org-x"]; got.GroupCount != 2 || got.PersonCount != 1 {
@@ -199,8 +203,11 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	}
 
 	persons, err := ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-home", "org-home")
-	if err != nil || len(persons) != 2 {
+	if err != nil || len(persons) != 3 {
 		t.Fatalf("org-home persons=%+v err=%v", persons, err)
+	}
+	if dee, ok := FindPerson(persons, "DopenDee"); !ok || dee.Title != "Dee" || dee.DMSceneID != deeDM {
+		t.Fatalf("dee=%+v", dee)
 	}
 	ann, ok := FindPerson(persons, "staff-ann")
 	if !ok || ann.Title != "Ann" || ann.DMSceneID != annDM || ann.LastActiveAt.IsZero() {
@@ -231,15 +238,40 @@ func TestOrgActivityAndPersons(t *testing.T) {
 		t.Fatal(err)
 	}
 	persons, err = ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-home", "org-home")
-	if err != nil || len(persons) != 2 {
+	if err != nil || len(persons) != 3 {
 		t.Fatalf("org-home persons with an expired grant=%+v err=%v", persons, err)
 	}
 	if _, ok := FindPerson(persons, "staff-expired"); ok {
 		t.Fatal("a person known only from an expired grant is listed")
 	}
 	activity, err = ListAgentOrgActivity(ctx, f.tx, f.workspaceID, f.agentID, "org-home")
-	if err != nil || activity["org-home"].PersonCount != 2 {
+	if err != nil || activity["org-home"].PersonCount != 3 {
 		t.Fatalf("org-home activity with an expired grant=%+v err=%v", activity["org-home"], err)
+	}
+}
+
+// nativeDirectSceneJob plants a 1:1 Coordinator job as a DWS native
+// subscription dispatches it: the sender is named only by openDingTalkId.
+func (f storeFixture) nativeDirectSceneJob(t *testing.T, cid, sceneID, openID, name, dispatchOrg string, age time.Duration) {
+	t.Helper()
+	command, err := json.Marshal(map[string]any{
+		"source":      map[string]any{"platform": "dingtalk", "type": "digital_employee"},
+		"agent_scene": map[string]any{"scene_id": sceneID},
+		"event": map[string]any{"data": map[string]any{
+			"conversation": map[string]any{"openConversationId": cid, "type": "single"},
+			"sender":       map[string]any{"displayName": name, "openDingTalkId": openID, "senderOpenDingTalkId": openID},
+		}},
+		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.tx.Exec(context.Background(), `INSERT INTO inbound_coordinator_job
+		(acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, idempotency_key, command, chat_session_id, user_message_id, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', now() - make_interval(secs => $10::double precision))`,
+		uuid.NewString(), f.workspaceID, f.agentID, uuid.NewString(), uuid.NewString(), uuid.NewString(), command,
+		uuid.NewString(), uuid.NewString(), age.Seconds()); err != nil {
+		t.Fatal(err)
 	}
 }
 
