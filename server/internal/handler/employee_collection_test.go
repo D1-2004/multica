@@ -580,12 +580,16 @@ func TestCollectionAcceptRefusesUnboundSourcesAndConflicts(t *testing.T) {
 	col := c.origin("问 Carol 和 Dave", collectionParticipants[0], collectionParticipants[1])
 	c.deliver(col.ID, map[string]string{"Carol": "cid-carol-dm", "Dave": "cid-team-group"})
 
-	// Dave's group message without a quote cannot be recorded.
+	// Dave's group message without a quote gets no binding and cannot be recorded.
 	dave := c.send(collectionMessage{conversation: "cid-team-group", kind: "group", title: "B组", name: "Dave", openID: "dave-open", messageID: "dave-unquoted", text: "11"})
 	c.model.set(func(string) (string, map[string]any) {
 		return collectionCall("call-accept", "accept_collection_input", map[string]any{"source_ref": dave, "invitation_ref": "i1", "reply": "收到"})
 	})
+	before := c.model.count()
 	c.process()
+	if c.model.count() == before || strings.Contains(c.model.requests[before], "invitation_context") {
+		t.Fatal("an unquoted group message was bound to an invitation")
+	}
 	// A batch that records Carol's message twice with different content.
 	carol := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-answer", text: "7"})
 	c.model.set(func(string) (string, map[string]any) {
