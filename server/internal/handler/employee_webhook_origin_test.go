@@ -953,3 +953,61 @@ func TestEmployeeWebhookAdmittedRoutineRunFencesTenant(t *testing.T) {
 		t.Fatalf("runs=%d tasks=%d", runs, tasks)
 	}
 }
+
+// The event identity outlives the delivery's dispatch: after the accepted
+// delivery ends as failed, the same id with other content is still a
+// conflict and the same content still returns the first receipt.
+func TestEmployeeWebhookEventIDSurvivesFailedDelivery(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	key := map[string]string{"Idempotency-Key": "evt-" + uuid.NewString()}
+	body := []byte(`{"event":"deploy.finished","eventPayload":{"build":1}}`)
+	first := requireWebhookStatus(t, e.post(t, body, key), http.StatusOK, "accepted")
+	e.process(t, first["delivery_id"].(string))
+	if _, err := testPool.Exec(context.Background(), `UPDATE webhook_delivery SET status = 'failed', error = 'forced final failure' WHERE id = $1`, first["delivery_id"]); err != nil {
+		t.Fatal(err)
+	}
+
+	conflict := requireWebhookStatus(t, e.post(t, []byte(`{"event":"deploy.finished","eventPayload":{"build":2}}`), key), http.StatusConflict, "conflict")
+	if conflict["delivery_id"] == first["delivery_id"] {
+		t.Fatalf("conflict = %v", conflict)
+	}
+	again := requireWebhookStatus(t, e.post(t, body, key), http.StatusOK, "duplicate")
+	if again["delivery_id"] != first["delivery_id"] || again["run_id"] != first["run_id"] {
+		t.Fatalf("duplicate = %v first = %v", again, first)
+	}
+	if runs, tasks := e.counts(t); runs != 1 || tasks != 1 {
+		t.Fatalf("runs=%d tasks=%d", runs, tasks)
+	}
+}
+
+// Rejected rows hold no identity: a signature failure does not reserve the
+// event id for the real sender, and a conflict audit row is never what a
+// later retry is compared against.
+func TestEmployeeWebhookRejectedAttemptsHoldNoIdentity(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	secret := "f1-secret-" + uuid.NewString()
+	e.setSecret(t, secret)
+	key := "evt-" + uuid.NewString()
+	real := []byte(`{"event":"deploy.finished","eventPayload":{"build":1}}`)
+	forged := []byte(`{"event":"deploy.finished","eventPayload":{"build":666}}`)
+	signed := func(b []byte, s string) map[string]string {
+		return map[string]string{"Idempotency-Key": key, "X-Hub-Signature-256": signBody(s, b)}
+	}
+
+	requireWebhookStatus(t, e.post(t, forged, signed(forged, "not-the-secret-0123456789")), http.StatusUnauthorized, "rejected")
+	first := requireWebhookStatus(t, e.post(t, real, signed(real, secret)), http.StatusOK, "accepted")
+
+	changed := []byte(`{"event":"deploy.finished","eventPayload":{"build":2}}`)
+	requireWebhookStatus(t, e.post(t, changed, signed(changed, secret)), http.StatusConflict, "conflict")
+	// The conflict audit row carries `changed`; a retry of `changed` is
+	// still a conflict with the accepted delivery, not a duplicate of the
+	// audit row, and a retry of `real` is the accepted delivery.
+	requireWebhookStatus(t, e.post(t, changed, signed(changed, secret)), http.StatusConflict, "conflict")
+	again := requireWebhookStatus(t, e.post(t, real, signed(real, secret)), http.StatusOK, "duplicate")
+	if again["delivery_id"] != first["delivery_id"] {
+		t.Fatalf("duplicate = %v first = %v", again, first)
+	}
+	if runs, _ := e.counts(t); runs != 1 {
+		t.Fatalf("runs = %d", runs)
+	}
+}

@@ -23,10 +23,13 @@ package handler
 //     fenced when the run is admitted.
 //   - Identity. With a provider event id (X-GitHub-Delivery for github;
 //     Idempotency-Key, else X-GitHub-Delivery for generic) the event is
-//     (trigger, exact id): the same id with the same effective payload
-//     returns the first receipt, a different effective payload is a 409
-//     conflict. Without an id every request is its own event (per_request);
-//     identical bodies are never collapsed by a content hash.
+//     (trigger, exact id), held by the first authenticated delivery whatever
+//     its later status (a failed delivery keeps it; Replay runs it again):
+//     the same id with the same effective payload returns that receipt, a
+//     different effective payload is a 409 conflict. Rejected rows
+//     (signature failures, conflict audits) never hold an identity. Without
+//     an id every request is its own event (per_request); identical bodies
+//     are never collapsed by a content hash.
 //   - Target. An admitted run is dispatched only to the target frozen at
 //     acceptance; if the assignee, mode, routine scene or tenant changed, or
 //     the routine scene fails the tenant fence, the run is skipped and the
@@ -297,8 +300,20 @@ type webhookFrozenColumns struct {
 	Binding        []byte
 }
 
+// webhookEventIDTaken reports that an authenticated delivery already holds
+// the event id; ID is that delivery.
+type webhookEventIDTaken struct{ ID pgtype.UUID }
+
+func (e *webhookEventIDTaken) Error() string { return "webhook event id already accepted" }
+
 // insertWebhookDelivery inserts a delivery and its frozen source in one
-// transaction. A unique violation on the event id is returned as is.
+// transaction. An authenticated delivery with an event id first claims the
+// identity: under a transaction advisory lock on (trigger, event id) it looks
+// for any earlier delivery with that id that was not rejected — whatever its
+// later dispatch status, failed included — and returns webhookEventIDTaken
+// instead of inserting. Rejected rows (signature failures, conflict audits)
+// never hold an identity. A unique violation from an older binary racing on
+// the partial dedupe index is returned as is.
 func (h *Handler) insertWebhookDelivery(ctx context.Context, params db.CreateWebhookDeliveryParams, frozen webhookFrozenColumns) (db.WebhookDelivery, error) {
 	if h.TxStarter == nil {
 		return db.WebhookDelivery{}, errors.New("webhook delivery: no transaction starter")
@@ -308,6 +323,23 @@ func (h *Handler) insertWebhookDelivery(ctx context.Context, params db.CreateWeb
 		return db.WebhookDelivery{}, err
 	}
 	defer tx.Rollback(ctx)
+	if params.DedupeKey.Valid && params.Status != deliveryStatusRejected {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('webhook_event_identity:' || $1::text || ':' || $2, 0))`,
+			params.TriggerID, params.DedupeKey.String); err != nil {
+			return db.WebhookDelivery{}, fmt.Errorf("lock event identity: %w", err)
+		}
+		var holder pgtype.UUID
+		err := tx.QueryRow(ctx, `SELECT id FROM webhook_delivery
+			WHERE trigger_id = $1 AND dedupe_key = $2 AND status <> 'rejected'
+			ORDER BY (status = 'failed'), created_at DESC
+			LIMIT 1`, params.TriggerID, params.DedupeKey.String).Scan(&holder)
+		if err == nil {
+			return db.WebhookDelivery{}, &webhookEventIDTaken{ID: holder}
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return db.WebhookDelivery{}, fmt.Errorf("look up event identity: %w", err)
+		}
+	}
 	delivery, err := h.Queries.WithTx(tx).CreateWebhookDelivery(ctx, params)
 	if err != nil {
 		return db.WebhookDelivery{}, err

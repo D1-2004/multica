@@ -59,7 +59,7 @@ For "why didn't it run":
 2. `multica autopilot runs <id> --output json` — run status and failure reason.
 3. If assigned to a squad, inspect the squad: `multica squad get <squad-id> --output json`; execution goes to the leader.
 4. Inspect the target agent/runtime: `multica agent get <agent-id> --output json` and `multica runtime list --output json`.
-5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` and the same payload reuses the original delivery; the same id with a different payload is answered `409 conflict` and recorded as a `rejected` delivery with error `event_id_conflict`. Signatures are checked on the raw body before deduplication, so an unsigned retry is `401 rejected`, never `duplicate`.
+5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` and the same payload reuses the original delivery, even after it failed (use replay to run it again); the same id with a different payload is answered `409 conflict` and recorded as a `rejected` delivery with error `event_id_conflict`. Signatures are checked on the raw body before deduplication, so an unsigned retry is `401 rejected`, never `duplicate`.
 6. For `create_issue`, inspect the created issue if the run records one.
 
 ## Side effects
