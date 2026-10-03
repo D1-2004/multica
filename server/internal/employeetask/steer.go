@@ -66,6 +66,9 @@ type SteerParams struct {
 	// correction joins that Run's frozen input. Empty means the host has already
 	// recorded the interrupted Run, or the task had no active Run.
 	MergeRunID string `json:"merge_run_id,omitempty"`
+	// InterruptedRunID names the Run the host cancelled for this same request.
+	// Only that cancellation may be reopened; a task a human stopped stays stopped.
+	InterruptedRunID string `json:"interrupted_run_id,omitempty"`
 	// ExpectedVersion is optional; zero skips the aggregate CAS.
 	ExpectedVersion int64 `json:"-"`
 }
@@ -83,7 +86,7 @@ func (s *Store) Steer(ctx context.Context, scope Scope, id string, p SteerParams
 	if strings.TrimSpace(p.Body) == "" || strings.TrimSpace(p.ActorRef) == "" || p.ExpectedVersion < 0 {
 		return Task{}, Entry{}, ErrInvalid
 	}
-	if p.MergeRunID != "" && !validUUID(p.MergeRunID) {
+	if (p.MergeRunID != "" && !validUUID(p.MergeRunID)) || (p.InterruptedRunID != "" && (!validUUID(p.InterruptedRunID) || p.MergeRunID != "")) {
 		return Task{}, Entry{}, ErrInvalid
 	}
 	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
@@ -105,6 +108,19 @@ func (s *Store) Steer(ctx context.Context, scope Scope, id string, p SteerParams
 		}
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
+		}
+		if task.State == StateCancelled {
+			// Like AppendInput, a correction never lifts a human stop. The only
+			// cancellation it may reopen is the one this request just made.
+			var latestID string
+			var latestState State
+			err := tx.QueryRow(ctx, `SELECT id::text, state FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid ORDER BY created_at DESC, id DESC LIMIT 1`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id).Scan(&latestID, &latestState)
+			if err != nil {
+				return Entry{}, err
+			}
+			if p.InterruptedRunID == "" || p.InterruptedRunID != latestID || latestState != StateCancelled {
+				return Entry{}, ErrStopped
+			}
 		}
 		// A correction reopens a finished goal. It does not prove that a failed
 		// or cancelled writer exited; StartRun still enforces the writer fence.
