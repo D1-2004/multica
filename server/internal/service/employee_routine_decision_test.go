@@ -153,7 +153,7 @@ func TestEmployeeRoutineDecisionDispatchRunsFrozenPacketOnce(t *testing.T) {
 	run := f.fire(t, f.slot(0))
 	d := f.decision(t, run.ID)
 	// The routine changes after the occurrence was accepted.
-	if _, err := f.q.UpdateAutopilot(ctx, db.UpdateAutopilotParams{ID: f.ap.ID, Description: pgtype.Text{String: "CHANGED_AFTER_DECISION_ADMISSION", Valid: true}}); err != nil {
+	if _, err := f.q.UpdateAutopilot(ctx, db.UpdateAutopilotParams{ID: f.ap.ID, Title: pgtype.Text{String: "Renamed after admission", Valid: true}, Description: pgtype.Text{String: "CHANGED_AFTER_DECISION_ADMISSION", Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	// A different job cannot carry out this decision.
@@ -177,8 +177,9 @@ func TestEmployeeRoutineDecisionDispatchRunsFrozenPacketOnce(t *testing.T) {
 		t.Fatalf("decision after dispatch = %+v", after)
 	}
 	direct, ok := ParseDirectTaskContext(queue)
-	if !ok || !strings.Contains(direct.Prompt, "FROZEN_INSTRUCTIONS_V1") || strings.Contains(direct.Prompt, "CHANGED_AFTER") {
-		t.Fatal("decided run did not use the frozen packet", direct.Prompt)
+	if !ok || !strings.Contains(direct.Prompt, "FROZEN_INSTRUCTIONS_V1") || strings.Contains(direct.Prompt, "CHANGED_AFTER") ||
+		queue.TriggerSummary.String != "Morning digest" || strings.Contains(string(queue.Context), "Renamed after admission") {
+		t.Fatal("decided run did not use the frozen packet and title", direct.Prompt, queue.TriggerSummary.String)
 	}
 	origin, err := LoadAutomationOrigin(ctx, f.pool, queue)
 	if err != nil || origin.ReceiptID() != d.OccurrenceID || origin.RunID() == "" {

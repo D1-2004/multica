@@ -331,7 +331,10 @@ func (s *AutopilotService) DispatchRoutineDecisionTx(ctx context.Context, tx pgx
 	if err != nil {
 		return out, fmt.Errorf("%w: workspace fail-closed: no accountable human for routine run", ErrRoutineDecisionRefused)
 	}
-	queueID, err := s.insertRoutineQueueTx(ctx, tx, adm, AutomationOriginSceneRoutine, attr, task, run, packet, occurrenceID)
+	// The queue row names the routine by its frozen title, as the packet does.
+	frozenAdm := adm
+	frozenAdm.ap.Title = frozen.Title
+	queueID, err := s.insertRoutineQueueTx(ctx, tx, frozenAdm, AutomationOriginSceneRoutine, attr, task, run, packet, occurrenceID)
 	if err != nil {
 		return out, err
 	}
