@@ -238,9 +238,17 @@ func (s *Store) SaveInput(ctx context.Context, j Job, input json.RawMessage) (js
 
 // BeginModel reserves the request budget before network I/O. Replaying a saved
 // completion costs no request and preserves the original native tool call IDs.
-func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json.RawMessage) (json.RawMessage, error) {
-	if ordinal < 0 || ordinal >= 3 || !json.Valid(request) {
+func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json.RawMessage, selection ...ModelRouteSelection) (json.RawMessage, error) {
+	if ordinal < 0 || ordinal >= 3 || !json.Valid(request) || len(selection) > 1 {
 		return nil, ErrInvalid
+	}
+	var route *ModelRouteSelection
+	if len(selection) == 1 {
+		value := selection[0]
+		if value.Revision < 0 || value.Ref == "" || value.Candidate < 0 || value.NextCandidate != value.Candidate {
+			return nil, ErrInvalid
+		}
+		route = &value
 	}
 	var cached json.RawMessage
 	err := s.lease(ctx, j, func(tx pgx.Tx, current *Job) error {
@@ -249,6 +257,9 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 		}
 		if ordinal < len(current.ModelJournal) {
 			turn := current.ModelJournal[ordinal]
+			if (turn.Route == nil) != (route == nil) || (route != nil && (turn.Route.Ref != route.Ref || turn.Route.Revision != route.Revision || turn.Route.Candidate != route.Candidate)) {
+				return ErrConflict
+			}
 			equal, err := jsonEqual(ctx, tx, turn.Request, request)
 			if err != nil {
 				return err
@@ -257,7 +268,7 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 				return ErrConflict
 			}
 			if turn.Failure != "" {
-				return &ModelFailure{Message: turn.Failure}
+				return &ModelFailure{Message: turn.Failure, Route: turn.Route}
 			}
 			if len(turn.Response) > 0 {
 				cached = turn.Response
@@ -268,7 +279,7 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 			return ErrModelBudget
 		}
 		if ordinal == len(current.ModelJournal) {
-			current.ModelJournal = append(current.ModelJournal, ModelTurn{Request: request})
+			current.ModelJournal = append(current.ModelJournal, ModelTurn{Request: request, Route: route})
 		}
 		journal, err := json.Marshal(current.ModelJournal)
 		if err != nil {
@@ -432,8 +443,8 @@ func (s *Store) Hold(ctx context.Context, j Job, reason string) error {
 	})
 }
 
-func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, message string) error {
-	if message == "" {
+func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, message string, nextCandidate ...int) error {
+	if message == "" || len(nextCandidate) > 1 {
 		return ErrInvalid
 	}
 	return s.lease(ctx, j, func(tx pgx.Tx, current *Job) error {
@@ -441,16 +452,25 @@ func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, messag
 			return ErrInvalid
 		}
 		turn := &current.ModelJournal[ordinal]
+		if len(nextCandidate) == 1 && (turn.Route == nil || nextCandidate[0] < turn.Route.Candidate || nextCandidate[0] > turn.Route.Candidate+1) {
+			return ErrInvalid
+		}
+		if len(nextCandidate) == 0 && turn.Route != nil {
+			return ErrInvalid
+		}
 		if len(turn.Response) > 0 {
 			return ErrConflict
 		}
 		if turn.Failure != "" {
-			if turn.Failure != message {
+			if turn.Failure != message || (turn.Route != nil && turn.Route.NextCandidate != nextCandidate[0]) {
 				return ErrConflict
 			}
 			return nil
 		}
 		turn.Failure = message
+		if turn.Route != nil {
+			turn.Route.NextCandidate = nextCandidate[0]
+		}
 		journal, err := json.Marshal(current.ModelJournal)
 		if err != nil {
 			return err

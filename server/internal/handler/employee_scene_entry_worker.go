@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/langfuse"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
@@ -23,18 +24,20 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:5]"
+const EmployeeLoopReplicaMarker = "[employee-loop:6]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
 type EmployeeSceneWorker struct {
-	Langfuse     *langfuse.Client
-	ReplicaReady func(context.Context) error
-	handler      *Handler
-	store        *employeeentry.Store
-	model        employeeloop.Model
-	wake         chan struct{}
-	done         chan struct{}
+	ModelRoutes   employeeModelRoutes
+	Langfuse      *langfuse.Client
+	ReplicaReady  func(context.Context) error
+	RecoveryReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+	handler       *Handler
+	store         *employeeentry.Store
+	model         employeeloop.Model
+	wake          chan struct{}
+	done          chan struct{}
 }
 
 func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeSceneWorker {
@@ -138,8 +141,9 @@ func (w *EmployeeSceneWorker) WaitWithTimeout(timeout time.Duration) bool {
 }
 
 type employeeSavedInput struct {
-	Input  employeeloop.Input  `json:"input"`
-	Config employeeloop.Config `json:"config"`
+	Input      employeeloop.Input             `json:"input"`
+	Config     employeeloop.Config            `json:"config"`
+	ModelRoute *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
 }
 type employeeSavedOutcome struct {
 	Outcome        employeeloop.Outcome `json:"outcome"`
@@ -172,10 +176,14 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 	if agentErr != nil {
 		return true, w.store.Retry(ctx, job, agentErr.Error())
 	}
-	if h.EmployeeLoopReady == nil {
+	ready := h.EmployeeLoopReady
+	if (len(job.InputSnapshot) > 0 || len(job.Outcome) > 0) && w.RecoveryReady != nil {
+		ready = w.RecoveryReady
+	}
+	if ready == nil {
 		return true, w.store.Retry(ctx, job, "employee service is not ready")
 	}
-	if err = h.EmployeeLoopReady(ctx, parseUUID(job.Scope.WorkspaceID), parseUUID(job.Scope.AgentID)); err != nil {
+	if err = ready(ctx, parseUUID(job.Scope.WorkspaceID), parseUUID(job.Scope.AgentID)); err != nil {
 		return true, w.store.Retry(ctx, job, err.Error())
 	}
 	if _, err = employeeSceneFence(ctx, h, job); err != nil {
@@ -242,7 +250,7 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 					return true, w.store.Retry(ctx, job, err.Error())
 				}
 				host := &employeeSceneHost{worker: w, job: job, envelopes: workEnvelopes, abort: cancel}
-				durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel}
+				durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
 				input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
 				saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
 				if err == nil {
@@ -298,6 +306,21 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: employeeSceneTools()}}
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
+	}
+	if w.ModelRoutes != nil {
+		plan, e := w.ModelRoutes.CoordinatorPlan(ctx)
+		if e != nil {
+			return employeeSavedInput{}, e
+		}
+		if plan.Version != 1 || len(plan.Candidates) == 0 {
+			return employeeSavedInput{}, errors.New("employee coordinator model chain is unavailable")
+		}
+		input.ModelRoute = &plan
+		input.Config.Model = plan.Candidates[0].Model
+	}
+	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
+	if err != nil {
+		input.Input.RecentConversation = "Recent conversation history unavailable."
 	}
 	agentID := parseUUID(job.Scope.AgentID)
 	agent, err := w.handler.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
@@ -357,11 +380,16 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 // employeeJournalModel counts a provider attempt before I/O and durably freezes
 // native completions before any tool can execute. Restart replays those exact IDs.
 type employeeJournalModel struct {
-	store    *employeeentry.Store
-	job      employeeentry.Job
-	delegate employeeloop.Model
-	ordinal  int
-	abort    context.CancelFunc
+	routes    employeeModelRoutes
+	routePlan *modelregistry.CoordinatorPlan
+	candidate int
+	// requestTimeout may only shorten the fixed provider budget.
+	requestTimeout time.Duration
+	store          *employeeentry.Store
+	job            employeeentry.Job
+	delegate       employeeloop.Model
+	ordinal        int
+	abort          context.CancelFunc
 }
 
 func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -373,14 +401,24 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 		}
 		return nil, err
 	}
+	selection, err := m.routeSelection(&request)
+	if err != nil {
+		return failJournal(err)
+	}
 	raw, err := json.Marshal(request)
 	if err != nil {
 		return failJournal(err)
 	}
-	cached, err := m.store.BeginModel(ctx, m.job, ordinal, raw)
+	cached, err := m.store.BeginModel(ctx, m.job, ordinal, raw, selection...)
 	if err != nil {
 		var recorded *employeeentry.ModelFailure
 		if errors.As(err, &recorded) {
+			if m.routePlan != nil {
+				if recorded.Route == nil || recorded.Route.NextCandidate < 0 || recorded.Route.NextCandidate >= len(m.routePlan.Candidates) {
+					return failJournal(errors.New("employee cached model route is invalid"))
+				}
+				m.candidate = recorded.Route.NextCandidate
+			}
 			return nil, recorded
 		}
 		return failJournal(err)
@@ -410,21 +448,48 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 			request.Model = defaults.DefaultModel()
 		}
 	}
-	generation := employeeTraceGeneration(ctx, m.job, ordinal, request)
-	out, err := m.delegate.Chat(ctx, request)
+	// Bound only actual provider I/O. The parent wake retains time to persist
+	// this attempt and explicitly retry within its existing three-call budget.
+	timeout := 20 * time.Second
+	if m.requestTimeout > 0 && m.requestTimeout < timeout {
+		timeout = m.requestTimeout
+	}
+	callCtx, cancelCall := context.WithTimeout(ctx, timeout)
+	delegate := m.delegate
+	var routeMetadata map[string]any
+	if m.routePlan != nil {
+		attempt, prepareErr := m.routes.PrepareCoordinatorAttempt(callCtx, *m.routePlan, m.candidate)
+		if prepareErr != nil {
+			prepareErr = errors.Join(prepareErr, callCtx.Err())
+			cancelCall()
+			return m.recordFailure(ctx, ordinal, prepareErr)
+		}
+		ref := m.routePlan.Candidates[m.candidate]
+		if attempt == nil || attempt.Ref() != ref {
+			cancelCall()
+			return failJournal(errors.New("employee prepared provider differs from frozen selection"))
+		}
+		delegate = attempt
+		routeMetadata = map[string]any{"provider": ref.Provider, "upstream_model": ref.Model, "model_ref": ref.String(), "configuration_revision": m.routePlan.Revision, "candidate_index": m.candidate, "provider_configuration_revision": attempt.ConfigurationRevision()}
+	}
+	if delegate == nil {
+		cancelCall()
+		return m.recordFailure(ctx, ordinal, errors.New("employee legacy model is unavailable"))
+	}
+	generation := employeeTraceGeneration(ctx, m.job, ordinal, request, routeMetadata)
+	out, err := delegate.Chat(callCtx, request)
+	// A provider may return a completion after its deadline with no error.
+	// Retain it as diagnostic output, but never accept its tool calls.
+	if callErr := callCtx.Err(); callErr != nil {
+		err = errors.Join(err, callErr)
+	}
+	cancelCall()
 	if err == nil && out == nil {
 		err = errors.New("empty employee model completion")
 	}
 	employeeTraceEndGeneration(generation, out, err)
 	if err != nil {
-		message := err.Error()
-		if message == "" {
-			message = "employee model request failed"
-		}
-		if saveErr := m.store.SaveModelFailure(ctx, m.job, ordinal, message); saveErr != nil {
-			return failJournal(saveErr)
-		}
-		return nil, &employeeentry.ModelFailure{Message: message}
+		return m.recordFailure(ctx, ordinal, err)
 	}
 	raw, err = json.Marshal(out)
 	if err != nil {
@@ -568,11 +633,24 @@ func (w *EmployeeSceneWorker) logCompleted(ctx context.Context, job employeeentr
 // Ready verifies the configured services, live replica protocol and current
 // runtime before the settings API enables Employee.
 func (w *EmployeeSceneWorker) Ready(ctx context.Context, workspaceID, agentID pgtype.UUID) error {
+	return w.ready(ctx, workspaceID, agentID, true)
+}
+
+// ReadyForRecovery preserves all service, replica and runtime fences. A frozen
+// wake does not depend on today's chain: cached turns need no provider, and each
+// new request authorizes its frozen candidate in PrepareCoordinatorAttempt.
+func (w *EmployeeSceneWorker) ReadyForRecovery(ctx context.Context, workspaceID, agentID pgtype.UUID) error {
+	return w.ready(ctx, workspaceID, agentID, false)
+}
+
+func (w *EmployeeSceneWorker) ready(ctx context.Context, workspaceID, agentID pgtype.UUID, checkModel bool) error {
 	if w == nil || w.handler == nil || w.model == nil || w.store == nil || w.handler.Queries == nil || w.handler.TxStarter == nil || w.handler.TaskService == nil || w.handler.DingTalkResponses == nil {
 		return errors.New("employee services are not configured")
 	}
-	if enabled, ok := w.model.(interface{ Enabled() bool }); ok && !enabled.Enabled() {
-		return errors.New("employee model is not configured")
+	if checkModel {
+		if err := w.modelReady(ctx); err != nil {
+			return err
+		}
 	}
 	if w.handler.DingTalkResponses.BeforeSend == nil || w.handler.EmployeeRunNoticeArtifacts == nil || w.handler.EmployeeMemory == nil {
 		return errors.New("employee delivery and memory services are not configured")

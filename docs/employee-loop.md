@@ -15,7 +15,7 @@
 
 场域窗口只收集尚未 claim 的到达消息，claim 后的新消息进入下个窗口。每个 job 持久保存 lease/generation、原始输入、岗位/工具配置、模型请求和结果或失败、工具回执及最终 outcome。模型和外部工具在事务外执行，提交效果前核验 lease、权限和场域。
 
-GawkBot 固定提交的内核和 prompt/voice 负责判断与表达；岗位 Instructions 或有效短合同进入稳定 system 前缀，窗口与记忆作为数据。前台最多三个真实模型请求，provider 错误和格式重试也消耗此预算，重启不能重置预算。简单回复或派发加接单文案可以首轮完成，Quiet 是合法终态。没有单独的 finish_check、审核或润色模型。
+GawkBot 固定提交的内核和 prompt/voice 负责判断与表达；岗位 Instructions 或有效短合同进入稳定 system 前缀，窗口与记忆作为数据。前台最多三个真实模型请求，provider 错误和格式重试也消耗此预算，重启不能重置预算。简单回复或派发加接单文案可以首轮完成，Quiet 是合法终态。没有单独的 finish_check、审核或润色模型。单次真实 provider 请求最多 20 秒，并受当前 wake 原有 45 秒总预算约束；子请求超时可在剩余预算内由 Loop 显式重试，SDK 不隐式重试。journal 读写继续使用父 ctx，缓存命中不新发请求；迟到的超时 completion 不执行工具。父预算耗尽后沿用既有独立 outcome checkpoint 收束，不延长模型预算或重复已接受效果。
 
 Direct commit 已成功时，即使外层工具 journal 写失败或调用被取消，返回的 Run receipt 仍保留，不能错误地说未受理。确定性上下文超限保存一次无需模型的明确反馈，不截掉尾部约束，也不永久重试。
 
@@ -61,15 +61,29 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_started` 账本来源和已提交 `dispatch_task` tool journal 的来源及三个结果 ID。provider route 与 Loop owner 独立：具有原目录 scene、空 reason 及完整来源证明的 `legacy/legacy` 和 `unified/ready` receipt 均可承载 Employee 消费，后续事实保留原 route；unmapped、主体或来源错配不能据此通过。当前处理模式或成员资格变化不替换原 principal/owner，不授权新工作。租户围栏复用 `fencedScene/agentTenantOrg`，认可身份组织和已为该 Agent 创建的 tenant；原 DWS 身份缺失仍 held，不借用 robot 的无身份回退。正常事实和旧目标事实写 `completed`，已确认的场域缺失或 tenant 不再匹配写 `held`；临时数据库错误和取消返回可重试错误，回滚不保存 held。两种消费均 `job_id=NULL`，不进入消息窗口或模型。
 
-缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`，保留 `employee_direct_input` 和其他 context。`version=1` 表示兼容存储格式，`proof_version=2` 表示本次来源校验版本，另有 run_id 和固定 reason；此标记不证明事件消费或消息送达。新扫描会重评缺少 proof_version 的旧误判，只将同 Run 的当前或更高 proof_version 作为最终 skip，不降级较新证明。旧副本仍识别 version=1，故不会覆盖新证明而形成滚动降级循环；IM marker 保持 5。合法旧 Run 通过重评后，由原子提交的新事实 receipt 阻止重复消费，历史旧 skip 不再控制结果。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
+缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`，保留 `employee_direct_input` 和其他 context。`version=1` 表示兼容存储格式，`proof_version=2` 表示本次来源校验版本，另有 run_id 和固定 reason；此标记不证明事件消费或消息送达。新扫描会重评缺少 proof_version 的旧误判，只将同 Run 的当前或更高 proof_version 作为最终 skip，不降级较新证明。旧副本仍识别 version=1，故不会覆盖新证明而形成滚动降级循环；该事实增量本身不提升 IM marker。合法旧 Run 通过重评后，由原子提交的新事实 receipt 阻止重复消费，历史旧 skip 不再控制结果。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
 
 事实及消费同事务提交。提交后 SLS 记录 `employee_execution_event_recorded` 的状态、原因和关联 ID；已受理事实在原 `employee_loop` job trace 中记录零时长 Event，并复用 Langfuse index 关联 Run、queue、新旧 receipt。重投不重复记录成功，回滚不导出成功；观测导出仍是尽力而为，PostgreSQL 记录是事实依据。没有 generation、token usage、新模型 job 或重复通知，结果通知及文件静音继续由既有 notice 路径决定。
 
-此增量沿用已支持的事件类别和消费状态，不新增 schema、前台工具或 Daemon 协议。旧 Worker 只领取实际 job，因此 marker 保持 5。Cron/Webhook 与条件后续工作的模型 wake 尚未由这个事实记录增量启用。
+此增量沿用已支持的事件类别和消费状态，不新增 schema、前台工具或 Daemon 协议。旧 Worker 只领取实际 job，因此该事实增量本身不提升 marker。Cron/Webhook 与条件后续工作的模型 wake 尚未由这个事实记录增量启用。
+
+## 近期对话临时上下文
+
+新 wake 只读同 workspace、agent、tenant、scene 和受理 principal 的近期用户原话，以及有 provider 消息 ID 和匹配会话的已送达 Host 回复。截止时间固定为原 job 受理时间，上限 24 小时、20 条、16 KiB；当前窗口排除，截断显式标记。不读取未确认发送的模型结果，不增加总结 LLM，不写长期记忆。callback 回复必须同时匹配原 URL 和确切同步 RequestID；其他 Run 回复依赖独立的 notice 来源记录，不能仅凭复用 URL 纳入。
+
+已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。
+
+## Coordinator / EmployeeLoop 共用模型配置
+
+新 Employee wake 从 Coordinator 的全局配置读取有效主模型与降级链，未配置时沿用相同 Diamond 默认值。输入快照只冻结配置 revision、候选 provider/model 引用和计划版本，不保存 URL 或密钥。每次实际请求使用单次 adapter，重新核验当前 provider/model 是否启用并读取当前密钥和地址；密钥轮换不修改冻结选择，禁用或删除候选不能借旧快照重新授权。配置变更只改变之后的新 wake，不把恢复中的候选替换成新链。
+
+模型 journal 在 I/O 前保存当前候选及预算预留，失败后原子保存下一候选；可降级失败沿冻结链前进，成功后的工具轮继续使用同一候选。provider 的 SDK 重试关闭，不调用 Coordinator 内部可多次请求的 Route.Chat。整个 wake 最多三次预留，因此实际 HTTP 不超过三次；当前候选已不可用的准备失败也占一个预留，但不创建 generation。每个实际请求只有一个 generation，记录真实 provider/model、候选序号、冻结配置 revision 和当前 provider 配置 revision。
+
+旧快照不增补模型计划或近期历史，原请求字节和已提交效果保持重放，尚需 I/O 时仍使用原 signup transport。恢复已保存 outcome 或 response/effect journal 不依赖当前新模型链就绪；当前权限、租户、服务、在线副本及 Runtime 门禁仍检查，新的实际请求仍验证凭据。新模型计划与近期对话快照共用 marker 6，旧 worker 不领取这些新语义。
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前私有记忆工具、显式文件完成通知策略、场域工具与私有投递 journal 使用 `[employee-loop:5]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具或遗漏私有附链。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:6]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
@@ -80,7 +94,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 请求者私有记忆
 
-`memory_capture`、`memory_lookup`、`memory_forget` 使用现有 Employee 工具循环，不创建后台 Task、不添加提炼模型，仍最多三次模型调用。capture 后普通回复通常两次；已有 brief 直接回答一次；lookup → forget → reply 最多三次。新工具由 marker 5 门禁保护；已有 job 保留冻结的 Config.Tools 和 model journal，不在恢复时追加工具 schema。
+`memory_capture`、`memory_lookup`、`memory_forget` 使用现有 Employee 工具循环，不创建后台 Task、不添加提炼模型，仍最多三次模型调用。capture 后普通回复通常两次；已有 brief 直接回答一次；lookup → forget → reply 最多三次。新工具最初由 marker 5 门禁保护（当前统一门禁见上文）；已有 job 保留冻结的 Config.Tools 和 model journal，不在恢复时追加工具 schema。
 
 三项操作均要求整个原始收集窗口只有一个已知 requester，且所选 source_ref 唯一。Host 在 journal 事务内重验当前 scene/tenant、平台调用主体权限及 receipt → consumption → job 绑定。平台 endpoint principal 不是发言人；作用域固定当前 scene 的 requester-private，模型不能指定 actor、scope、trust 或 confidence。
 
@@ -88,12 +102,12 @@ capture 的 quote 必须原样出现在选定消息的外层 Text；引用背景
 
 SourceID 固定为 `employee-message:<receipt_id>`，EvidenceID 为该消息 OpenMsgID。一条源消息仅消费一次 learning identity；换 key/type/quote 不会创建第二条。OccurredAt 使用 receipt 首次 Host created_at，不使用重试时间。更早或同时间的来源不能替换同 type/key 的较新记忆，时间栅栏包含 forgotten/superseded 墓碑；晚到来源得到 superseded 回执。旧记录没有 evidence_occurred_at 时，以 Host 创建该记录的 created_at 作保守栅栏。后台 Run 的原 RecordTx 策略保持不变。首次在 reset 后才送达、又没有可验证源时间的历史消息无法由本协议判定为旧事件。
 
-新输入快照只在可信场域目录明确为 DM、且窗口只有一个已知 requester 时自动注入最多四条 private brief。group 的单一发言人不代表听众只有该人，因此不自动注入其最近 private 记录；用户明确询问时仍通过原有 memory_lookup 在同一 scene/requester 范围按需读取。scene-shared brief 保持原合同，未知 kind 不猜作 DM。此规则只作用于新快照，已冻结的旧 group 上下文及 model journal 保持字节兼容；marker 5 和最多三次调用不变。
+新输入快照只在可信场域目录明确为 DM、且窗口只有一个已知 requester 时自动注入最多四条 private brief。group 的单一发言人不代表听众只有该人，因此不自动注入其最近 private 记录；用户明确询问时仍通过原有 memory_lookup 在同一 scene/requester 范围按需读取。scene-shared brief 保持原合同，未知 kind 不猜作 DM。此规则只作用于新快照，已冻结的旧 group 上下文及 model journal 保持字节兼容；该记忆增量不提升 marker，最多三次调用不变。
 
 lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八条；brief 带 record ID/type 供定向纠正与忘记。forget 仅更新本 namespace 的精确记录 ID，保留回执墓碑，不删除替代记录或其他人的记忆；重复忘记不推进 revision。
 
 工具缓存重放不重做效果：同事务只读复核来源和状态，失效记录不再通过缓存 lookup 返回。底层记录未变化时保留原 lookup 快照，不因读时置信度衰减制造模型请求冲突。真正状态变化导致后续已冻结模型请求不一致时，现有失败 outcome 路径终结该 wake，不修改历史 journal、不追加模型调用。记忆工具 trace 在 journal 事务结束后关闭；`journal_committed` 表示事务提交，业务拒绝仍可为 ERROR 并有已提交的失败回执，rollback 不作为写入成功证据。
 
-新输入快照还冻结记忆回复的表达约束：遵守用户限定的输出格式，只回答目标事实；缺失时简答不知道，不列举无关记录或承诺访问其他场域私有记忆。普通确认不展示 record ID、内部状态及来源字段，忘记后不复述被忘内容；用户明确要求审计细节时例外。该约束仅追加到新快照的 Persona 与工具描述，不修改全局 BuildPrompt、历史快照、权限或调用预算，marker 仍为 5。
+新输入快照还冻结记忆回复的表达约束：遵守用户限定的输出格式，只回答目标事实；缺失时简答不知道，不列举无关记录或承诺访问其他场域私有记忆。普通确认不展示 record ID、内部状态及来源字段，忘记后不复述被忘内容；用户明确要求审计细节时例外。该约束仅追加到新快照的 Persona 与工具描述，不修改全局 BuildPrompt、历史快照、权限或调用预算，该表达增量不单独提升 marker。
 
 本批不接 HumanStated、verified Distill、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。

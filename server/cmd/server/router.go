@@ -952,9 +952,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
-	employeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
+	// Only snapshots created before model routing retain the old transport.
+	// Every new Employee wake freezes the Coordinator registry's effective chain.
+	legacyEmployeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
 	h.EmployeeMemory = employeememory.NewStore(pool)
-	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, employeeModel)
+	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
+	h.EmployeeSceneWorker.ModelRoutes = h.Models
 	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
@@ -965,13 +968,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:5")
+			return errors.New("live server replicas do not all support employee-loop:6")
 		}
 		return nil
 	}
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
+	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {

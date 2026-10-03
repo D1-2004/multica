@@ -184,3 +184,43 @@ Original receipt, run ledger, and committed dispatch checkpoint establish the
 source. Existing PostgreSQL reconciliation and notice ownership remain in the
 Host; no scheduler or event sink is added to the copied kernel. The additive
 no-job records are readable during marker-5 rolling upgrades.
+
+## Bounded recent conversation snapshots
+
+`internal/bot/session.go:SessionStore.GetHistory` at the fixed source preserves
+ordered recent dialogue; `internal/team/notification_context.go` builds bounded
+per-recipient context from broker reads. Multica keeps that separation with a
+read-only Host projection in `employeeentry/recent_history.go` and
+`handler/employee_recent_context.go`. New wakes may carry `Input.RecentConversation`
+as user-role data before the current window; empty historical snapshots keep
+their original prompt bytes. This is neither a summary-model call nor a write to
+long-term memory. User text must have admitted scene/principal provenance;
+assistant text additionally requires a provider-confirmed Host response tied to
+that principal's source. The projection states its fixed watermark, 24-hour
+window, message/byte bounds, and truncation. It does not claim complete provider
+history, authorize new work, or re-read history during a journal replay.
+
+Retired private memory suppresses only its exact scoped message evidence and
+the original job's associated replies in new projections. Audit rows stay intact;
+other messages, including ordinary temporary corrections, remain dialogue.
+The snapshot marks omitted withdrawn evidence. Callback correlation uses both
+the frozen response URL and exact synchronous request ID; independent Run
+notices keep their own source proof. No insight-value search or global erasure
+is performed: later restatements without structured backreferences are outside
+this filter's coverage.
+
+
+## Configured model selection at the Host boundary
+
+The fixed source's model interface remains one call per loop turn. Multica's
+`handler/employee_model_route.go`, durable `employeeentry` model journal, and
+`modelregistry/employee.go` adapt that boundary to the existing Coordinator
+configuration. New wakes freeze only candidate references and configuration
+revision. Each uncached request rechecks current provider authorization and
+credentials, and the journal saves the fallback cursor before subsequent turns.
+The single-request adapter never invokes Coordinator's internally retrying route,
+so the kernel's three-turn budget bounds actual HTTP calls as well. Failed
+preparation consumes a reservation but creates no generation; cached responses
+create neither new requests nor effects. Historical snapshots keep their original
+request bytes. This model plan and the bounded recent-history snapshot share
+marker 6; no copied-kernel scheduler, model router, or follow-up pass is added.
