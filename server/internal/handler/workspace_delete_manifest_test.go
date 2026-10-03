@@ -84,6 +84,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"scene_event_receipt":             workspaceDelete,
 	"employee_event_consumption":      workspaceDelete,
 	"employee_scene_job":              workspaceDelete,
+	"employee_host_notice":            workspaceDelete,
 	"employee_learning":               workspaceDelete,
 	"employee_learning_consumption":   workspaceDelete,
 	"employee_routine_occurrence":     workspaceDelete,
@@ -257,7 +258,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_task_ready_intent", "employee_task_input", "employee_task_invitation", "employee_task_collection", "employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_wait", "employee_watchdog_notice", "employee_watchdog_episode", "employee_watchdog_cursor", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_task_ready_intent", "employee_task_input", "employee_task_invitation", "employee_task_collection", "employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_wait", "employee_watchdog_notice", "employee_watchdog_episode", "employee_watchdog_cursor", "employee_host_notice", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -323,6 +324,9 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	if _, err = testPool.Exec(ctx, `INSERT INTO employee_host_notice(action_id,workspace_id,agent_id,tenant_org_id,scene_id,principal_id,source_kind,source_id) SELECT 'delete-fixture-'||t.id::text,t.workspace_id,t.agent_id,t.tenant_org_id,t.scene_id,$2::uuid,'task_wake','delete-fixture' FROM employee_task t WHERE t.id=$1`, task.ID, testUserID); err != nil {
+		t.Fatal(err)
+	}
 	return workspaceID
 }
 
@@ -357,7 +361,7 @@ func seedWorkspaceTaskInput(t *testing.T, task employeetask.Task) {
 
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_task_collection": 1, "employee_task_invitation": 1, "employee_task_input": 1, "employee_task_ready_intent": 1, "employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_task_wait": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1, "employee_watchdog_cursor": 1, "employee_watchdog_episode": 1, "employee_watchdog_notice": 1} {
+	for table, multiplier := range map[string]int{"employee_task_collection": 1, "employee_task_invitation": 1, "employee_task_input": 1, "employee_task_ready_intent": 1, "employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_task_wait": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1, "employee_watchdog_cursor": 1, "employee_watchdog_episode": 1, "employee_watchdog_notice": 1, "employee_host_notice": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)

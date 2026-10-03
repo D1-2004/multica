@@ -136,14 +136,20 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	// scene notice, the original response callback, or a persisted Run notice.
 	callbackJSON, _ := json.Marshal(callbacks)
 	withdrawnCallbackJSON, _ := json.Marshal(withdrawn.callbacks)
-	args = append(scopeArgs(request.Scope), out.Since, before, noticeIDs, callbackJSON, jobs, dwsIDs, candidates+1, excludedMessages, withdrawn.notices, withdrawnCallbackJSON, withdrawn.jobs)
+	// Host-initiated notices (task wakes, invitations, watchdog) join through
+	// their own fact row for this scene and principal. A withdrawal of any
+	// memory evidence from their origin receipt conservatively hides them.
+	args = append(scopeArgs(request.Scope), out.Since, before, noticeIDs, callbackJSON, jobs, dwsIDs, candidates+1, excludedMessages, withdrawn.notices, withdrawnCallbackJSON, withdrawn.jobs, request.PrincipalID)
 	rows, err = s.db.Query(ctx, `SELECT a.id,a.provider_message_id,a.updated_at,left(a.input->>'text',2048),octet_length(a.input->>'text')
  FROM response_action a JOIN agent_scene sc ON sc.id=$4::uuid AND sc.workspace_id=$1::uuid AND sc.agent_id=$2::uuid AND sc.tenant_org_id=$3
  WHERE a.workspace_id=$1::uuid AND a.agent_id=$2::uuid AND a.kind='message.send' AND a.state='delivered' AND a.error_code='' AND a.provider_message_id<>'' AND a.provider_conversation_id=sc.external_scene_id
- AND a.input->>'workspace_id'=$1::text AND a.input->>'agent_id'=$2::text AND a.input->>'scene_id'=$4::text AND a.input->>'dws_org_id'=$3 AND a.input->>'conversation_id'=sc.external_scene_id AND a.input->>'dws_uid'=ANY($10::text[])
+ AND a.input->>'workspace_id'=$1::text AND a.input->>'agent_id'=$2::text AND a.input->>'scene_id'=$4::text AND a.input->>'dws_org_id'=$3 AND a.input->>'conversation_id'=sc.external_scene_id
  AND a.updated_at>=$5 AND a.updated_at<$6 AND jsonb_typeof(a.input->'text')='string' AND btrim(a.input->>'text')<>''
  AND NOT(a.provider_message_id=ANY($12::text[]))
- AND (a.input->>'scene_notice_id'=ANY($7::text[]) OR (a.input->>'request_id'=a.request_id AND $8::jsonb @> jsonb_build_array(jsonb_build_object('url',a.input->>'callback_url','request_id',a.request_id))) OR EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid AND n.job_id::text=ANY($9::text[]) AND n.state='enqueued'))
+ AND ((a.input->>'dws_uid'=ANY($10::text[]) AND (a.input->>'scene_notice_id'=ANY($7::text[]) OR (a.input->>'request_id'=a.request_id AND $8::jsonb @> jsonb_build_array(jsonb_build_object('url',a.input->>'callback_url','request_id',a.request_id))) OR EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid AND n.job_id::text=ANY($9::text[]) AND n.state='enqueued')))
+  OR EXISTS(SELECT 1 FROM employee_host_notice h WHERE h.action_id=a.id AND h.workspace_id=a.workspace_id AND h.agent_id=a.agent_id AND h.tenant_org_id=$3 AND h.scene_id=$4::uuid AND h.principal_id=$16::uuid
+   AND NOT EXISTS(SELECT 1 FROM employee_learning l WHERE l.workspace_id=h.workspace_id AND l.agent_id=h.agent_id AND l.tenant_org_id=h.tenant_org_id AND l.scene_id=h.scene_id AND l.scope_kind='private'
+    AND (l.superseded_by IS NOT NULL OR l.forgotten_at IS NOT NULL) AND l.record->>'source_id'='employee-message:'||h.origin_receipt_id::text)))
  AND NOT(COALESCE(a.input->>'scene_notice_id'=ANY($13::text[]),false) OR $14::jsonb @> jsonb_build_array(jsonb_build_object('url',a.input->>'callback_url','request_id',a.request_id)) OR EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid AND n.job_id::text=ANY($15::text[])))
  ORDER BY a.updated_at DESC,a.id DESC LIMIT $11`, args...)
 	if err != nil {
