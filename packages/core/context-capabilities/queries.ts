@@ -227,6 +227,9 @@ export function contextConfigGitHubInstallationsOptions(
     queryFn: () => api.listContextGitHubInstallations(agentId, scope, connectorId),
     enabled: Boolean(agentId && scope.scopeKey && connectorId),
     staleTime: 30_000,
+    // GitHub's installation settings page does not return here. Coming back
+    // to this tab has to pick up a repository that was just added or removed.
+    refetchOnWindowFocus: "always",
   });
 }
 

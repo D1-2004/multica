@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +40,13 @@ func TestCatalogConnectorWorkspaceStartBindsTheStartingBrowser(t *testing.T) {
 			}
 			query := f.provideAuthorizeURL(t, started.AuthorizeURL)
 			state := query.Get("state")
-			if !strings.HasPrefix(started.AuthorizeURL, f.provider.URL+"/") || query.Get("redirect_uri") != wantOrigin+wantPath || !isConnectorOAuthState(state) {
+			if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
+				parsed, parseErr := url.Parse(started.AuthorizeURL)
+				if parseErr != nil || parsed.Host != "github.com" || parsed.Path != "/apps/"+os.Getenv("GITHUB_APP_SLUG")+"/installations/new" ||
+					query.Get("client_id") != "" || query.Get("state") == "" || !isConnectorOAuthState(state) {
+					t.Fatalf("%s start = %s", app.Slug, started.AuthorizeURL)
+				}
+			} else if !strings.HasPrefix(started.AuthorizeURL, f.provider.URL+"/") || query.Get("redirect_uri") != wantOrigin+wantPath || !isConnectorOAuthState(state) {
 				t.Fatalf("%s start = %s", app.Slug, started.AuthorizeURL)
 			}
 			cookie := started.Cookie
@@ -349,6 +357,26 @@ func TestPreregisteredAuthorizeURLPinsAsanaResource(t *testing.T) {
 	)
 	if err != nil || strings.Contains(slack, "resource=") || !strings.Contains(slack, "scope=search") {
 		t.Fatalf("slack authorize = %s %v", slack, err)
+	}
+}
+
+func TestGitHubAppInstallAuthorizeURLRejectsABadSlug(t *testing.T) {
+	got, err := githubAppInstallAuthorizeURL("qwen-tag-pre", "mcpc.abc")
+	if err != nil || got != "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.abc" {
+		t.Fatalf("install URL = %s %v", got, err)
+	}
+	for _, slug := range []string{"", "a/b", "a?b", "a#b"} {
+		if _, err := githubAppInstallAuthorizeURL(slug, "mcpc.abc"); err == nil {
+			t.Fatalf("slug %q was accepted", slug)
+		}
+	}
+	if parseConnectorOAuthInstallationID("12") != 12 || parseConnectorOAuthInstallationID("0") != 0 ||
+		parseConnectorOAuthInstallationID("x") != 0 || parseConnectorOAuthInstallationID("-3") != 0 {
+		t.Fatal("installation id")
+	}
+	if parseConnectorOAuthSetupAction(" install ") != "install" || parseConnectorOAuthSetupAction("update") != "update" ||
+		parseConnectorOAuthSetupAction("delete") != "" {
+		t.Fatal("setup action")
 	}
 }
 

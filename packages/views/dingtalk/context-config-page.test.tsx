@@ -914,14 +914,12 @@ describe("ContextConfigPage", () => {
       expect(within(dialog).getByText(copy.connect_required)).toBeInTheDocument();
       // OAuth connectors never show the raw Bearer input.
       expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
-      expect(within(dialog).getByRole("link", { name: copy.install_link })).toHaveAttribute(
-        "href",
-        githubConnector.installUrl,
-      );
+      expect(within(dialog).getByText(copy.install_hint)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("link", { name: copy.install_link })).not.toBeInTheDocument();
       expect(api.listContextGitHubInstallations).not.toHaveBeenCalled();
       expect(within(dialog).getByText("get_me")).toBeInTheDocument();
 
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
 
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith(
@@ -948,11 +946,11 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Sales team" });
       const dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_failed));
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
-      expect(within(dialog).getByRole("button", { name: copy.connect })).toBeEnabled();
+      expect(within(dialog).getByRole("button", { name: copy.connect_github })).toBeEnabled();
     });
 
     it("lists GitHub App installations covered by the one authorization", async () => {
@@ -986,8 +984,12 @@ describe("ContextConfigPage", () => {
         error: "",
         truncated: false,
       });
+      api.startContextConnectorConnection.mockResolvedValue(
+        "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.y",
+      );
+      const openAuthorizeUrl = vi.fn();
       const user = userEvent.setup();
-      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
+      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl });
 
       await user.click(await screen.findByRole("tab", { name: copy.level_person }));
       const region = await screen.findByRole("region", { name: "Alice" });
@@ -995,13 +997,22 @@ describe("ContextConfigPage", () => {
 
       expect(await within(dialog).findByText("@dingtalk-fde")).toBeInTheDocument();
       expect(within(dialog).getByText("@acme")).toBeInTheDocument();
+      expect(dialog).toHaveTextContent(copy.install_covers);
       expect(dialog).toHaveTextContent(copy.install_org);
+      expect(dialog).toHaveTextContent(copy.install_all);
       expect(dialog).toHaveTextContent(copy.install_selected);
       expect(
         within(dialog)
           .getAllByRole("link", { name: copy.install_settings })
           .map((link) => link.getAttribute("href")),
       ).toContain("https://github.com/organizations/acme/settings/installations/2");
+      await user.click(within(dialog).getByRole("button", { name: copy.install_add }));
+      await waitFor(() =>
+        expect(openAuthorizeUrl).toHaveBeenCalledWith(
+          "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.y",
+          { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1" },
+        ),
+      );
       expect(api.listContextGitHubInstallations).toHaveBeenCalledWith(
         "agent-1",
         { scopeType: "person", scopeKey: "staff-1" },
@@ -1178,11 +1189,11 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Sales team" });
       const dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith(copy.connect_unavailable_pat.replace("{{name}}", "GitHub")),
       );
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_forbidden));
       expect(toast.error).not.toHaveBeenCalledWith(copy.connect_failed);
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
@@ -1774,7 +1785,7 @@ describe("ContextConfigPage", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
       dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=x", {
           agentId: "agent-1",
@@ -2015,7 +2026,7 @@ describe("bound configuration page", () => {
 
     const region = await screen.findByRole("region", { name: "Alice" });
     const dialog = await openConnector(user, region, "GitHub");
-    await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+    await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
     await waitFor(() =>
       expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
         scopeType: "person",
