@@ -176,6 +176,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_task_invitation_reminder_policy": workspaceDelete,
 	"employee_agent_profile_fact":              workspaceDelete,
 	"employee_scene_member_roster":             workspaceDelete,
+	"employee_scene_message":                   workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {
