@@ -59,6 +59,8 @@ func TaskLangfuseRootSpanID(taskID string) string {
 
 // taskTraceContext is the lookup-key subset of task.context.
 type taskTraceContext struct {
+	EmployeeJobID      string
+	EmployeeTaskID     string
 	ConversationID     string
 	ConversationTitle  string
 	ConversationKind   string
@@ -82,6 +84,8 @@ func parseTaskTraceContext(raw []byte) taskTraceContext {
 		return taskTraceContext{}
 	}
 	out := taskTraceContext{
+		EmployeeJobID:      rawString(payload["employee_job_id"]),
+		EmployeeTaskID:     rawString(payload["employee_task_id"]),
 		CoordinatorTraceID: rawString(payload[TaskContextCoordinatorTraceKey]),
 		IssueTrigger:       rawString(payload["coordinator_issue_trigger"]),
 	}
@@ -162,6 +166,8 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	tc := parseTaskTraceContext(task.Context)
 	metadata := map[string]any{
 		"loop":                taskTraceName,
+		"employee_job_id":     tc.EmployeeJobID,
+		"employee_task_id":    tc.EmployeeTaskID,
 		"task_id":             taskID,
 		"trace_id":            traceID,
 		"issue_id":            util.UUIDToString(task.IssueID),
@@ -306,6 +312,8 @@ func taskTraceUserID(task db.AgentTaskQueue, tc taskTraceContext) string {
 func TaskIndexKeys(task db.AgentTaskQueue) map[string]string {
 	tc := parseTaskTraceContext(task.Context)
 	keys := map[string]string{
+		"employee_job_id":    tc.EmployeeJobID,
+		"employee_task_id":   tc.EmployeeTaskID,
 		"runtime_id":         util.UUIDToString(task.RuntimeID),
 		"parent_task_id":     util.UUIDToString(task.ParentTaskID),
 		"autopilot_run_id":   util.UUIDToString(task.AutopilotRunID),

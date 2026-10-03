@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/scene"
@@ -395,6 +396,18 @@ func (h *Handler) contextCapRequestOrg(w http.ResponseWriter, r *http.Request, a
 // (forbidden) a tenant org would give them, so the routes do not tell which
 // org ids are tenants.
 func (h *Handler) contextCapRequestOrgFor(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, orgID, forbidden string) (contextCapAgent, bool) {
+	if sess, ok := auth.SceneSessionFromContext(r.Context()); ok {
+		if sess.UserID != userID || sess.AgentID != a.ID || sess.WorkspaceID != a.WorkspaceID {
+			writeError(w, http.StatusForbidden, forbidden)
+			return contextCapAgent{}, false
+		}
+		if strings.TrimSpace(orgID) == "" {
+			orgID = sess.OrgID
+		} else if orgID != sess.OrgID {
+			writeError(w, http.StatusForbidden, forbidden)
+			return contextCapAgent{}, false
+		}
+	}
 	out, err := h.contextCapAgentInOrg(r.Context(), a, orgID)
 	if errors.Is(err, errContextCapUnknownTenant) {
 		var access bool
@@ -421,6 +434,9 @@ func (h *Handler) contextCapRequestOrgFor(w http.ResponseWriter, r *http.Request
 // contextCapHasAccess reports whether userID manages agent a or holds a
 // live grant for it in any org.
 func (h *Handler) contextCapHasAccess(ctx context.Context, a contextCapAgent, userID string) (bool, error) {
+	if sess, ok := auth.SceneSessionFromContext(ctx); ok {
+		return sess.UserID == userID && sess.WorkspaceID == a.WorkspaceID && sess.AgentID == a.ID, nil
+	}
 	manages, err := h.contextCapManages(ctx, a, userID)
 	if err != nil || manages {
 		return manages, err
@@ -598,6 +614,11 @@ func (s contextCapScope) ref() *contextCapScopeRef {
 // admin routes): a member of the agent's workspace who is a workspace
 // owner/admin or the agent's owner.
 func (h *Handler) contextCapManages(ctx context.Context, a contextCapAgent, userID string) (bool, error) {
+	// A page opened from a GitHub return is one scene, even when the
+	// initiating user manages the agent.
+	if _, ok := auth.SceneSessionFromContext(ctx); ok {
+		return false, nil
+	}
 	member, err := h.getWorkspaceMember(ctx, userID, a.WorkspaceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -688,6 +709,16 @@ func (h *Handler) contextCapResolveScope(ctx context.Context, a contextCapAgent,
 func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAgent, userID, scopeType, scopeKey string, opts contextCapResolveOptions) (contextCapScope, error) {
 	if !contextcap.ValidScopeKey(scopeType, scopeKey) {
 		return contextCapScope{}, contextcap.ErrInvalidInput
+	}
+	if sess, ok := auth.SceneSessionFromContext(ctx); ok {
+		if sess.UserID != userID || sess.AgentID != a.ID || sess.WorkspaceID != a.WorkspaceID || sess.OrgID != a.OrgID {
+			return contextCapScope{}, errContextCapForbidden
+		}
+		own := scopeType == sess.ScopeType && scopeKey == sess.ScopeKey
+		orgLayer := scopeType == contextcap.ScopeOrg && scopeKey == a.OrgID
+		if !own && !orgLayer {
+			return contextCapScope{}, errContextCapForbidden
+		}
 	}
 	liveGrant := func(scopeType, key string) (contextcap.Grant, bool, error) {
 		grant, err := contextcap.GetLiveGrant(ctx, h.DB, userID, a.ID, scopeType, a.OrgID, key)
@@ -944,7 +975,24 @@ func (h *Handler) contextCapLiveGrants(ctx context.Context, a contextCapAgent, u
 			out = append(out, grant)
 		}
 	}
-	return out, nil
+	return grantsVisibleToSceneSession(ctx, out), nil
+}
+
+// grantsVisibleToSceneSession keeps only the one scope a GitHub return may
+// open. Any other caller sees the grants it was given.
+func grantsVisibleToSceneSession(ctx context.Context, grants []contextcap.Grant) []contextcap.Grant {
+	sess, ok := auth.SceneSessionFromContext(ctx)
+	if !ok {
+		return grants
+	}
+	out := make([]contextcap.Grant, 0, 1)
+	for _, grant := range grants {
+		if grant.WorkspaceID == sess.WorkspaceID && grant.AgentID == sess.AgentID && grant.OrgID == sess.OrgID &&
+			grant.ScopeType == sess.ScopeType && grant.ScopeKey == sess.ScopeKey {
+			out = append(out, grant)
+		}
+	}
+	return out
 }
 
 // contextCapVisibleOffers returns the agent's enabled offer catalog as the
@@ -988,9 +1036,10 @@ func contextCapPathParam(r *http.Request, name string) (string, bool) {
 }
 
 // RedeemContextConfigLink redeems an agent-issued configuration link into a
-// grant for the caller. Scene links (a group's or a 1:1 chat's) stay
-// reusable until they expire; a stored person link is consumed atomically by
-// the first redemption. The link and the grant commit together.
+// grant for the caller. Scene links stay reusable until they expire; a
+// person link (a 1:1 chat's Host-appended link) is consumed atomically by
+// the first account, which may reopen it while it holds the person's grant.
+// The link and the grant commit together.
 func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -1060,8 +1109,8 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if link.ScopeType == contextcap.ScopePerson && link.ExtraSceneID != "" {
-		// A personal link minted in a 1:1 chat before 1:1 chats got scene
-		// links (2026-10-02; no run mints one now) also grants that 1:1
+		// A person link is a 1:1 chat's Host-appended link (2026-10-03;
+		// before 2026-10-02 every 1:1 chat's link): it also grants that 1:1
 		// chat's scene (its scene_id, registered when the chat's message
 		// arrived), for as long as the person grant: nobody but the person
 		// takes part in it.
@@ -1087,6 +1136,9 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		"scope_key":    grant.ScopeKey,
 		"scope_title":  grant.ScopeTitle,
 		"org_id":       grant.OrgID,
+		// The 1:1 chat a person link was minted in (also granted), so the
+		// page opens that chat, not another 1:1 chat a manager can see.
+		"extra_scene_id": link.ExtraSceneID,
 	})
 }
 
@@ -1108,11 +1160,15 @@ func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
 		return
 	}
-	managed, err := h.contextCapManagedAgents(ctx, userID)
-	if err != nil {
-		slog.ErrorContext(ctx, "context capabilities: managed agent lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "agent lookup failed")
-		return
+	grants = grantsVisibleToSceneSession(ctx, grants)
+	var managed []contextCapAgentDTO
+	if _, confined := auth.SceneSessionFromContext(ctx); !confined {
+		managed, err = h.contextCapManagedAgents(ctx, userID)
+		if err != nil {
+			slog.ErrorContext(ctx, "context capabilities: managed agent lookup failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "agent lookup failed")
+			return
+		}
 	}
 	type agentEntry struct {
 		contextCapAgentDTO
@@ -1231,6 +1287,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
 		return
 	}
+	allGrants = grantsVisibleToSceneSession(ctx, allGrants)
 	grantOrgs := map[string]bool{}
 	newestGrantOrg := ""
 	for _, grant := range allGrants {

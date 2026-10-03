@@ -6166,9 +6166,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// taskfailure.Classify path records the failure with the same
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
-	if err := d.client.StartTask(prepareCtx, task.ID); err != nil {
+	lastMessageSeq, startErr := d.client.StartTask(prepareCtx, task.ID)
+	if startErr != nil {
 		stopPrepareLease()
-		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
+		return TaskResult{}, fmt.Errorf("start task failed: %w", startErr)
 	}
 	stopPrepareLease()
 	prepareComplete = true
@@ -6678,6 +6679,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	msgSeq.Store(lastMessageSeq)
 	providerStarted = true
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
@@ -7234,46 +7236,29 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// message batch, so the result hand-off below can wait for the transcript
 	// tail to be persisted.
 	drainFinished := make(chan struct{})
+	var reportError atomic.Pointer[error]
 	go func() {
 		defer close(drainFinished)
 		var mu sync.Mutex
-		var pendingText strings.Builder
-		var pendingThinking strings.Builder
-		var batch []TaskMessageData
+		buffer := taskMessageBuffer{seq: msgSeq}
+		currentSessionID := opts.ResumeSessionID
 		callIDToTool := map[string]string{}
 
 		flush := func() {
-			mu.Lock()
-			if pendingThinking.Len() > 0 {
-				s := msgSeq.Add(1)
-				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "thinking",
-					Content: pendingThinking.String(),
-				})
-				pendingThinking.Reset()
+			toSend := buffer.take()
+			if len(toSend) == 0 {
+				return
 			}
-			if pendingText.Len() > 0 {
-				s := msgSeq.Add(1)
-				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "text",
-					Content: pendingText.String(),
-				})
-				pendingText.Reset()
-			}
-			toSend := batch
-			batch = nil
-			mu.Unlock()
-
-			if len(toSend) > 0 {
-				sendCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if err := d.client.ReportTaskMessages(sendCtx, taskID, toSend); err != nil {
-					taskLog.Debug("failed to report task messages", "error", err)
-				} else {
-					taskLog.Debug("reported task messages", "count", len(toSend), "last_seq", toSend[len(toSend)-1].Seq)
-				}
-				cancel()
+			sendCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := d.client.ReportTaskMessages(sendCtx, taskID, toSend)
+			cancel()
+			if err != nil {
+				buffer.retry(toSend)
+				reportError.Store(&err)
+				taskLog.Warn("task event batch retained for retry", "error", err, "first_seq", toSend[0].Seq, "last_seq", toSend[len(toSend)-1].Seq)
+			} else {
+				reportError.Store(nil)
+				taskLog.Debug("reported task messages", "count", len(toSend), "last_seq", toSend[len(toSend)-1].Seq)
 			}
 		}
 
@@ -7295,157 +7280,165 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		}()
 
 		var sessionPinned atomic.Bool
+		drainCancelled := false
 		for {
-			select {
-			case msg, ok := <-session.Messages:
-				if !ok {
+			var msg agent.Message
+			var ok bool
+			if drainCancelled {
+				// Consume every already-buffered observation without waiting for
+				// a cancelled backend that may never close its channel.
+				select {
+				case msg, ok = <-session.Messages:
+				default:
 					goto drainDone
 				}
-				// Stamp activity as soon as a message lands. The idle
-				// watchdog reads this to decide whether the backend has
-				// gone silent — stamping before processing makes sure a
-				// slow downstream call (mu.Lock contention, batch resize)
-				// can't be misattributed to backend silence.
-				messageObservedAt := time.Now()
-				lastActivityAt.Store(messageObservedAt.UnixNano())
-				if !firstEventLogged.Swap(true) {
-					taskLog.Info("provider first event",
-						"event", "provider_first_event",
-						"stage", "provider_first_event",
-						"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
-						"message_type", string(msg.Type),
-					)
+			} else {
+				select {
+				case msg, ok = <-session.Messages:
+				case <-drainCtx.Done():
+					drainCancelled = true
+					continue
 				}
-				switch msg.Type {
-				case agent.MessageStatus:
-					// Persist the session/work_dir as soon as the backend
-					// reveals them. Without this, a daemon crash mid-run
-					// loses the resume pointer and the auto-retry fires
-					// without context.
-					// MUL-5305: pin the resume pointer only once the session's
-					// rollout is actually in the store, so a crash-recovery pointer
-					// the daemon cannot resume never poisons the next follow-up
-					// (FailAgentTask keeps the pinned session_id via COALESCE, so a
-					// bad mid-flight pin survives a later terminal failure). Codex
-					// reveals the session id on a single task_started status, so a
-					// background waiter polls for the rollout for the life of the
-					// run and pins the moment it lands — a rollout that flushes
-					// after this status is still pinned in-flight (crash recovery
-					// preserved), while a session whose rollout never lands is never
-					// pinned. The terminal report is the authoritative writer.
-					// Non-Codex providers (codexHome == "") pin immediately.
-					if msg.SessionID != "" && !sessionPinned.Swap(true) {
-						sid := msg.SessionID
-						wd := opts.Cwd
-						go func() {
-							if !waitCodexRolloutPresent(drainCtx, codexHome, sid) {
-								taskLog.Debug("skip pinning codex session: rollout not present before run ended",
-									"session_id", sid, "codex_home", codexHome)
-								return
-							}
-							pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-							defer cancel()
-							if err := d.client.PinTaskSession(pinCtx, taskID, sid, wd); err != nil {
-								taskLog.Debug("pin session failed", "error", err)
-							}
-						}()
-					}
-				case agent.MessageToolUse:
-					n := toolCount.Add(1)
-					inFlightTools.Add(1)
-					taskLog.Info(fmt.Sprintf("tool #%d: %s", n, msg.Tool))
-					if msg.CallID != "" {
-						mu.Lock()
-						callIDToTool[msg.CallID] = msg.Tool
-						mu.Unlock()
-					}
-					s := msgSeq.Add(1)
-					mu.Lock()
-					batch = append(batch, TaskMessageData{
-						Seq:  int(s),
-						Type: "tool_use",
-						Tool: msg.Tool,
-						// Redact before the payload leaves this process, not
-						// only on arrival. The server redacts again in its
-						// ingest handler, but that is the *remote* side: a
-						// daemon that self-updated ahead of the server — or one
-						// talking to a server mid-rollout — would otherwise ship
-						// whole-file edit contents (a deleted .env, a patched
-						// credential) to a peer that does not scrub nested
-						// values yet. Deployment order is not a control we
-						// have, so this side has to be safe on its own.
-						Input: redact.InputMap(msg.Input),
-					})
-					mu.Unlock()
-				case agent.MessageToolResult:
-					// Decrement only when the count would stay >= 0. A stray
-					// tool_result with no matching tool_use (backend bug or
-					// reconnect mid-stream) shouldn't push the counter
-					// negative — that would re-arm the watchdog one tool_use
-					// too early on the next call.
-					for {
-						cur := inFlightTools.Load()
-						if cur <= 0 {
-							break
-						}
-						if inFlightTools.CompareAndSwap(cur, cur-1) {
-							break
-						}
-					}
-					s := msgSeq.Add(1)
-					output := msg.Output
-					if len(output) > 8192 {
-						output = output[:8192]
-					}
-					toolName := msg.Tool
-					if toolName == "" && msg.CallID != "" {
-						mu.Lock()
-						toolName = callIDToTool[msg.CallID]
-						mu.Unlock()
-					}
-					taskLog.Info("tool_result observed", "seq", s, "tool", toolName, "call_id", msg.CallID)
-					mu.Lock()
-					batch = append(batch, TaskMessageData{
-						Seq:    int(s),
-						Type:   "tool_result",
-						Tool:   toolName,
-						Output: output,
-					})
-					mu.Unlock()
-				case agent.MessageThinking:
-					if msg.Content != "" {
-						mu.Lock()
-						pendingThinking.WriteString(msg.Content)
-						mu.Unlock()
-					}
-				case agent.MessageText:
-					if msg.Content != "" {
-						if !firstTextLogged.Swap(true) {
-							taskLog.Info("provider first text",
-								"event", "provider_first_text",
-								"stage", "provider_first_text",
-								"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
-								"content_bytes", len(msg.Content),
-							)
-						}
-						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
-						mu.Lock()
-						pendingText.WriteString(msg.Content)
-						mu.Unlock()
-					}
-				case agent.MessageError:
-					taskLog.Error("agent error", "content", msg.Content)
-					s := msgSeq.Add(1)
-					mu.Lock()
-					batch = append(batch, TaskMessageData{
-						Seq:     int(s),
-						Type:    "error",
-						Content: msg.Content,
-					})
-					mu.Unlock()
-				}
-			case <-drainCtx.Done():
+			}
+			if !ok {
 				goto drainDone
+			}
+			// Stamp activity as soon as a message lands. The idle
+			// watchdog reads this to decide whether the backend has
+			// gone silent — stamping before processing makes sure a
+			// slow downstream call (mu.Lock contention, batch resize)
+			// can't be misattributed to backend silence.
+			messageObservedAt := time.Now()
+			lastActivityAt.Store(messageObservedAt.UnixNano())
+			if !firstEventLogged.Swap(true) {
+				taskLog.Info("provider first event",
+					"event", "provider_first_event",
+					"stage", "provider_first_event",
+					"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
+					"message_type", string(msg.Type),
+				)
+			}
+			if msg.SessionID != "" {
+				currentSessionID = msg.SessionID
+			}
+			meta := &protocol.TaskEventSource{SessionID: redact.Text(currentSessionID), TurnID: redact.Text(msg.TurnID), MessageID: redact.Text(msg.MessageID), CallID: redact.Text(msg.CallID), Phase: redact.Text(msg.Phase), Status: redact.Text(msg.Status), Level: redact.Text(msg.Level), ObservedAt: messageObservedAt.UTC()}
+			switch msg.Type {
+			case agent.MessageStatus:
+				buffer.append(TaskMessageData{Type: "status", Content: meta.Status, Event: meta})
+				// Persist the session/work_dir as soon as the backend
+				// reveals them. Without this, a daemon crash mid-run
+				// loses the resume pointer and the auto-retry fires
+				// without context.
+				// MUL-5305: pin the resume pointer only once the session's
+				// rollout is actually in the store, so a crash-recovery pointer
+				// the daemon cannot resume never poisons the next follow-up
+				// (FailAgentTask keeps the pinned session_id via COALESCE, so a
+				// bad mid-flight pin survives a later terminal failure). Codex
+				// reveals the session id on a single task_started status, so a
+				// background waiter polls for the rollout for the life of the
+				// run and pins the moment it lands — a rollout that flushes
+				// after this status is still pinned in-flight (crash recovery
+				// preserved), while a session whose rollout never lands is never
+				// pinned. The terminal report is the authoritative writer.
+				// Non-Codex providers (codexHome == "") pin immediately.
+				if msg.SessionID != "" && !sessionPinned.Swap(true) {
+					sid := msg.SessionID
+					wd := opts.Cwd
+					go func() {
+						if !waitCodexRolloutPresent(drainCtx, codexHome, sid) {
+							taskLog.Debug("skip pinning codex session: rollout not present before run ended",
+								"session_id", sid, "codex_home", codexHome)
+							return
+						}
+						pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := d.client.PinTaskSession(pinCtx, taskID, sid, wd); err != nil {
+							taskLog.Debug("pin session failed", "error", err)
+						}
+					}()
+				}
+			case agent.MessageToolUse:
+				n := toolCount.Add(1)
+				inFlightTools.Add(1)
+				taskLog.Info(fmt.Sprintf("tool #%d: %s", n, msg.Tool))
+				if msg.CallID != "" {
+					mu.Lock()
+					callIDToTool[msg.CallID] = msg.Tool
+					mu.Unlock()
+				}
+				buffer.append(TaskMessageData{
+					Type:  "tool_use",
+					Event: meta,
+					Tool:  msg.Tool,
+					// Redact before the payload leaves this process, not
+					// only on arrival. The server redacts again in its
+					// ingest handler, but that is the *remote* side: a
+					// daemon that self-updated ahead of the server — or one
+					// talking to a server mid-rollout — would otherwise ship
+					// whole-file edit contents (a deleted .env, a patched
+					// credential) to a peer that does not scrub nested
+					// values yet. Deployment order is not a control we
+					// have, so this side has to be safe on its own.
+					Input: redact.InputMap(msg.Input),
+				})
+			case agent.MessageToolResult:
+				// Decrement only when the count would stay >= 0. A stray
+				// tool_result with no matching tool_use (backend bug or
+				// reconnect mid-stream) shouldn't push the counter
+				// negative — that would re-arm the watchdog one tool_use
+				// too early on the next call.
+				for {
+					cur := inFlightTools.Load()
+					if cur <= 0 {
+						break
+					}
+					if inFlightTools.CompareAndSwap(cur, cur-1) {
+						break
+					}
+				}
+				output := msg.Output
+				if len(output) > 8192 {
+					output = output[:8192]
+				}
+				toolName := msg.Tool
+				if toolName == "" && msg.CallID != "" {
+					mu.Lock()
+					toolName = callIDToTool[msg.CallID]
+					mu.Unlock()
+				}
+				taskLog.Info("tool_result observed", "tool", toolName, "call_id", msg.CallID)
+				buffer.append(TaskMessageData{
+					Type:   "tool_result",
+					Event:  meta,
+					Tool:   toolName,
+					Output: output,
+				})
+			case agent.MessageThinking:
+				if msg.Content != "" {
+					buffer.append(TaskMessageData{Type: "thinking", Content: msg.Content, Event: meta})
+				}
+			case agent.MessageText:
+				if msg.Content != "" {
+					if !firstTextLogged.Swap(true) {
+						taskLog.Info("provider first text",
+							"event", "provider_first_text",
+							"stage", "provider_first_text",
+							"stage_elapsed_ms", messageObservedAt.Sub(providerExecuteStartedAt).Milliseconds(),
+							"content_bytes", len(msg.Content),
+						)
+					}
+					taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
+					buffer.append(TaskMessageData{Type: "text", Content: msg.Content, Event: meta})
+				}
+			case agent.MessageLog:
+				buffer.append(TaskMessageData{Type: "log", Content: msg.Content, Event: meta})
+			case agent.MessageError:
+				taskLog.Error("agent error", "content", msg.Content)
+				buffer.append(TaskMessageData{
+					Type:    "error",
+					Event:   meta,
+					Content: msg.Content,
+				})
 			}
 		}
 	drainDone:
@@ -7454,7 +7447,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// in flight would otherwise keep posting batches after this goroutine
 		// signalled that the transcript tail was persisted.
 		<-tickerDone
-		flush()
+		for {
+			flush()
+			if reportError.Load() != nil {
+				flush()
+			}
+			if reportError.Load() != nil {
+				break
+			}
+			buffer.mu.Lock()
+			remaining := len(buffer.batch)
+			buffer.mu.Unlock()
+			if remaining == 0 {
+				break
+			}
+		}
 	}()
 
 	// waitForDrain blocks until the drain goroutine has flushed the transcript
@@ -7474,8 +7481,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			drainCancel()
 			select {
 			case <-drainFinished:
-			case <-time.After(12 * time.Second):
-				taskLog.Warn("transcript drain did not stop after cancel; completing anyway")
+			case <-time.After(17 * time.Second):
+				err := errors.New("transcript drain did not stop after cancel")
+				reportError.Store(&err)
+				taskLog.Warn("transcript drain did not stop after cancel; completing with a transcript gap")
 			}
 		}
 	}
@@ -7501,6 +7510,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			if result.Error == "" {
 				result.Error = idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load()))
 			}
+		}
+		if e := reportError.Load(); e != nil {
+			return result, toolCount.Load(), fmt.Errorf("task transcript delivery incomplete: %w", *e)
 		}
 		return result, toolCount.Load(), nil
 	case <-drainCtx.Done():

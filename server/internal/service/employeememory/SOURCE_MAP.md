@@ -145,3 +145,76 @@ Employee inbound `handler/employee_scene_entry_memory.go` handles an exact stand
 It does not change Coordinator associations/memory or another requester's private
 records. Other messages in a collected window still reach the Loop. The management
 page's existing shared-only reset contract remains unchanged.
+
+
+## Requester-private source capture (Multica Host extension)
+
+`handler/employee_memory_tools.go` connects the adapted record/search/correction
+mechanisms to Employee native tools. Only a unique source in a single-known-
+requester window is eligible. The journal transaction binds the authenticated
+platform principal separately from the provider-attributed requester; scope,
+evidence identity and receipt-created timestamp are Host-owned. Outer-message
+exact quotes produce observed confidence-4, untrusted records. Quoted background
+and reactions cannot supply the quote; quoted replies may carry a new outer
+correction. The wire protocol does not attest a human sender or originality,
+and native forwards are not fully represented in DispatchMessage.
+
+`RecordPrivateObservationTx` adds ordering only for this new path. It persists
+Host `evidence_occurred_at` and compares all same-key/type records, including
+inactive tombstones. Earlier/equal sources are recorded inactive, so changing a
+proposal's key/type cannot reuse their evidence. Legacy records without that
+field use their Host `created_at` as a conservative fence. Existing background
+Record/RecordTx correction behavior is unchanged. Trusted active facts still
+reject untrusted replacement.
+
+`SearchTx`, `PrivateEntryTx`, and `ForgetPrivateTx` use the caller's transaction;
+no pool connection is borrowed while the journal holds one. Exact forget retains
+its replay tombstone and never deletes a replacement. Capture responses expose
+active/forgotten/superseded state, including after evidence replay. The
+employeeentry journal supports an effect-free replay projection for current
+source authorization and record state. Unchanged lookup records retain frozen
+confidence values; changed state can cause the following model-journal request
+to conflict and end the wake through its existing failure checkpoint.
+
+Tests in employee_memory_tools_test.go exercise real admission, provider-visible
+next-turn memory, correction/forget, trust and source boundaries, mixed-window
+isolation, one-connection execution, atomic journal rollback, source ordering,
+same-native-call replay, and old-schema recovery. private_entry_test.go covers
+store ordering, legacy evidence times and exact transaction rollback. These are
+local PostgreSQL checks, not a claim of pre-release acceptance.
+
+
+Automatic private brief injection is limited to new snapshots whose fenced
+agent_scene row explicitly says dm and whose original window has one known
+requester. A group does not automatically receive recent private records;
+explicit memory_lookup still searches its authorized scene/requester namespace.
+The shared-scene layer, stored records and ranking are unchanged. Unknown kinds
+are not treated as dm. Previously frozen group snapshots retain their historical
+input and journal identity. Regression tests cover provider-visible group input,
+scoped explicit lookup, DM first-call answers and historical group replay.
+
+
+## Verified distill transaction and Chinese-aware retrieval (G1)
+
+`DistillTx` lets the durable verified-distill consumer
+(`internal/employeeverification`) write the learning and its consumption
+receipt in one transaction. `VerifiedRun.OccurredAt` carries the Host work-end
+time of the verified Run; it is the reset fence and is never refreshed by
+retries or late verification. Replay identity stays the Host (task, execution)
+pair, so a re-verified Run returns the original (possibly forgotten) record.
+
+`retrieval.go` is a Multica re-implementation (no verbatim code) of the design
+of `internal/team/context_assembler.go`: IDF-weighted distinct-unit overlap
+with a minimum of two units, and a mandatory retrieval block that states what
+was searched when nothing matched. The upstream tokenizer splits on
+non-letters and drops tokens shorter than three bytes, which yields nothing
+usable for unspaced Chinese; here CJK runs become character bigrams (overlap
+units, with particle/function-character filtering) and trigrams (bonus
+weight), and ASCII words keep the three-character floor. `Retrieve` ranks only
+the exact authorized namespace. It is **not yet wired** into `Brief`,
+`Search`, `memory_lookup` or the work packet; tests pin the substring-search
+gap it closes.
+
+```text
+47b6cf75210a73bdc977b34a80637306aaa2a3a653c3e1db5901bd9f0bf7dda7  internal/team/context_assembler.go
+```

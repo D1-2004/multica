@@ -24,10 +24,10 @@ func (c CLI) ResolveMessageSender(ctx context.Context, dir, conversationID, mess
 	return parseMessageSender(raw, conversationID, messageID)
 }
 
-func parseMessageSender(raw []byte, conversationID, messageID string) (string, error) {
+func parseExactMessage(raw []byte, conversationID, messageID string) (json.RawMessage, error) {
 	invalid := errors.New("DWS source message identity could not be verified")
 	if len(raw) > MaxResponseBytes {
-		return "", invalid
+		return nil, invalid
 	}
 	var envelope struct {
 		OK       *bool             `json:"ok"`
@@ -37,16 +37,16 @@ func parseMessageSender(raw []byte, conversationID, messageID string) (string, e
 		Messages []json.RawMessage `json:"messages"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
-		return "", invalid
+		return nil, invalid
 	}
 	if envelope.OK != nil {
 		if !*envelope.OK || len(envelope.Data) == 0 {
-			return "", invalid
+			return nil, invalid
 		}
-		return parseMessageSender(envelope.Data, conversationID, messageID)
+		return parseExactMessage(envelope.Data, conversationID, messageID)
 	}
 	if envelope.Success == nil || !*envelope.Success {
-		return "", invalid
+		return nil, invalid
 	}
 	messages := envelope.Messages
 	if len(envelope.Result) > 0 {
@@ -54,14 +54,14 @@ func parseMessageSender(raw []byte, conversationID, messageID string) (string, e
 			Messages []json.RawMessage `json:"messages"`
 		}
 		if json.Unmarshal(envelope.Result, &result) != nil {
-			return "", invalid
+			return nil, invalid
 		}
 		if len(result.Messages) > 0 {
 			messages = result.Messages
 		}
 	}
 	if len(messages) != 1 {
-		return "", invalid
+		return nil, invalid
 	}
 	var message struct {
 		MessageID            string `json:"messageId"`
@@ -72,14 +72,30 @@ func parseMessageSender(raw []byte, conversationID, messageID string) (string, e
 		SenderID             string `json:"senderId"`
 	}
 	if json.Unmarshal(messages[0], &message) != nil {
-		return "", invalid
+		return nil, invalid
 	}
 	match := func(a, b, want string) bool {
 		return (a != "" || b != "") && (a == "" || a == want) && (b == "" || b == want)
 	}
 	if !match(message.MessageID, message.OpenMessageID, messageID) || !match(message.ConversationID, message.OpenConversationID, conversationID) {
-		return "", invalid
+		return nil, invalid
 	}
+	return messages[0], nil
+}
+
+func parseMessageSender(raw []byte, conversationID, messageID string) (string, error) {
+	messageRaw, err := parseExactMessage(raw, conversationID, messageID)
+	if err != nil {
+		return "", err
+	}
+	var message struct {
+		SenderOpenDingTalkID string `json:"senderOpenDingTalkId"`
+		SenderID             string `json:"senderId"`
+	}
+	if json.Unmarshal(messageRaw, &message) != nil {
+		return "", errors.New("DWS source message identity could not be verified")
+	}
+	invalid := errors.New("DWS source message identity could not be verified")
 	sender := strings.TrimSpace(message.SenderOpenDingTalkID)
 	if sender == "" || strings.ContainsAny(sender, " ,<>\t\n\r") || message.SenderID != "" && message.SenderID != sender {
 		return "", invalid

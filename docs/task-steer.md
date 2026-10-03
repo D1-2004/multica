@@ -78,13 +78,107 @@ Human input without a transport identity token omits all token/expiry/source
 fields and clears an earlier merged input's credentials. A new correction also
 rearms the predecessor's stop observation if the first exit proof was missing.
 
+## Task Service steer
+
+Steer is also a control of the EmployeeTask domain (`internal/employeetask`, the
+Task Service). The EmployeeTask is the durable continuation anchor that an Issue
+or Chat provides on the older surfaces, so executions without an Issue or Chat
+(Direct Runs) can be steered too. `employeetask.Capabilities` reports
+`steer=true, live_steer=false` for both dispatch backends: steer always means
+cancel plus resume, never input written into a running process.
+
+`service.EmployeeTaskControl.Steer` routes by dispatch mode:
+
+- Issue backend: the Issue steer above, through `EmployeeIssueBackend.Continue`
+  with `queueMode=steer`. The successor queue row is mapped to a new Run.
+- Direct backend: one transaction locks workspace, the latest Run's queue row,
+  EmployeeTask and agent claim, the order completion and cancellation use, and
+  retries if a new Run appeared meanwhile. An unclaimed active Run (including an earlier steer
+  successor) absorbs the correction: its prompt is rebuilt and its Run input
+  boundary moves. A claimed Run is cancelled with `CancelAgentTaskForSteer`, its
+  Run is recorded `cancelled`, the host records `writer_fenced` evidence, and one
+  successor queue row plus Run is created with `priority=4`, `task_steer=true`
+  and `steer_predecessor_task_id`. A succeeded task continues the same way
+  without a cancellation. A task a human stopped is never reopened by a
+  correction (409); only the cancellation the same steer made may reopen it.
+
+The ledger records the correction as a `steer` entry. `StartRun` treats a failed
+or cancelled Run as an unresolved writer until a `writer_fenced` entry exists.
+Evidence is `claim_barrier` (the row holds `process_stop_pending`, so no
+successor of the same EmployeeTask can be claimed before exit proof),
+`process_stopped` (acknowledged) or `never_claimed`. A failed Run, or an old
+cancellation without the barrier, proves nothing: steer returns 409 and changes
+nothing.
+
+A Direct successor is rebuilt from the predecessor's frozen
+`employee_direct_input`, never from runtime-enriched top-level state. Its
+prompt is the original work packet with every accepted correction rendered as
+the compiler's `CURRENT CORRECTIONS` block, so a cold start still has the whole
+goal and a resumed session sees the correction first. Identity tokens never
+carry over; the correction's own dispatch context may supply new identity
+token keys and nothing else, so delivery (`employee_job_id`,
+`employee_source_ref`, notice policy) stays bound to the original request.
+Personal connectors are recomputed only when the host verified that the
+correction comes from the task's own requester. At claim, a successor receives
+the predecessor's pinned provider session and workdir when the runtime matches
+(walking past at most five predecessors that never started); the daemon's workdir and
+context compatibility gates still decide whether it resumes. A cancelled Run
+that was replaced by a successor never produces an Employee cancellation
+notice; the successor reports the outcome.
+
+Before canceling or merging, the service reads the complete accepted corrections
+and checks the new total: at most 100 entries and 64 KiB. Read errors and overflow
+abort the transaction without stopping the current writer. New queues record
+`direct_steer_corrections_version=1`; terminal proof reconstructs their complete
+accepted input boundary. Historical queues without that marker retain the old
+20-entry rendering proof, without rewriting their saved prompt.
+
+Delivery remains anchored to the original accepted request. Execution facts
+resolve a separate effect source from the steer ledger and completed tool
+checkpoint. The inherited file-only policy has a flat original-authorization
+locator; it never treats a prior Run's file receipt as this Run's delivery.
+Failures still report to the verified delivery target even when success-only
+quiet metadata is malformed.
+
+Entry points:
+
+- Humans: `POST /api/employee-tasks/{id}/steer` with `{"content":"..."}` and
+  `Idempotency-Key`. `{id}` is an EmployeeTask ID or the queue task ID of one of
+  its Runs. Callers need invoke permission for the agent; for Direct tasks they
+  must also be the requester (queue originator) or manage the agent. The 202
+  response carries `outcome` (`interrupted`, `merged`, `continued`), the
+  successor's queue task and whether it awaits exit proof.
+- EmployeeLoop: the `steer_task` tool corrects the requester's own Direct task
+  in the same scene. The Host selects the target only when the requester has
+  exactly one candidate (running, or ready/succeeded within 30 minutes; stopped
+  and failed tasks never qualify); otherwise it returns the candidates and the
+  model must name `task_id` or ask. The successor's result is delivered as the
+  answer to the original request.
+  The tool was introduced at marker 7; the combined current-task protocol now requires `[employee-loop:9]`.
+
+Session continuity needs the provider's resume pointer pinned while the run is
+still active: the daemon pins it when a backend reveals the session on a
+running status. Claude and Codex always did; Pi and OpenCode do since
+`68c2d6a213` (runtime-events). FC images
+built before that commit give a steer successor no prior session or workdir,
+so it restarts from the full packet with the corrections (verified on pre with
+FC Pi, 2026-10-03).
+
+FC sandboxes need no special handling: the post-commit terminal observer runs
+the task-owned stop collection, the acknowledgement launches the successor, and
+scene, Issue and Chat scopes reuse the warm sandbox. An unscoped Direct sandbox
+is single-use, so its successor starts cold with the full packet; session
+continuity there needs scene connection reuse.
+
 ## Limits and validation
 
-Unlinked autopilot executions are deferred: they have no stable continuation
-anchor, their sandbox is single-use, and their normal terminal callback completes
-the automation run. Supporting them needs a durable run-input API, a retained
-automation sandbox scope and one automation completion across attempts. Do not
-pretend a new automation run resumes the old one.
+Unlinked autopilot executions without an EmployeeTask are deferred: they have
+no stable continuation anchor, their sandbox is single-use, and their normal
+terminal callback completes the automation run. Routing them through a Direct
+EmployeeTask gives them the anchor above; until then, do not pretend a new
+automation run resumes the old one. Execution-event facts are not recorded for
+steer successors yet, because their `run_started` source is the steer, not a
+`dispatch_task` tool journal.
 
 Tests must exercise both claim APIs, cancellation acknowledgement, repeated and
 concurrent corrections, sandbox retention and a SIGTERM-ignoring descendant

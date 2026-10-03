@@ -70,6 +70,9 @@ export interface ContextConfigBinding {
   scopeKey: string;
   /** Tenant of the scope; "" for the agent's own org. */
   orgId: string;
+  /** The 1:1 chat a person link was minted in (a 1:1 chat's link carries its
+   * person); known right after redeeming, absent after a reload. */
+  extraSceneId?: string;
 }
 
 /** Where a connector OAuth round trip was started from. */
@@ -291,6 +294,7 @@ export function ContextConfigPage({
             scopeType: result.scopeType,
             scopeKey: result.scopeKey,
             orgId: result.orgId || "",
+            ...(result.extraSceneId ? { extraSceneId: result.extraSceneId } : {}),
           };
           setBound(next);
           bindRef.current?.(next);
@@ -312,8 +316,9 @@ export function ContextConfigPage({
 
   const agentsQuery = useQuery({
     ...contextConfigAgentsOptions(),
-    // A bound page never lists or switches agents.
-    enabled: redeemStatus !== "pending" && bound === null,
+    // A bound page never lists or switches agents, and a dead link shows
+    // nothing but its hint.
+    enabled: redeemStatus !== "pending" && redeemStatus !== "expired" && bound === null,
   });
 
   useEffect(() => {
@@ -333,6 +338,17 @@ export function ContextConfigPage({
     setTab(next);
     tabChangeRef.current?.(next);
   };
+
+  if (redeemStatus === "expired") {
+    // An expired, spent or unknown link: only the way to a new one, no page.
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-background px-4 text-foreground">
+        <p className="max-w-sm text-center text-body text-muted-foreground" role="status">
+          {t(($) => $.context_config.link_expired)}
+        </p>
+      </main>
+    );
+  }
 
   let body: React.ReactNode;
   if (redeemStatus === "pending" || (agentsQuery.isLoading && !effectiveAgentId)) {
@@ -378,9 +394,6 @@ export function ContextConfigPage({
   return (
     <main className="min-h-dvh bg-background px-4 py-4 text-foreground sm:px-6 sm:py-8">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4 sm:max-w-2xl">
-        {redeemStatus === "expired" && (
-          <Banner>{t(($) => $.context_config.link_expired)}</Banner>
-        )}
         {redeemStatus === "taken" && (
           <Banner>{t(($) => $.context_config.link_taken)}</Banner>
         )}
@@ -665,7 +678,7 @@ function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabP
     binding?.scopeType === "scene"
       ? binding.scopeKey
       : binding?.scopeType === "person" && detail.person?.scopeKey === binding.scopeKey
-        ? (boundDMScene(detail)?.scopeKey ?? "")
+        ? (boundDMScene(detail, binding.extraSceneId)?.scopeKey ?? "")
         : "";
   const wantedSceneKey = binding
     ? boundSceneKey
@@ -785,9 +798,14 @@ function ScopeTab({ detail, binding, browse, reportError }: ContextConfigTabProp
 }
 
 /** The 1:1 chat a personal link was minted in: redeeming the link also
- * granted that chat's scene, listed as the page's dm scene. */
-function boundDMScene(detail: ContextConfigAgentDetail) {
-  return detail.scenes.find((entry) => entry.kind === "dm");
+ * granted that chat's scene. The redeem result names it; after a reload it
+ * is the granted 1:1 chat, never one a manager merely sees. */
+function boundDMScene(detail: ContextConfigAgentDetail, extraSceneId?: string) {
+  if (extraSceneId) {
+    const named = detail.scenes.find((entry) => entry.scopeKey === extraSceneId);
+    if (named) return named;
+  }
+  return detail.scenes.find((entry) => entry.kind === "dm" && entry.source !== "manager");
 }
 
 /** The enterprise level as a vertical tab, shown read-only whenever the
@@ -845,7 +863,7 @@ function BoundScope({
     });
   } else if (detail.person && detail.person.scopeKey === binding.scopeKey) {
     const person = detail.person;
-    const dm = boundDMScene(detail);
+    const dm = boundDMScene(detail, binding.extraSceneId);
     if (dm) {
       levels.push({
         id: "scene",

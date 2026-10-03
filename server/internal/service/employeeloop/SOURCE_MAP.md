@@ -38,6 +38,14 @@ terms remain applicable. See [NOTICE](NOTICE).
 - One wake context reaches both Model.Chat and Host.Execute. State/cancellation
   locks are never held around either slow call. An interrupted loop can accept
   the next wake after the canceled run exits.
+- Host tools may declare a terminal disposition. The kernel rejects a batch
+  combining any effect with a no-effect terminal before executing any Host call.
+  The invalid batch uses the existing three-call format-repair budget; valid
+  reads and multiple dispatches keep their original semantics. The scene Host
+  exposes `reply` as an explicit no-task terminal alongside normal text replies;
+  `dispatch_task.reply` is only the acknowledgement of real background work.
+  PostgreSQL regressions observed both call orders creating a task before this
+  guard; they now verify no EmployeeTask, run, or new queue row is created.
 - Only Host receipts prove irreversible effects. An effect tool without a
   receipt fails. An accepted dispatch may return its terminal disposition and
   human reply together; no second model call is needed. Full tool batches still
@@ -122,3 +130,164 @@ The optional tagged local fixtures can be verified without a live model account:
 go test -tags employeeintegration ./internal/service/employeeloop \
   -run '^TestEmployeeModelSmoke(WithLocalProvider|HTTPBudget)$' -count=1
 ```
+
+## Host observability and scene capabilities (2026-10-03)
+
+`Config.OnBatchRejected` is an optional observer called after the existing pure
+batch validation rejects a request. It does not change validation, execute a
+Host tool, add a model call, or persist domain effects. The Host owns Langfuse
+integration in `handler/employee_scene_trace.go`; real model and tool I/O is
+observed at the durable journal boundaries, not on cached replay.
+
+The scene Host reuses the application's `contextcap` merger and configuration
+link issuer. `describe_capabilities` remains a no-task terminal and keeps bearer
+links in a private delivery record outside model-facing tool results.
+`scene_config_get` takes its identity from the admitted job, never model scope
+parameters. Existing Direct scene-management MCP handles actual configuration
+changes. These are application adapters; the copied GawkBot kernel gains no
+storage, permission, or provider-specific implementation.
+
+The Host adapts the deterministic completion hook with an explicit, source-bound
+file-delivery notice policy and provider-verified receipts. This delivery policy
+is not kernel inference, does not inspect final prose, and adds no model request.
+
+
+## Requester-private memory Host tools
+
+The Multica scene Host now registers memory_capture and memory_forget as
+nonterminal effects, plus read-only memory_lookup. This reuses the existing
+native-tool/result loop and three-call cap; it introduces no model pass, Task,
+scheduler or generic kernel memory authority. Host evidence/scope is resolved
+from frozen sources and current authorization. The journal can project cached
+memory results through current state without repeating effects. Old Config.Tools
+snapshots remain frozen during rolling upgrades (Employee replica marker 5).
+
+
+New scene input snapshots also freeze narrow memory-reply guidance: obey explicit
+output constraints, answer only the requested fact, avoid unrelated memory lists
+or offers to read another scene's private memory, and confirm forgetting without
+repeating forgotten content or internal state fields unless audit details were
+requested. This is Host Persona/tool-description content, not a change to the
+shared BuildPrompt renderer or the copied kernel. Existing snapshots and model
+journals retain their original bytes; authority, tool results and call limits are
+unchanged (replica marker remains 5).
+
+## Terminal execution facts outside the kernel
+
+The fixed source's `internal/bot/loop.go:handleDone` emits completion without
+creating a new follow-up; `internal/team/headless_event.go` separates terminal
+facts from subsequent work, and `internal/bot/queues.go:FollowUp` is explicit.
+Multica adapts that separation in `handler/employee_execution_event.go` and
+`employeeentry/execution_fact.go`: committed Direct Run facts get a durable
+admission/consumption, with no model job, generation, or additional delivery.
+Original receipt, run ledger, and committed dispatch checkpoint establish the
+source. Existing PostgreSQL reconciliation and notice ownership remain in the
+Host; no scheduler or event sink is added to the copied kernel. The additive
+no-job records are readable during marker-5 rolling upgrades.
+
+## Bounded recent conversation snapshots
+
+`internal/bot/session.go:SessionStore.GetHistory` at the fixed source preserves
+ordered recent dialogue; `internal/team/notification_context.go` builds bounded
+per-recipient context from broker reads. Multica keeps that separation with a
+read-only Host projection in `employeeentry/recent_history.go` and
+`handler/employee_recent_context.go`. `Input.RecentConversation` retains the
+complete structured audit snapshot. New wakes freeze
+`Config.HistoryPresentation=conversation_turns_v1`: `history_presentation.go`
+restores verified user/assistant text through the existing SessionEntry and
+entriesToMessages path, without native tool calls on historical assistant turns.
+Short metadata labels preserve source/time and completeness; the current window
+is last. The empty legacy version retains its original single user JSON block,
+message order, and request bytes. Unknown versions/roles or malformed/oversized
+snapshots fail before model I/O. Marker 10 protects this new reader during
+rolling upgrades. This is neither a summary-model call nor a write to
+long-term memory. User text must have admitted scene/principal provenance;
+assistant text additionally requires a provider-confirmed Host response tied to
+that principal's source. The projection states its fixed watermark, 24-hour
+window, message/byte bounds, and truncation. It does not claim complete provider
+history, authorize new work, or re-read history during a journal replay.
+
+New Host Persona snapshots additionally freeze chronological interpretation:
+the latest explicit facts/reset replace older assignments for the same objects,
+partial updates retain unaffected facts, and references use the nearest relevant
+exchange. Older assistant output cannot override newer user statements, and past
+requests are not new execution commands. This does not rewrite stored dialogue,
+change the shared BuildPrompt or request profile, or upgrade existing snapshots.
+Assembly/replay tests verify those boundaries; model semantics require real IM
+evidence rather than a canned model answer.
+
+Retired private memory suppresses only its exact scoped message evidence and
+the original job's associated replies in new projections. Audit rows stay intact;
+other messages, including ordinary temporary corrections, remain dialogue.
+The snapshot marks omitted withdrawn evidence. Callback correlation uses both
+the frozen response URL and exact synchronous request ID; independent Run
+notices keep their own source proof. No insight-value search or global erasure
+is performed: later restatements without structured backreferences are outside
+this filter's coverage.
+
+
+## Configured model selection at the Host boundary
+
+The fixed source's model interface remains one call per loop turn. Multica's
+`handler/employee_model_route.go`, durable `employeeentry` model journal, and
+`modelregistry/employee.go` adapt that boundary to the existing Coordinator
+configuration. New wakes freeze only candidate references and configuration
+revision. Each uncached request rechecks current provider authorization and
+credentials, and the journal saves the fallback cursor before subsequent turns.
+The single-request adapter never invokes Coordinator's internally retrying route,
+so the kernel's three-turn budget bounds actual HTTP calls as well. Failed
+preparation consumes a reservation but creates no generation; cached responses
+create neither new requests nor effects. Historical snapshots keep their original
+request bytes. This model plan and the bounded recent-history snapshot share
+marker 6; no copied-kernel scheduler, model router, or follow-up pass is added.
+
+
+## Current tasks and successful continuation
+
+The fixed source's `task_addressing.go` binds work to a thread, source task or
+explicit task ID; a bare mention is not an address. Multica's bounded `t1`
+candidates are a Host adaptation, scoped to the admitted source/requester and
+scene, not a copied upstream implicit "latest task" resolver. `read_task` loads
+current PostgreSQL state before `continue_task` may resume a successful goal.
+`task_ledger.go` and `notification_context.go` supply the retained mechanism:
+assemble a new work packet from recorded actions, the current request and prior
+reports without a summary model. PostgreSQL retains the full ledger while only
+its injected projection is bounded; executor reports remain attributed reports.
+Resume, existing queue, Run and tool journal commit together. Existing dispatch,
+Redis wakeups and runtime claim remain the single execution path. A continuation notice follows its accepted source; steer keeps the original
+delivery anchor while its terminal fact identifies the actual correction source. Marker 9 gates these
+new tools and candidate snapshots; historical snapshots are replayed unchanged.
+
+
+The combined steer/continuation adapter preserves the existing Task Service
+steer backend and claim-exit barrier. Terminal provenance is checked at the
+Run's accepted input sequence: a committed `steer` or `resumed` ledger entry,
+its source-specific tool checkpoint, and the exact Task/Run/queue references.
+Steer rendering is verified with the existing `WithCorrections` builder; a
+mutable queue source override alone is insufficient. Subsequent successful
+continuations read all bounded corrections separately from recent ledger
+history, and reject overflow rather than omitting a binding condition. No
+additional model request, scheduler, or execution backend is introduced.
+
+The complete-correction reader is shared by steer and continuation, with a
+100-entry/64-KiB bound that rejects instead of trimming. Runtime delivery and
+execution provenance remain separate: the frozen original return address is
+not overwritten to identify a correction. Inherited completion constraints are
+proved from original accepted Task records, not dialogue or model self-report;
+current delivery still requires the current queue's provider-confirmed receipt.
+
+
+## Pure stop as a Host control
+
+The fixed source's task addressing and append-only task ledger remain the
+boundary: current source-bound references locate authorized work, while the
+Host records control effects. `stop_task` reuses Multica's existing queue
+cancellation and process-exit evidence path; it never calls steer or creates a
+successor. Stop intent and its tool receipt commit atomically in PostgreSQL.
+The same cancelled-predecessor fences used by steer govern stop observation;
+logical completion/cancellation and elapsed time never stand in for exit proof.
+The existing periodic worker only rearms persisted pending stops. Notice
+admission and BeforeSend consult the stop ledger before new submissions, while
+already-submitted provider actions keep their original reconciliation path.
+Marker 11 gates the new tool and execution-state projection; no kernel executor,
+scheduler, message-text classifier or additional model pass is added.

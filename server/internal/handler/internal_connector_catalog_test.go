@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -40,11 +41,17 @@ const (
 type fakeProvider struct {
 	*httptest.Server
 
-	mu                sync.Mutex
-	valid             map[string]bool
-	sessions          map[string]bool
-	challenge         string
-	redirectURI       string
+	mu          sync.Mutex
+	valid       map[string]bool
+	sessions    map[string]bool
+	challenge   string
+	redirectURI string
+	// installFlow is set when the authorize URL is the GitHub App
+	// installation page. That code is exchanged without PKCE, and the
+	// redirect URI only has to be the GitHub callback.
+	installFlow       bool
+	lastAuthorizeURL  string
+	verifierSent      bool
 	registrations     int
 	codeExchanges     int
 	refreshRequests   int
@@ -141,9 +148,15 @@ func (p *fakeProvider) token(w http.ResponseWriter, r *http.Request) {
 		p.codeExchanges++
 		p.lastClientSecret = r.Form.Get("client_secret")
 		p.lastResourceParam = r.Form.Get("resource")
+		_, p.verifierSent = r.Form["code_verifier"]
 		sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
-		ok := r.Form.Get("code") == "good-code" && r.Form.Get("redirect_uri") == p.redirectURI &&
-			base64.RawURLEncoding.EncodeToString(sum[:]) == p.challenge
+		redirectOK := r.Form.Get("redirect_uri") == p.redirectURI
+		pkceOK := base64.RawURLEncoding.EncodeToString(sum[:]) == p.challenge
+		if p.installFlow {
+			redirectOK = strings.HasSuffix(r.Form.Get("redirect_uri"), "/api/github/authorize")
+			pkceOK = !p.verifierSent
+		}
+		ok := r.Form.Get("code") == "good-code" && redirectOK && pkceOK
 		var access, refresh string
 		if ok {
 			access, refresh = p.issueLocked()
@@ -259,6 +272,7 @@ func newCatalogFixture(t *testing.T) *catalogFixture {
 	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "safe.example.test")
 	t.Setenv("GITHUB_APP_CLIENT_ID", "gh-client")
 	t.Setenv("GITHUB_APP_CLIENT_SECRET", "gh-secret")
+	t.Setenv("GITHUB_APP_SLUG", "qwen-tag-test")
 	provider := newFakeProvider(t)
 	suffix := strings.ReplaceAll(uuid.NewString()[:8], "-", "")
 	dcr := connectorcatalog.App{
@@ -420,19 +434,38 @@ func (f *catalogFixture) start(t *testing.T, scope connectorOAuthScope, returnTo
 	return started.AuthorizeURL, query, started.Cookie.Value
 }
 
+// noteAuthorize hands an authorize URL to the fake provider. The GitHub App
+// installation page carries no PKCE challenge; a later user-authorization
+// URL does, and replaces the installation mode.
+func (p *fakeProvider) noteAuthorize(authorizeURL string) (url.Values, error) {
+	parsed, err := url.Parse(authorizeURL)
+	if err != nil {
+		return nil, err
+	}
+	query := parsed.Query()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastAuthorizeURL = authorizeURL
+	if strings.Contains(parsed.Path, "/installations/new") {
+		p.installFlow = true
+		p.challenge = ""
+		p.redirectURI = ""
+		return query, nil
+	}
+	p.installFlow = false
+	p.challenge = query.Get("code_challenge")
+	p.redirectURI = query.Get("redirect_uri")
+	return query, nil
+}
+
 // provideAuthorizeURL hands the PKCE challenge and redirect URI of a
 // provider authorize URL to the fake provider and returns its query.
 func (f *catalogFixture) provideAuthorizeURL(t *testing.T, authorizeURL string) url.Values {
 	t.Helper()
-	parsed, err := url.Parse(authorizeURL)
+	query, err := f.provider.noteAuthorize(authorizeURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	query := parsed.Query()
-	f.provider.mu.Lock()
-	f.provider.challenge = query.Get("code_challenge")
-	f.provider.redirectURI = query.Get("redirect_uri")
-	f.provider.mu.Unlock()
 	return query
 }
 
@@ -904,9 +937,9 @@ func TestCatalogConnectorGitHubAppFlowUsesSharedCallbackAndHidesTokens(t *testin
 	scope := f.scope(c.ID, connectorOAuthScopeWorkspace, "")
 
 	authorizeURL, query, nonce := f.start(t, scope, "")
-	if !strings.HasPrefix(authorizeURL, f.gh.AuthorizationEndpoint+"?") || query.Get("client_id") != "gh-client" ||
-		query.Get("redirect_uri") != catalogWebOrigin+connectorOAuthGitHubCallback || query.Get("code_challenge_method") != "S256" ||
-		query.Get("resource") != "" || !isConnectorOAuthState(query.Get("state")) {
+	parsedAuthorize, err := url.Parse(authorizeURL)
+	if err != nil || parsedAuthorize.Host != "github.com" || parsedAuthorize.Path != "/apps/qwen-tag-test/installations/new" ||
+		query.Get("client_id") != "" || query.Get("state") == "" || !isConnectorOAuthState(query.Get("state")) {
 		t.Fatalf("GitHub authorize URL = %s", authorizeURL)
 	}
 	if registrations, _, _, _ := f.provider.counts(); registrations != 0 {
@@ -924,10 +957,10 @@ func TestCatalogConnectorGitHubAppFlowUsesSharedCallbackAndHidesTokens(t *testin
 		t.Fatalf("GitHub redirect = %q", outcome.RedirectURL)
 	}
 	f.provider.mu.Lock()
-	secretSent, resourceSent := f.provider.lastClientSecret, f.provider.lastResourceParam
+	secretSent, resourceSent, verifierSent := f.provider.lastClientSecret, f.provider.lastResourceParam, f.provider.verifierSent
 	f.provider.mu.Unlock()
-	if secretSent != "gh-secret" || resourceSent != "" {
-		t.Fatalf("GitHub code exchange client_secret=%q resource=%q", secretSent, resourceSent)
+	if secretSent != "gh-secret" || resourceSent != "" || verifierSent {
+		t.Fatalf("GitHub code exchange client_secret=%q resource=%q verifier_sent=%v", secretSent, resourceSent, verifierSent)
 	}
 	item, body := listedConnector(t, f.h, c.ID)
 	if item["credential_account"] != "@octo" || item["credential_source"] != "workspace" || item["credential_ready"] != true ||
@@ -938,6 +971,106 @@ func TestCatalogConnectorGitHubAppFlowUsesSharedCallbackAndHidesTokens(t *testin
 	if !connectorAcceptsBearer("oauth", f.gh.Slug) || connectorAcceptsBearer("oauth", f.dcr.Slug) || !connectorAcceptsBearer("bearer", "") || connectorAcceptsBearer("none", "") {
 		t.Fatal("PAT acceptance rules")
 	}
+}
+
+func TestGitHubSceneConnectFinishesWithoutTheStartingBrowser(t *testing.T) {
+	f := newCatalogFixture(t)
+	ctx := context.Background()
+	c := f.create(t, f.gh)
+	f.offer(t, c.ID)
+	f.grant(t, contextcap.ScopeScene, catalogTestScene)
+	scope := f.scope(c.ID, contextcap.ScopeScene, catalogTestScene)
+	key := contextcap.CredentialBinding{
+		WorkspaceID: testWorkspaceID, AgentID: f.agentID, ConnectorID: c.ID,
+		ScopeType: contextcap.ScopeScene, OrgID: catalogTestOrg, ScopeKey: catalogTestScene,
+	}
+
+	_, query, _ := f.start(t, scope, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/github/authorize?code=good-code&state="+url.QueryEscape(query.Get("state")), nil)
+	rec := httptest.NewRecorder()
+	f.h.completeConnectorOAuthCallback(rec, req, connectorOAuthViaGitHub)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("callback status %d body %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Query().Get("scope_key") != catalogTestScene || location.Query().Get("scope_type") != contextcap.ScopeScene ||
+		location.Query().Get("agent") != f.agentID || location.Query().Get("org") != catalogTestOrg ||
+		location.Query().Get("connected") != f.gh.Slug || !strings.HasSuffix(location.Path, "/dingtalk/configure") {
+		t.Fatalf("return %s", location.Redacted())
+	}
+	token := location.Query().Get("scene_session")
+	sess, err := auth.OpenSceneSession(token, time.Now())
+	if err != nil || sess.ScopeKey != catalogTestScene || sess.AgentID != f.agentID || sess.UserID != testUserID || sess.OrgID != catalogTestOrg {
+		t.Fatalf("scene session %+v %v", sess, err)
+	}
+	var pageCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == auth.SceneSessionCookie {
+			pageCookie = cookie
+		}
+	}
+	if pageCookie == nil || pageCookie.Value != token || !pageCookie.HttpOnly || pageCookie.Path != auth.SceneSessionCookiePath {
+		t.Fatalf("page cookie %+v", pageCookie)
+	}
+	if _, err := contextcap.GetCredential(ctx, testPool, key); err != nil {
+		t.Fatalf("scene credential: %v", err)
+	}
+
+	// A workspace install still refuses a browser that did not start it.
+	_, wsQuery, _ := f.start(t, f.scope(c.ID, connectorOAuthScopeWorkspace, ""), "")
+	missed := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{Via: connectorOAuthViaGitHub, State: wsQuery.Get("state"), Code: "good-code"})
+	if missed.ErrorCode != connectOAuthErrBrowserMismatch || missed.SceneSession != "" {
+		t.Fatalf("workspace without the starting browser = %+v", missed)
+	}
+
+	// No code yet: the same shareable state continues to user authorization
+	// instead of burning as a browser mismatch. Drop the credential first so
+	// this is the first-connect hop, not a refresh of the one above.
+	if _, err := testPool.Exec(ctx, `DELETE FROM context_connector_credential WHERE connector_id = $1 AND scope_key = $2`, c.ID, catalogTestScene); err != nil {
+		t.Fatal(err)
+	}
+	_, query, _ = f.start(t, scope, "")
+	continued := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{
+		Via: connectorOAuthViaGitHub, State: query.Get("state"), InstallationID: 42, SetupAction: "install",
+	})
+	if continued.ErrorCode != "" || !continued.Continue || !strings.Contains(continued.RedirectURL, "github.com") {
+		t.Fatalf("install without a code = %+v", continued)
+	}
+	f.provideAuthorizeURL(t, continued.RedirectURL)
+	finished := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{Via: connectorOAuthViaGitHub, State: query.Get("state"), Code: "good-code"})
+	if finished.ErrorCode != "" || finished.SceneSession == "" || !strings.Contains(finished.RedirectURL, "scope_key="+url.QueryEscape(catalogTestScene)) {
+		t.Fatalf("user hop = error %s session set %v", finished.ErrorCode, finished.SceneSession != "")
+	}
+	if _, err := contextcap.GetCredential(ctx, testPool, key); err != nil {
+		t.Fatalf("credential after the user hop: %v", err)
+	}
+
+	// The page exchange rejects a tampered token and accepts the real one.
+	h := &Handler{cfg: Config{AppURL: catalogAppOrigin}}
+	bad := httptest.NewRequest(http.MethodPost, "/api/scene-config/session", strings.NewReader(`{"token":"nope.nope"}`))
+	badRec := httptest.NewRecorder()
+	h.OpenSceneConfigSession(badRec, bad)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("tampered session status %d", badRec.Code)
+	}
+	good := httptest.NewRequest(http.MethodPost, "/api/scene-config/session", strings.NewReader(`{"token":`+strconvQuote(finished.SceneSession)+`}`))
+	goodRec := httptest.NewRecorder()
+	h.OpenSceneConfigSession(goodRec, good)
+	if goodRec.Code != http.StatusOK {
+		t.Fatalf("session exchange %d %s", goodRec.Code, goodRec.Body.String())
+	}
+	exchanged := goodRec.Result().Cookies()
+	if len(exchanged) != 1 || exchanged[0].Name != auth.SceneSessionCookie || exchanged[0].Value != finished.SceneSession {
+		t.Fatalf("exchanged cookie %+v", exchanged)
+	}
+}
+
+func strconvQuote(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 func TestCatalogConnectorConcurrentRefreshRequestsOneToken(t *testing.T) {

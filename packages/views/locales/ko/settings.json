@@ -1484,8 +1484,8 @@
     "agent_models": "Agent model choices",
     "agent_help": "Selected models appear in Agent settings. Migrate existing agents before removing a model in use.",
     "default_model": "Default model",
-    "coordinator": "Coordinator models",
-    "chain_help": "Configure the primary and fallback models in order. Failed calls try the next model without repeating completed actions.",
+    "coordinator": "Coordinator / EmployeeLoop 모델",
+    "chain_help": "Coordinator와 EmployeeLoop는 기본 모델과 대체 모델 체인을 공유합니다. 순서대로 설정하면 호출 실패 시 다음 모델을 시도하며, 완료된 작업은 반복하지 않습니다.",
     "add_fallback": "Add fallback model",
     "last_diamond": "Use the Diamond default as the final fallback",
     "save": "Save global settings",
@@ -1517,8 +1517,8 @@
     "catalog_count": "Showing {{visible}} / {{total}} models",
     "discovering": "Discovering and checking…",
     "bailian_discovered": "Bailian: checked {{checked}} text/tool models, kept {{count}}; {{unavailable}} rejected, {{unverified}} unverified. Save to apply.",
-    "diamond_help": "Append the Diamond Coordinator model after this fallback chain, skipping duplicates. It is also used before global models are configured.",
-    "coordinator_choice": "Coordinator model {{index}}"
+    "diamond_help": "Coordinator / EmployeeLoop가 공유하는 대체 모델 체인 끝에 Diamond의 Coordinator 모델을 중복 없이 추가합니다. 전역 모델이 설정되지 않은 경우에도 둘 다 이 기본 모델을 사용합니다.",
+    "coordinator_choice": "Coordinator / EmployeeLoop 모델 {{index}}"
   },
   "tag": {
     "title": "Tag",

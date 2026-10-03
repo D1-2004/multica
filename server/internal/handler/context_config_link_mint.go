@@ -27,6 +27,7 @@ import (
 const (
 	contextConfigLinkIssuerTaskTool    = "task_tool"
 	contextConfigLinkIssuerCoordinator = "coordinator"
+	contextConfigLinkIssuerEmployee    = "employee"
 )
 
 // contextConfigLinkPagePath is the configure page a link opens; the bearer
@@ -53,11 +54,18 @@ type contextConfigLinkMint struct {
 	// Origin is the app origin without a trailing slash.
 	Origin string
 	// SourceTaskID is the minting task; the Coordinator has none.
-	SourceTaskID string
-	Issuer       string
-	CoordTraceID string
+	SourceTaskID  string
+	Issuer        string
+	CoordTraceID  string
+	EmployeeJobID string
 	// Tab is the configure page tab the link opens ("" for the default).
 	Tab string
+	// HostAppended: the Host itself appends the link to the reply (the
+	// Coordinator's and the Employee foreground's capability answers) and
+	// keeps it out of every stored transcript. Only such a link of a 1:1
+	// chat carries the chat's person: an executor's tool result lands in its
+	// task messages, which members who may read the run can see.
+	HostAppended bool
 }
 
 // contextConfigLinkTabs are the configure page tabs a link may open
@@ -95,12 +103,17 @@ func (h *Handler) contextConfigLinkOrigin() (string, error) {
 }
 
 // mintContextConfigLink stores a configuration link for the conversation
-// scene of a dispatch scope and returns its page URL. A group and a 1:1 chat
-// are minted the same way: the link is keyed by the scene_id the dispatch
-// resolved from the conversation's openConversationId (docs/agent-scene.md
-// §1, §5), never by the sender, so it needs no staffId. The scope must come
-// from the server-written dispatch context, never from a model or a prompt,
-// and its scene has already passed the use-time fence (taskContextScope).
+// scene of a dispatch scope and returns its page URL. The link is keyed by
+// the scene_id the dispatch resolved from the conversation's
+// openConversationId (docs/agent-scene.md §1, §5). A 1:1 chat's link that
+// the Host appends itself (in.HostAppended) also carries the chat's person
+// (the scope's trigger person, keyed by contextcap.TriggerPersonKey: the
+// staffId, else the openDingTalkId) and opens their own level (个人能力) for
+// the first DingTalk account that opens it within LinkTTLPerson: only the
+// person reads the chat it is posted in. A group's link never carries a
+// person, nor does a link an executor's tool returns. The scope must come from the server-written dispatch
+// context, never from a model or a prompt, and its scene has already passed
+// the use-time fence (taskContextScope).
 func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLinkMint) (multicaMCPContextConfigLinkResult, error) {
 	scope := in.Scope
 	if !scope.HasScene() {
@@ -122,6 +135,17 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		ScopeTitle:   firstNonEmpty(scope.SceneTitle, agentSceneTitle(summary)),
 		SourceTaskID: in.SourceTaskID,
 	}
+	includesPerson := in.HostAppended && summary.Kind == contextcap.SceneKindDM && scope.HasPerson() &&
+		(contextcap.IsDirectConversationType(scope.ConversationType) || scope.ConversationType == contextcap.SceneKindDM)
+	personHash := ""
+	if includesPerson {
+		// The chat's link as a person link with the chat as its extra
+		// scene: redeeming grants the chat and, for its first account, the
+		// person (RedeemContextConfigLink).
+		link.ScopeType, link.ScopeKey, link.ExtraSceneID = contextcap.ScopePerson, scope.PersonKey, scope.SceneID
+		link.ScopeTitle = firstNonEmpty(scope.PersonName, link.ScopeTitle)
+		personHash = personKeyHash(scope.PersonKey)
+	}
 
 	token, err := contextcap.NewLinkToken()
 	if err != nil {
@@ -140,13 +164,16 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 	}
 	slog.InfoContext(ctx, "context capabilities: configuration link issued",
 		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", link.ScopeType,
-		"scene_id", link.ScopeKey, "scene_kind", summary.Kind, "issuer", in.Issuer, "coord_trace_id", in.CoordTraceID)
+		"scene_id", scope.SceneID, "scene_kind", summary.Kind, "includes_person", includesPerson,
+		"person_key_hash", personHash,
+		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID, "employee_job_id", in.EmployeeJobID)
 	return multicaMCPContextConfigLinkResult{
-		URL:         pageURL,
-		DingTalkURL: inboundcoord.ConfigLinkDeepLink(pageURL),
-		Scope:       link.ScopeType,
-		SceneKind:   summary.Kind,
-		ExpiresAt:   stored.ExpiresAt.UTC().Format(time.RFC3339),
+		URL:            pageURL,
+		DingTalkURL:    inboundcoord.ConfigLinkDeepLink(pageURL),
+		Scope:          contextcap.ScopeScene,
+		SceneKind:      summary.Kind,
+		ExpiresAt:      stored.ExpiresAt.UTC().Format(time.RFC3339),
+		IncludesPerson: includesPerson,
 	}, nil
 }
 
@@ -197,6 +224,7 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 		Scope:        scope,
 		Origin:       origin,
 		Issuer:       contextConfigLinkIssuerCoordinator,
+		HostAppended: true,
 		CoordTraceID: strings.TrimSpace(req.TraceID),
 	})
 	if err != nil {
@@ -214,7 +242,16 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 		URL:       result.URL,
 		Scope:     result.Scope,
 		SceneKind: result.SceneKind,
-		ValidFor:  contextcap.LinkTTL(result.Scope),
+		ValidFor:  configLinkValidFor(result),
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+// configLinkValidFor is how long a minted link stays usable: a 1:1 chat's
+// link that carries its person lives as long as a person link.
+func configLinkValidFor(result multicaMCPContextConfigLinkResult) time.Duration {
+	if result.IncludesPerson {
+		return contextcap.LinkTTLPerson
+	}
+	return contextcap.LinkTTL(result.Scope)
 }

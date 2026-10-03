@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -374,6 +376,16 @@ func (t taskEffectiveContext) instructions(base string) string {
 	}
 }
 
+// personKeyHash is a short digest of a trigger person key for logs, "" for
+// none.
+func personKeyHash(key string) string {
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:6])
+}
+
 // logClaim writes the one context line of a claim: the task's tenant org and
 // layers (or why none applies), the applied prompt components and custom MCP
 // servers as layer:name, the ones a nearer layer overrides as
@@ -381,8 +393,10 @@ func (t taskEffectiveContext) instructions(base string) string {
 // a runtime without MCP, and how many skills and connectors the scope layers
 // switch on (connectors are mounted only with a usable credential, see
 // authorizedTaskConnectors). Names only: never prompt text, server
-// configuration or credentials. Tasks without a DingTalk dispatch context
-// and A2A tasks log nothing.
+// configuration or credentials. The trigger person appears only as
+// person_key_hash, so two runs can be told to share a person without
+// logging the key. Tasks without a DingTalk dispatch context and A2A tasks
+// log nothing.
 func (t taskEffectiveContext) logClaim(ctx context.Context, task db.AgentTaskQueue) {
 	if t.Skipped == taskContextNoDispatch || t.Skipped == taskContextA2A {
 		return
@@ -422,6 +436,7 @@ func (t taskEffectiveContext) logClaim(ctx context.Context, task db.AgentTaskQue
 	slog.InfoContext(ctx, "context builder: claim context",
 		"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID),
 		"org_id", t.Scope.OrgID, "skipped", t.Skipped, "layers", strings.Join(layers, ","),
+		"person_key_hash", personKeyHash(t.Scope.PersonKey),
 		"prompts", prompts, "prompts_overridden", promptsOverridden,
 		"mcp_servers", servers, "mcp_servers_overridden", serversOverridden,
 		"mcp_servers_reserved", t.ReservedMCPServers, "mcp_servers_unmounted", t.UnmountedMCPServers,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,7 +23,7 @@ type Store struct{ db DB }
 
 func NewStore(db DB) *Store { return &Store{db: db} }
 
-const jobColumns = `id::text,workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state,COALESCE(lease_token::text,''),lease_until,generation,attempt_count,model_attempts,input_snapshot,model_journal,outcome,last_error,created_at`
+const jobColumns = `id::text,workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state,COALESCE(lease_token::text,''),lease_until,generation,attempt_count,model_attempts,input_snapshot,model_journal,outcome,last_error,created_at,kind`
 const scopeWhere = `workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid`
 const receiptScopeWhere = `workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id IS NOT DISTINCT FROM NULLIF($4,'')::uuid`
 
@@ -45,7 +47,7 @@ func mapError(err error) error {
 }
 func scanJob(row pgx.Row) (Job, error) {
 	var j Job
-	err := row.Scan(&j.ID, &j.Scope.WorkspaceID, &j.Scope.AgentID, &j.Scope.TenantOrgID, &j.Scope.SceneID, &j.PrincipalID, &j.Items, &j.State, &j.LeaseToken, &j.LeaseUntil, &j.Generation, &j.Attempts, &j.ModelAttempts, &j.InputSnapshot, &j.ModelJournal, &j.Outcome, &j.LastError, &j.CreatedAt)
+	err := row.Scan(&j.ID, &j.Scope.WorkspaceID, &j.Scope.AgentID, &j.Scope.TenantOrgID, &j.Scope.SceneID, &j.PrincipalID, &j.Items, &j.State, &j.LeaseToken, &j.LeaseUntil, &j.Generation, &j.Attempts, &j.ModelAttempts, &j.InputSnapshot, &j.ModelJournal, &j.Outcome, &j.LastError, &j.CreatedAt, &j.Kind)
 	return j, mapError(err)
 }
 func lockScope(ctx context.Context, tx pgx.Tx, s Scope) error {
@@ -122,7 +124,9 @@ func (s *Store) Admit(ctx context.Context, a Admission) (Consumption, error) {
 	}
 	if a.Owner == Employee && a.HoldReason == "" {
 		var pending Job
-		pending, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM employee_scene_job WHERE `+scopeWhere+` AND principal_id=$5::uuid AND state='pending' AND attempt_count=0 AND created_at>=now()-interval '250 milliseconds' AND jsonb_array_length(items)<16 AND message_count+$6<=32 ORDER BY created_at LIMIT 1 FOR UPDATE`, append(scopeArgs(a.Scope), a.Item.PrincipalID, a.Item.MessageCount)...))
+		// Only a human message window may absorb another message. A Task wake
+		// can share the principal and scene, but it is never a chat window.
+		pending, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM employee_scene_job WHERE `+scopeWhere+` AND principal_id=$5::uuid AND kind='message' AND state='pending' AND attempt_count=0 AND created_at>=now()-interval '250 milliseconds' AND jsonb_array_length(items)<16 AND message_count+$6<=32 ORDER BY created_at LIMIT 1 FOR UPDATE`, append(scopeArgs(a.Scope), a.Item.PrincipalID, a.Item.MessageCount)...))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return Consumption{}, err
 		}
@@ -138,7 +142,7 @@ func (s *Store) Admit(ctx context.Context, a Admission) (Consumption, error) {
 			if e != nil {
 				return Consumption{}, e
 			}
-			err = tx.QueryRow(ctx, `INSERT INTO employee_scene_job(workspace_id,agent_id,tenant_org_id,scene_id,principal_id,items,message_count) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6::jsonb,$7) RETURNING id::text`, append(scopeArgs(a.Scope), a.Item.PrincipalID, items, a.Item.MessageCount)...).Scan(&c.JobID)
+			err = tx.QueryRow(ctx, `INSERT INTO employee_scene_job(workspace_id,agent_id,tenant_org_id,scene_id,principal_id,items,message_count,kind) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6::jsonb,$7,'message') RETURNING id::text`, append(scopeArgs(a.Scope), a.Item.PrincipalID, items, a.Item.MessageCount)...).Scan(&c.JobID)
 		}
 		if err != nil {
 			return Consumption{}, err
@@ -152,10 +156,48 @@ func (s *Store) Admit(ctx context.Context, a Admission) (Consumption, error) {
 	return c, tx.Commit(ctx)
 }
 
+// Support lists the job kinds, Task wake kinds and wake schema versions one
+// binary can execute. Claim never returns other work: it stays pending for a
+// binary that supports it instead of being decoded as something else.
+type Support struct {
+	Kinds       []string
+	WakeKinds   []string
+	WakeSchemas []string
+}
+
+// CurrentSupport is what this binary's scene worker executes.
+func CurrentSupport() Support {
+	return Support{Kinds: []string{KindMessage, KindTaskWake}, WakeKinds: TaskWakeKinds(), WakeSchemas: []string{strconv.Itoa(TaskWakeSchemaVersion)}}
+}
+
 // Claim takes the workspace and scene locks before changing the candidate job.
 // Scene serialization lasts only for this short transaction, never a model call.
 func (s *Store) Claim(ctx context.Context) (Job, error) {
-	candidate, err := scanJob(s.db.QueryRow(ctx, `SELECT `+jobColumns+` FROM employee_scene_job j WHERE ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) AND NOT EXISTS(SELECT 1 FROM employee_scene_job active WHERE active.workspace_id=j.workspace_id AND active.agent_id=j.agent_id AND active.tenant_org_id=j.tenant_org_id AND active.scene_id=j.scene_id AND active.state='running' AND active.lease_until>=now()) ORDER BY available_at,created_at LIMIT 1`))
+	return s.ClaimSupported(ctx, CurrentSupport())
+}
+
+// openHumanInput is true while the scene has a message window that is not
+// completed. A Task wake never runs ahead of human input in its scene.
+const openHumanInput = `EXISTS(SELECT 1 FROM employee_scene_job human WHERE human.workspace_id=%[1]s AND human.agent_id=%[2]s AND human.tenant_org_id=%[3]s AND human.scene_id=%[4]s AND human.kind='message' AND human.state<>'completed')`
+
+// ClaimSupported claims the oldest available job of a supported kind. Within a
+// scene, pending human messages are claimed before Task wakes.
+func (s *Store) ClaimSupported(ctx context.Context, support Support) (Job, error) {
+	if len(support.Kinds) == 0 {
+		return Job{}, ErrInvalid
+	}
+	wakeKinds, wakeSchemas := support.WakeKinds, support.WakeSchemas
+	if wakeKinds == nil {
+		wakeKinds = []string{}
+	}
+	if wakeSchemas == nil {
+		wakeSchemas = []string{}
+	}
+	humanFirst := fmt.Sprintf(openHumanInput, "j.workspace_id", "j.agent_id", "j.tenant_org_id", "j.scene_id")
+	candidate, err := scanJob(s.db.QueryRow(ctx, `SELECT `+jobColumns+` FROM employee_scene_job j WHERE ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now()))
+ AND j.kind=ANY($1::text[]) AND (j.kind<>'task_wake' OR (j.items->0->'payload'->>'kind'=ANY($2::text[]) AND j.items->0->'payload'->>'schema_version'=ANY($3::text[])))
+ AND NOT EXISTS(SELECT 1 FROM employee_scene_job active WHERE active.workspace_id=j.workspace_id AND active.agent_id=j.agent_id AND active.tenant_org_id=j.tenant_org_id AND active.scene_id=j.scene_id AND active.state='running' AND active.lease_until>=now())
+ AND (j.kind='message' OR NOT `+humanFirst+`) ORDER BY available_at,created_at LIMIT 1`, support.Kinds, wakeKinds, wakeSchemas))
 	if errors.Is(err, ErrNotFound) {
 		return Job{}, ErrNoJob
 	}
@@ -178,7 +220,9 @@ func (s *Store) Claim(ctx context.Context) (Job, error) {
 	if busy {
 		return Job{}, ErrNoJob
 	}
-	job, err := scanJob(tx.QueryRow(ctx, `UPDATE employee_scene_job SET state='running',lease_token=gen_random_uuid(),lease_until=now()+interval '90 seconds',generation=generation+1,attempt_count=attempt_count+1,updated_at=now() WHERE `+scopeWhere+` AND id=$5::uuid AND ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) RETURNING `+jobColumns, args...))
+	// Recheck human-first under the scene lock that message admission also takes.
+	humanFirst = fmt.Sprintf(openHumanInput, "$1::uuid", "$2::uuid", "$3", "$4::uuid")
+	job, err := scanJob(tx.QueryRow(ctx, `UPDATE employee_scene_job SET state='running',lease_token=gen_random_uuid(),lease_until=now()+interval '90 seconds',generation=generation+1,attempt_count=attempt_count+1,updated_at=now() WHERE `+scopeWhere+` AND id=$5::uuid AND ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) AND (kind='message' OR NOT `+humanFirst+`) RETURNING `+jobColumns, args...))
 	if errors.Is(err, ErrNotFound) {
 		return Job{}, ErrNoJob
 	}
@@ -238,9 +282,17 @@ func (s *Store) SaveInput(ctx context.Context, j Job, input json.RawMessage) (js
 
 // BeginModel reserves the request budget before network I/O. Replaying a saved
 // completion costs no request and preserves the original native tool call IDs.
-func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json.RawMessage) (json.RawMessage, error) {
-	if ordinal < 0 || ordinal >= 3 || !json.Valid(request) {
+func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json.RawMessage, selection ...ModelRouteSelection) (json.RawMessage, error) {
+	if ordinal < 0 || ordinal >= 3 || !json.Valid(request) || len(selection) > 1 {
 		return nil, ErrInvalid
+	}
+	var route *ModelRouteSelection
+	if len(selection) == 1 {
+		value := selection[0]
+		if value.Revision < 0 || value.Ref == "" || value.Candidate < 0 || value.NextCandidate != value.Candidate {
+			return nil, ErrInvalid
+		}
+		route = &value
 	}
 	var cached json.RawMessage
 	err := s.lease(ctx, j, func(tx pgx.Tx, current *Job) error {
@@ -249,6 +301,9 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 		}
 		if ordinal < len(current.ModelJournal) {
 			turn := current.ModelJournal[ordinal]
+			if (turn.Route == nil) != (route == nil) || (route != nil && (turn.Route.Ref != route.Ref || turn.Route.Revision != route.Revision || turn.Route.Candidate != route.Candidate)) {
+				return ErrConflict
+			}
 			equal, err := jsonEqual(ctx, tx, turn.Request, request)
 			if err != nil {
 				return err
@@ -257,7 +312,7 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 				return ErrConflict
 			}
 			if turn.Failure != "" {
-				return &ModelFailure{Message: turn.Failure}
+				return &ModelFailure{Message: turn.Failure, Route: turn.Route}
 			}
 			if len(turn.Response) > 0 {
 				cached = turn.Response
@@ -268,7 +323,7 @@ func (s *Store) BeginModel(ctx context.Context, j Job, ordinal int, request json
 			return ErrModelBudget
 		}
 		if ordinal == len(current.ModelJournal) {
-			current.ModelJournal = append(current.ModelJournal, ModelTurn{Request: request})
+			current.ModelJournal = append(current.ModelJournal, ModelTurn{Request: request, Route: route})
 		}
 		journal, err := json.Marshal(current.ModelJournal)
 		if err != nil {
@@ -366,7 +421,9 @@ func (s *Store) Lookup(ctx context.Context, scope Scope, receiptID string) (Cons
 }
 
 // ExecuteTool journals a Host result with its exact native call identity.
-func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.RawMessage, execute func(pgx.Tx) (json.RawMessage, error)) (json.RawMessage, error) {
+// revalidate may project cached data through current authorization/state. It
+// must not perform effects or rewrite the historical journal.
+func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.RawMessage, revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error), execute func(pgx.Tx) (json.RawMessage, error)) (json.RawMessage, error) {
 	if key == "" || len(key) > 256 || !json.Valid(input) || execute == nil {
 		return nil, ErrInvalid
 	}
@@ -392,6 +449,11 @@ func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.R
 				return ErrConflict
 			}
 			result = saved.Result
+			if revalidate != nil {
+				var err error
+				result, err = revalidate(tx, result)
+				return err
+			}
 			return nil
 		}
 		var err error
@@ -425,8 +487,8 @@ func (s *Store) Hold(ctx context.Context, j Job, reason string) error {
 	})
 }
 
-func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, message string) error {
-	if message == "" {
+func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, message string, nextCandidate ...int) error {
+	if message == "" || len(nextCandidate) > 1 {
 		return ErrInvalid
 	}
 	return s.lease(ctx, j, func(tx pgx.Tx, current *Job) error {
@@ -434,16 +496,25 @@ func (s *Store) SaveModelFailure(ctx context.Context, j Job, ordinal int, messag
 			return ErrInvalid
 		}
 		turn := &current.ModelJournal[ordinal]
+		if len(nextCandidate) == 1 && (turn.Route == nil || nextCandidate[0] < turn.Route.Candidate || nextCandidate[0] > turn.Route.Candidate+1) {
+			return ErrInvalid
+		}
+		if len(nextCandidate) == 0 && turn.Route != nil {
+			return ErrInvalid
+		}
 		if len(turn.Response) > 0 {
 			return ErrConflict
 		}
 		if turn.Failure != "" {
-			if turn.Failure != message {
+			if turn.Failure != message || (turn.Route != nil && turn.Route.NextCandidate != nextCandidate[0]) {
 				return ErrConflict
 			}
 			return nil
 		}
 		turn.Failure = message
+		if turn.Route != nil {
+			turn.Route.NextCandidate = nextCandidate[0]
+		}
 		journal, err := json.Marshal(current.ModelJournal)
 		if err != nil {
 			return err

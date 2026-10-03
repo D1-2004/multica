@@ -33,8 +33,9 @@ type DirectTaskRequest struct {
 	Context          json.RawMessage
 }
 type DirectTaskResult struct {
-	Task db.AgentTaskQueue
-	Run  employeetask.Run
+	Task    db.AgentTaskQueue
+	Run     employeetask.Run
+	Created bool
 }
 
 // DirectTaskContext carries only this execution's input. EmployeeTask and Run
@@ -46,6 +47,10 @@ type DirectTaskContext struct {
 	Prompt           string `json:"direct_task_prompt"`
 	PrincipalID      string `json:"direct_principal_id"`
 	OriginatorUserID string `json:"direct_originator_user_id,omitempty"`
+	// AutomationOrigin locates the verified automation receipt of an execution
+	// that also carries a real autopilot_run_id (a scene routine occurrence).
+	// It is present exactly when the queue row has an autopilot_run_id.
+	AutomationOrigin *AutomationOriginRef `json:"employee_automation_origin,omitempty"`
 }
 
 // IsEmployeeDirectTask identifies the host-owned execution mode even when its
@@ -62,7 +67,14 @@ func IsEmployeeDirectTask(task db.AgentTaskQueue) bool {
 
 func ParseDirectTaskContext(task db.AgentTaskQueue) (DirectTaskContext, bool) {
 	var c DirectTaskContext
-	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || json.Unmarshal(task.Context, &c) != nil || c.Type != DirectTaskContextType {
+	if task.IssueID.Valid || task.ChatSessionID.Valid || json.Unmarshal(task.Context, &c) != nil || c.Type != DirectTaskContextType {
+		return DirectTaskContext{}, false
+	}
+	// A real autopilot_run_id is accepted only together with a well-formed
+	// automation locator for that same run, and a locator only with that run.
+	// Readers still verify the locator against PostgreSQL before acting on it;
+	// this shape check keeps any other combination from parsing as Direct.
+	if task.AutopilotRunID.Valid != (c.AutomationOrigin != nil) || (c.AutomationOrigin != nil && !validAutomationOriginRef(c.AutomationOrigin, task)) {
 		return DirectTaskContext{}, false
 	}
 	if _, err := util.ParseUUID(c.WorkspaceID); err != nil {
@@ -121,83 +133,90 @@ func directTaskContext(p DirectTaskRequest) ([]byte, error) {
 // Exact source replays recover the same queue row, even after completion.
 func (s *TaskService) EnqueueDirectTask(ctx context.Context, p DirectTaskRequest) (DirectTaskResult, error) {
 	var out DirectTaskResult
-	if s == nil || s.TxStarter == nil || s.Queries == nil || !p.PrincipalID.Valid {
+	if s == nil || s.TxStarter == nil {
 		return out, ErrDirectTaskAccessDenied
 	}
-	if strings.TrimSpace(p.Prompt) == "" || p.Source.Namespace == "" || p.Source.Key == "" {
-		return out, employeetask.ErrInvalid
-	}
-	contextJSON, err := directTaskContext(p)
+	prepared, err := s.PrepareDirectTask(ctx, p)
 	if err != nil {
 		return out, err
-	}
-	// Connector resolution may call external services; never hold aggregate locks
-	// while resolving it. Admission is checked again inside the write transaction.
-	var overlay runtimeMCPOverlayData
-	if s.Composio != nil {
-		agent, err := directTaskAdmissionAgent(ctx, s.Queries, p)
-		if err != nil {
-			return out, err
-		}
-		overlay = s.buildRuntimeMCPOverlay(ctx, p.OriginatorUserID, agent)
 	}
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return out, err
 	}
 	defer tx.Rollback(ctx)
+	out, err = s.enqueuePreparedDirectTaskTx(ctx, tx, prepared)
+	if err != nil {
+		return DirectTaskResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return DirectTaskResult{}, err
+	}
+	s.NotifyDirectTaskResult(ctx, out)
+	return out, nil
+}
+
+func lockDirectTaskTx(ctx context.Context, tx pgx.Tx, p DirectTaskRequest) (employeetask.Task, error) {
 	// Match the domain's deletion lock order: workspace -> task -> run.
 	var locked string
-	if err = tx.QueryRow(ctx, `SELECT id::text FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, p.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
-		return out, err
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, p.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
+		return employeetask.Task{}, err
 	}
-	if err = tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, p.Task.ID, p.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
-		return out, err
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, p.Task.ID, p.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
+		return employeetask.Task{}, err
 	}
-	store := employeetask.NewStore(tx)
-	task, err := store.Get(ctx, p.Task.Scope, p.Task.ID)
+	task, err := employeetask.NewStore(tx).Get(ctx, p.Task.Scope, p.Task.ID)
 	if err != nil {
-		return out, err
+		return employeetask.Task{}, err
 	}
 	if task.DispatchMode != employeetask.DispatchDirect || task.OwnerLoop != p.Task.OwnerLoop {
-		return out, employeetask.ErrConflict
+		return employeetask.Task{}, employeetask.ErrConflict
+	}
+	return task, nil
+}
+
+func directTaskReplayTx(ctx context.Context, tx pgx.Tx, prepared PreparedDirectTask) (DirectTaskResult, bool, error) {
+	var out DirectTaskResult
+	p := prepared.request
+	var queueID pgtype.UUID
+	err := tx.QueryRow(ctx, `SELECT r.queue_task_id FROM employee_task_entry e JOIN employee_task_run r ON r.id=e.run_id AND r.task_id=e.task_id WHERE e.task_id=$1::uuid AND e.source_namespace=$2 AND e.source_key=$3 AND e.kind='run_started'`, p.Task.ID, p.Source.Namespace, p.Source.Key).Scan(&queueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, false, nil
+	}
+	if err != nil {
+		return out, false, err
+	}
+	out.Task, err = db.New(tx).GetAgentTask(ctx, queueID)
+	if err != nil {
+		return out, false, err
+	}
+	var equal bool
+	if err = tx.QueryRow(ctx, `SELECT ($1::jsonb->'employee_direct_input')=($2::jsonb->'employee_direct_input')`, out.Task.Context, prepared.contextJSON).Scan(&equal); err != nil {
+		return out, false, err
+	}
+	if !equal {
+		return out, false, employeetask.ErrConflict
+	}
+	out.Run, err = directRunByQueue(ctx, tx, queueID)
+	return out, err == nil, err
+}
+
+// enqueuePreparedDirectTaskTx performs database work only. Its caller owns the
+// transaction and must publish the result only after the outer commit succeeds.
+func (s *TaskService) enqueuePreparedDirectTaskTx(ctx context.Context, tx pgx.Tx, prepared PreparedDirectTask) (DirectTaskResult, error) {
+	var out DirectTaskResult
+	p := prepared.request
+	task, err := lockDirectTaskTx(ctx, tx, p)
+	if err != nil {
+		return out, err
 	}
 	qtx := s.Queries.WithTx(tx)
 	agent, err := directTaskAdmissionAgent(ctx, qtx, p)
 	if err != nil {
 		return out, err
 	}
-	var queueID pgtype.UUID
-	err = tx.QueryRow(ctx, `SELECT r.queue_task_id FROM employee_task_entry e JOIN employee_task_run r ON r.id=e.run_id AND r.task_id=e.task_id WHERE e.task_id=$1::uuid AND e.source_namespace=$2 AND e.source_key=$3 AND e.kind='run_started'`, task.ID, p.Source.Namespace, p.Source.Key).Scan(&queueID)
-	if err == nil {
-		out.Task, err = qtx.GetAgentTask(ctx, queueID)
-		if err != nil {
-			return out, err
-		}
-		var equal bool
-		if err = tx.QueryRow(ctx, `SELECT ($1::jsonb->'employee_direct_input')=($2::jsonb->'employee_direct_input')`, out.Task.Context, contextJSON).Scan(&equal); err != nil {
-			return out, err
-		}
-		if !equal {
-			return out, employeetask.ErrConflict
-		}
-		out.Run, err = directRunByQueue(ctx, tx, queueID)
-		if err != nil {
-			return out, err
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return DirectTaskResult{}, err
-		}
-		// Recover the commit-before-notify crash window. Wakeup and runtime
-		// launch leases are idempotent; queued analytics are emitted only once.
-		if out.Task.Status == "queued" {
-			s.notifyTaskAvailable(out.Task)
-			s.launchRuntimeForTaskWithContext(ctx, out.Task)
-		}
-		return out, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return out, err
+	if replay, found, err := directTaskReplayTx(ctx, tx, prepared); err != nil || found {
+		return replay, err
 	}
 	if task.ActiveRunID != "" {
 		return out, employeetask.ErrActiveRun
@@ -232,8 +251,8 @@ func (s *TaskService) EnqueueDirectTask(ctx context.Context, p DirectTaskRequest
 		return out, err
 	}
 	source, _, evidence, ref := attributionCreateParams(attr)
-	queueID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	_, err = tx.Exec(ctx, `INSERT INTO agent_task_queue(id,agent_id,runtime_id,status,context,originator_user_id,accountable_user_id,originator_source,trigger_evidence_kind,trigger_evidence_ref_id,trigger_summary,runtime_mcp_overlay,runtime_connected_apps,max_attempts) VALUES($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,1)`, queueID, agent.ID, agent.RuntimeID, contextJSON, attr.UserID, attr.AccountableUserID, source, evidence, ref, truncateForSummary(task.Definition.Goal, triggerSummaryMaxLen), overlay.Overlay, overlay.ConnectedApps)
+	queueID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	_, err = tx.Exec(ctx, `INSERT INTO agent_task_queue(id,agent_id,runtime_id,status,context,originator_user_id,accountable_user_id,originator_source,trigger_evidence_kind,trigger_evidence_ref_id,trigger_summary,runtime_mcp_overlay,runtime_connected_apps,max_attempts) VALUES($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,1)`, queueID, agent.ID, agent.RuntimeID, prepared.contextJSON, attr.UserID, attr.AccountableUserID, source, evidence, ref, truncateForSummary(task.Definition.Goal, triggerSummaryMaxLen), prepared.overlay.Overlay, prepared.overlay.ConnectedApps)
 	if err != nil {
 		return out, err
 	}
@@ -241,14 +260,11 @@ func (s *TaskService) EnqueueDirectTask(ctx context.Context, p DirectTaskRequest
 	if err != nil {
 		return out, err
 	}
-	out.Run, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: p.Source, QueueTaskID: util.UUIDToString(queueID), ExpectedVersion: task.Version})
+	out.Run, err = employeetask.NewStore(tx).StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: p.Source, QueueTaskID: util.UUIDToString(queueID), ExpectedVersion: task.Version})
 	if err != nil {
 		return out, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return DirectTaskResult{}, err
-	}
-	s.NotifyTaskEnqueued(ctx, out.Task)
+	out.Created = true
 	return out, nil
 }
 func directRunByQueue(ctx context.Context, tx pgx.Tx, id pgtype.UUID) (employeetask.Run, error) {

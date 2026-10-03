@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 
@@ -25,7 +26,11 @@ type employeeNoticeBinding struct {
 	JobID, SourceRef                                       string
 	Queue                                                  db.AgentTaskQueue
 	TaskGoalRevision, RunGoalRevision                      int64
+	CompletionNotice                                       employeetask.CompletionNoticePolicy
+	CompletionNoticeOrigin                                 *service.DirectTaskNoticeOrigin
 }
+
+var errEmployeeNoticeSourcePending = errors.New("employee effect source is not committed")
 
 type employeeNoticeHold struct{ reason string }
 
@@ -38,6 +43,9 @@ func holdEmployeeNotice(reason string) error { return &employeeNoticeHold{reason
 func (h *Handler) ReconcileEmployeeRunNotices(ctx context.Context, limit int) (int, error) {
 	if h == nil || h.TxStarter == nil || h.DB == nil || h.DingTalkResponses == nil {
 		return 0, errors.New("employee notice services are unavailable")
+	}
+	if err := h.employeeNoticeReplicasReady(ctx); err != nil {
+		return 0, err
 	}
 	if limit < 1 || limit > 1000 {
 		return 0, errors.New("employee notice limit is invalid")
@@ -113,6 +121,27 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 		return b, holdEmployeeNotice("invalid_queue_context")
 	}
 	b.JobID, b.SourceRef = metadata.JobID, metadata.SourceRef
+	var policyEnvelope struct {
+		Policy employeetask.CompletionNoticePolicy `json:"employee_completion_notice_policy"`
+		Origin *service.DirectTaskNoticeOrigin     `json:"employee_completion_notice_origin"`
+	}
+	if json.Unmarshal(b.Queue.Context, &policyEnvelope) != nil && b.ResultState == "succeeded" {
+		return b, holdEmployeeNotice("invalid_completion_notice_policy")
+	}
+	b.CompletionNoticeOrigin = policyEnvelope.Origin
+	noticeSourceRef := b.SourceRef
+	if policyEnvelope.Origin != nil {
+		noticeSourceRef = policyEnvelope.Origin.SourceRef
+	}
+	b.CompletionNotice, err = employeetask.NormalizeCompletionNoticePolicy(policyEnvelope.Policy, noticeSourceRef)
+	if err != nil && b.ResultState == "succeeded" {
+		return b, holdEmployeeNotice("invalid_completion_notice_policy")
+	}
+	if b.ResultState != "succeeded" {
+		b.CompletionNotice = employeetask.CompletionNoticePolicy{Mode: employeetask.CompletionNoticeAlways}
+		b.CompletionNoticeOrigin = nil
+	}
+
 	if _, err := util.ParseUUID(b.JobID); err != nil {
 		b.JobID = ""
 		return b, holdEmployeeNotice("invalid_job_binding")
@@ -122,16 +151,32 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	if !ok || metadata.Owner != "employee" || c.EmployeeTaskID != b.TaskID || c.WorkspaceID != workspaceID || metadata.Scene.SceneID != b.Scope.Scene.SceneID || uuidToString(b.Queue.AgentID) != b.Scope.AgentID || b.Queue.Status != states[b.ResultState] {
 		return b, holdEmployeeNotice("run_queue_binding_mismatch")
 	}
+	if stopped, err := employeeNoticeStopped(ctx, tx, b); err != nil {
+		return b, err
+	} else if stopped {
+		return b, holdEmployeeNotice("task_stop_requested")
+	}
 	// Keep the old Run and its result for audit, but never deliver it as the
 	// answer to a subsequently corrected goal. Both enqueue and BeforeSend
 	// load these revisions under the same Task/Run locks.
 	if b.RunGoalRevision != b.TaskGoalRevision {
 		return b, holdEmployeeNotice("stale_goal_revision")
 	}
+	// A Run cancelled by steer was replaced, not abandoned: its successor
+	// reports the outcome, so the requester never sees a cancellation notice.
+	if b.ResultState == "cancelled" {
+		var steered bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue WHERE agent_id=$1 AND context->>'steer_predecessor_task_id'=$2)`, b.Queue.AgentID, b.QueueID).Scan(&steered); err != nil {
+			return b, err
+		}
+		if steered {
+			return b, holdEmployeeNotice("steered")
+		}
+	}
 	return b, nil
 }
 
-// employeeNoticeTarget resolves only the originally selected source. It uses
+// employeeNoticeTarget resolves this Run's accepted source. It uses
 // current membership, invocation, identity and scene fences, never current mode.
 func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding) (dingtalkresponse.ActionInput, bool, error) {
 	var in dingtalkresponse.ActionInput
@@ -143,8 +188,14 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if err != nil {
 		return in, false, err
 	}
-	if job.State != "completed" || job.Scope.WorkspaceID != b.Scope.WorkspaceID || job.Scope.AgentID != b.Scope.AgentID || job.Scope.TenantOrgID != b.Scope.TenantOrgID || job.Scope.SceneID != b.Scope.Scene.SceneID {
+	if job.Scope.WorkspaceID != b.Scope.WorkspaceID || job.Scope.AgentID != b.Scope.AgentID || job.Scope.TenantOrgID != b.Scope.TenantOrgID || job.Scope.SceneID != b.Scope.Scene.SceneID {
 		return in, false, holdEmployeeNotice("source_job_scope_mismatch")
+	}
+	if job.State == "pending" || job.State == "running" {
+		return in, false, errEmployeeNoticeSourcePending
+	}
+	if job.State != "completed" {
+		return in, false, holdEmployeeNotice("source_job_not_completed")
 	}
 	var env employeeDispatchEnvelope
 	var source employeeSourceMessage
@@ -186,17 +237,37 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if !ok || direct.PrincipalID != env.PrincipalID {
 		return in, false, holdEmployeeNotice("queue_principal_mismatch")
 	}
-	var requestBody string
-	err = tx.QueryRow(ctx, `SELECT body FROM employee_task_entry WHERE task_id=$1::uuid AND kind='request' ORDER BY seq LIMIT 1`, b.TaskID).Scan(&requestBody)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return in, false, holdEmployeeNotice("task_request_missing")
+	proof := employeeExecutionBinding{
+		employeeExecutionTerminal: employeeExecutionTerminal{TaskID: b.TaskID, RunID: b.RunID, QueueTaskID: b.QueueID, GoalRevision: b.RunGoalRevision, SceneID: b.Scope.Scene.SceneID, JobID: b.JobID, SourceReceiptID: source.ReceiptID},
+		Scope:                     employeeentry.Scope{WorkspaceID: b.Scope.WorkspaceID, AgentID: b.Scope.AgentID, TenantOrgID: b.Scope.TenantOrgID, SceneID: b.Scope.Scene.SceneID},
+		Requester:                 b.Requester, Queue: b.Queue, SourceRef: b.SourceRef, Source: source,
 	}
+	reason, err := employeeExecutionDispatchProof(ctx, tx, &proof)
 	if err != nil {
 		return in, false, err
 	}
-	var original employeeSourceMessage
-	if json.Unmarshal([]byte(requestBody), &original) != nil || !reflect.DeepEqual(original, source) {
-		return in, false, holdEmployeeNotice("task_source_mismatch")
+	if reason == "source_job_pending" {
+		return in, false, errEmployeeNoticeSourcePending
+	}
+	if reason != "" {
+		return in, false, holdEmployeeNotice(reason)
+	}
+	if !proof.Continuation && !proof.Steered {
+		var requestBody string
+		err = tx.QueryRow(ctx, `SELECT body FROM employee_task_entry WHERE task_id=$1::uuid AND kind='request' ORDER BY seq LIMIT 1`, b.TaskID).Scan(&requestBody)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return in, false, holdEmployeeNotice("task_request_missing")
+		}
+		if err != nil {
+			return in, false, err
+		}
+		var original employeeSourceMessage
+		if json.Unmarshal([]byte(requestBody), &original) != nil || !reflect.DeepEqual(original, source) {
+			return in, false, holdEmployeeNotice("task_source_mismatch")
+		}
+	}
+	if err := h.employeeNoticePolicySource(ctx, tx, b, source, env.PrincipalID); err != nil {
+		return in, false, err
 	}
 	q := db.New(tx)
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseUUID(b.Scope.AgentID), WorkspaceID: parseUUID(b.Scope.WorkspaceID)})
@@ -305,14 +376,15 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 }
 
 func employeeNoticeBody(b employeeNoticeBinding) string {
-	result := strings.TrimSpace(redact.Text(b.Result))
+	result := redact.Text(b.Result)
 	switch b.ResultState {
 	case "succeeded":
-		if result == "" {
+		if strings.TrimSpace(result) == "" {
 			return "本次执行已完成，未返回文本结果。"
 		}
-		return "本次执行结果：\n" + result
+		return result
 	case "failed":
+		result = strings.TrimSpace(result)
 		if result == "" {
 			return "本次执行失败，未返回失败详情。"
 		}
@@ -323,9 +395,13 @@ func employeeNoticeBody(b employeeNoticeBinding) string {
 }
 
 func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, runID string) (bool, error) {
+	checkedFiles := employeeFileChecks{}
 	artifacts := []EmployeeTaskArtifactRef{}
 	artifactsLoaded := h.EmployeeRunNoticeArtifacts == nil
 	for {
+		if err := h.employeeNoticeReplicasReady(ctx); err != nil {
+			return false, err
+		}
 		tx, err := h.TxStarter.Begin(ctx)
 		if err != nil {
 			return false, err
@@ -350,8 +426,34 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		callbackRoute := false
 		if held == nil {
 			in, callbackRoute, err = h.employeeNoticeTarget(ctx, tx, b)
+			if errors.Is(err, errEmployeeNoticeSourcePending) {
+				return false, nil
+			}
 			if err != nil && !errors.As(err, &held) {
 				return false, err
+			}
+		}
+		deliveryDecision := "notify"
+		if held == nil {
+			var lookup []string
+			deliveryDecision, lookup, err = h.employeeNoticeDeliveryDecision(ctx, tx, b, in, checkedFiles)
+			if err != nil {
+				return false, err
+			}
+			if deliveryDecision == "wait" {
+				return false, nil
+			}
+			if len(lookup) > 0 {
+				if err = tx.Rollback(ctx); err != nil {
+					return false, err
+				}
+				if err = h.verifyEmployeeNoticeFiles(ctx, in, b.QueueID, lookup, checkedFiles); err != nil {
+					return false, err
+				}
+				continue
+			}
+			if deliveryDecision == "suppress" {
+				held = &employeeNoticeHold{"native_file_delivered"}
 			}
 		}
 		// The artifact reader may use this same pool. Release aggregate locks and
@@ -372,7 +474,10 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		if held != nil {
 			state, reason = "suppressed", held.reason
 		} else {
-			body = employeeNoticeBody(b)
+			body = employeeNoticeDeliveryBody(deliveryDecision, b.Result)
+			if body == "" {
+				body = employeeNoticeBody(b)
+			}
 			for _, artifact := range artifacts {
 				if artifact.TaskID != b.TaskID || artifact.RunID != b.RunID || artifact.QueueTaskID != b.QueueID {
 					return false, errors.New("employee notice artifact run mismatch")
@@ -403,6 +508,7 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		if err = tx.Commit(ctx); err != nil {
 			return false, err
 		}
+		logEmployeeRunNotice(ctx, "employee_run_notice_recorded", b, state, reason, actionID)
 		return true, nil
 	}
 }
@@ -415,7 +521,8 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 		return errors.New("employee notice authority is unavailable")
 	}
 	var runID, workspaceID, state, reason, body string
-	err := h.DB.QueryRow(ctx, `SELECT run_id::text,workspace_id::text,state,reason,body FROM employee_run_notice WHERE action_id=$1`, in.ActionID).Scan(&runID, &workspaceID, &state, &reason, &body)
+	var recorded employeeNoticeBinding
+	err := h.DB.QueryRow(ctx, `SELECT run_id::text,workspace_id::text,state,reason,body,agent_id::text,scene_id::text,task_id::text,queue_task_id::text,COALESCE(job_id::text,''),result_state FROM employee_run_notice WHERE action_id=$1`, in.ActionID).Scan(&runID, &workspaceID, &state, &reason, &body, &recorded.Scope.AgentID, &recorded.Scope.Scene.SceneID, &recorded.TaskID, &recorded.QueueID, &recorded.JobID, &recorded.ResultState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if in.EmployeeRunNoticeID != "" {
 			return &dingtalkresponse.SuppressSendError{Reason: "notice_binding_removed"}
@@ -428,37 +535,87 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 	if state == "suppressed" {
 		return &dingtalkresponse.SuppressSendError{Reason: reason}
 	}
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	b, err := h.loadEmployeeNoticeBinding(ctx, tx, workspaceID, runID)
-	var held *employeeNoticeHold
-	if errors.Is(err, pgx.ErrNoRows) {
-		held = &employeeNoticeHold{"run_binding_removed"}
-	} else if err != nil && !errors.As(err, &held) {
-		return err
-	}
-	if held == nil {
-		target, callbackRoute, e := h.employeeNoticeTarget(ctx, tx, b)
-		if e != nil && !errors.As(e, &held) {
-			return e
+	recorded.RunID, recorded.Scope.WorkspaceID = runID, workspaceID
+	checkedFiles := employeeFileChecks{}
+	for {
+		if err := h.employeeNoticeReplicasReady(ctx); err != nil {
+			return err
 		}
-		if held == nil && !employeeNoticeActionMatches(in, target, b.RunID, body, callbackRoute) {
-			held = &employeeNoticeHold{"notice_action_mismatch"}
+		tx, err := h.TxStarter.Begin(ctx)
+		if err != nil {
+			return err
 		}
+		defer tx.Rollback(ctx)
+		b, err := h.loadEmployeeNoticeBinding(ctx, tx, workspaceID, runID)
+		var held *employeeNoticeHold
+		if errors.Is(err, pgx.ErrNoRows) {
+			held = &employeeNoticeHold{"run_binding_removed"}
+		} else if err != nil && !errors.As(err, &held) {
+			return err
+		}
+		if held == nil {
+			target, callbackRoute, e := h.employeeNoticeTarget(ctx, tx, b)
+			if e != nil && !errors.As(e, &held) {
+				return e
+			}
+			if held == nil && in.Text != body {
+				reloaded := in
+				reloaded.Text = body
+				if employeeNoticeActionMatches(reloaded, target, b.RunID, body, callbackRoute) {
+					return errors.New("employee notice text changed; reload pending action")
+				}
+			}
+			if held == nil && !employeeNoticeActionMatches(in, target, b.RunID, body, callbackRoute) {
+				held = &employeeNoticeHold{"notice_action_mismatch"}
+			}
+		}
+		if held == nil {
+			decision, lookup, e := h.employeeNoticeDeliveryDecision(ctx, tx, b, in, checkedFiles)
+			if e != nil {
+				return e
+			}
+			if decision == "wait" {
+				return errors.New("native file send receipt is still being verified")
+			}
+			if len(lookup) > 0 {
+				if err = tx.Rollback(ctx); err != nil {
+					return err
+				}
+				if err = h.verifyEmployeeNoticeFiles(ctx, in, b.QueueID, lookup, checkedFiles); err != nil {
+					return err
+				}
+				continue
+			}
+			if newBody := employeeNoticeDeliveryBody(decision, b.Result); newBody != "" && newBody != body {
+				if err = refreshEmployeeNoticeBody(ctx, tx, in, runID, body, newBody); err != nil {
+					return err
+				}
+				if err = tx.Commit(ctx); err != nil {
+					return err
+				}
+				return errors.New("employee notice body refreshed; reload before submission")
+			}
+			if decision == "suppress" {
+				held = &employeeNoticeHold{"native_file_delivered"}
+			}
+		}
+		if held == nil {
+			return tx.Commit(ctx)
+		}
+
+		changed, err := tx.Exec(ctx, `UPDATE employee_run_notice SET state='suppressed',reason=$2,updated_at=now() WHERE run_id=$1::uuid AND state='enqueued'`, runID, held.reason)
+		if err != nil {
+			return err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return err
+		}
+		if changed.RowsAffected() == 1 {
+			logEmployeeRunNotice(ctx, "employee_run_notice_state_changed", recorded, "suppressed", held.reason, in.ActionID)
+		}
+		return &dingtalkresponse.SuppressSendError{Reason: held.reason}
+
 	}
-	if held == nil {
-		return tx.Commit(ctx)
-	}
-	if _, err = tx.Exec(ctx, `UPDATE employee_run_notice SET state='suppressed',reason=$2,updated_at=now() WHERE run_id=$1::uuid`, runID, held.reason); err != nil {
-		return err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return err
-	}
-	return &dingtalkresponse.SuppressSendError{Reason: held.reason}
 }
 
 func employeeNoticeActionMatches(in, target dingtalkresponse.ActionInput, runID, body string, callbackRoute bool) bool {
@@ -478,4 +635,15 @@ func employeeNoticeActionMatches(in, target dingtalkresponse.ActionInput, runID,
 	}
 	return in.SceneNoticeID == runID && in.RequestID == "scene-notice:"+runID &&
 		in.CallbackURL == "" && in.TaskID == "" && in.ReplyToOpenMsgID == ""
+}
+
+// Log only committed state and correlation IDs. Task output, source quotes and
+// artifact URLs stay in their existing access-controlled records.
+func logEmployeeRunNotice(ctx context.Context, event string, b employeeNoticeBinding, state, reason, actionID string) {
+	slog.InfoContext(ctx, "employee run notice", "event", event,
+		"state", state, "reason", reason, "result_state", b.ResultState,
+		"workspace_id", b.Scope.WorkspaceID, "agent_id", b.Scope.AgentID,
+		"scene_id", b.Scope.Scene.SceneID, "job_id", b.JobID,
+		"task_id", b.TaskID, "run_id", b.RunID, "queue_task_id", b.QueueID,
+		"action_id", actionID)
 }

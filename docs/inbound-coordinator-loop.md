@@ -213,9 +213,9 @@ response worker在发送前复核该Coordinator job仍pending/running、关联ac
 
 Coordinator 的受审工作计划通过 `EmployeeIssueBackend` 调用原有 `IssueService.Create`、`CreateExternalFollowUp` 或 `QueueCoordinatorFollowUp`。每项的 EmployeeTask、Issue/评论和即时 queue→Run 映射共用外层事务，提交后才释放事件、分析记录和运行唤醒；Web 的整批计划继续与聊天记录一起提交。Task 的 requester 来自原入站发言人，追加记录保留本次真实 actor，不能把代写评论的 Multica 操作账号冒充委托人。无已登记场域时只使用真实 Issue/Chat locator，不伪造 SceneRef；历史 Issue 首次续接只采用其原作者来源与当前定义，不重新执行旧请求。
 
-忙时追加先保留真实的 pending follow-up，没有 queue ID 就没有 Run。实际合并入队时，用已保存的 follow-up source key 和 task_id 精确建立一个 Run，并冻结实际接受输入的水位；后台使用同一事实关系恢复遗漏的映射。Coordinator 既有自动 retry 预算与调度保持不变：窄 `ObserveIssueRun` 只记录已经存在且属于同一 workspace/agent/Issue 的 queue；retry 关联还核对原 Run、`retry_of_task_id`、`parent_task_id` 和 attempt 递增，不猜最近任务，也不再派一份执行。若较新的 Run 仍活动，观察层只延后关联，不回滚旧后端已经接受的 retry；原 queue 与父子谱系保留为持久待关联事实，活动 Run 结束后自动补齐，包括届时已经终态的 retry child。Direct/Employee 自有任务不使用这个观察接口，其显式 Resume 仍只接受已成功完成、无 active Run 的情形。
+忙时追加先保留真实的 pending follow-up，没有 queue ID 就没有 Run。实际合并入队时，用已保存的 follow-up source key 和 task_id 精确建立一个 Run，并冻结实际接受输入的水位；后台使用同一事实关系恢复遗漏的映射。Coordinator 既有自动 retry 预算与调度保持不变：窄 `ObserveBackendRun` 只记录 adapter 已校验的执行事实，Task 核心不读取 Issue 或 queue 表。`EmployeeIssueBackend` 在同一事务中从数据库复核 queue、Issue、agent 及其 workspace 绑定；retry 关联还复核持久化的原 Run、`retry_of_task_id`、`parent_task_id` 和 attempt 递增，不把调用方快照当作事实，不猜最近任务，也不再派一份执行。若较新的 Run 仍活动，观察层只延后关联，不回滚旧后端已经接受的 retry；原 queue 与父子谱系保留为持久待关联事实，活动 Run 结束后自动补齐，包括届时已经终态的 retry child。Direct/Employee 自有任务不使用这个观察接口，其显式 Resume 仍只接受已成功完成、无 active Run 的情形。
 
-Issue-backed Run 的终态写入复用 queue 事实；它不新增 Employee notice，Coordinator 仍沿原 `task_finished`、Router 回执和最终输出合同回报。实现与本地 PG 回归在 `service/employee_issue_backend*.go`、`service/employee_task_lifecycle.go`、`handler/coordinator_issue_backend.go`、`chat_coordinator_plan_test.go`、`coordinator_window_plan_test.go`。这些数据库/兼容性回归不代表真实模型、Runtime 或渠道送达已验收；policy/assembly 版本和提示词保持不变。
+Issue-backed Run 的终态写入复用持久化 queue 事实：adapter 在同一事务中复核实际终态，结果和错误读取数据库字段，不采信调用方陈旧的状态或结果。它不新增 Employee notice，Coordinator 仍沿原 `task_finished`、Router 回执和最终输出合同回报。实现与本地 PG 回归在 `service/employee_issue_backend*.go`、`service/employee_task_lifecycle.go`、`handler/coordinator_issue_backend.go`、`chat_coordinator_plan_test.go`、`coordinator_window_plan_test.go`。`service/employee_issue_binding_test.go` 覆盖错误绑定、持久终态、retry 谱系和外层事务回滚；`employeetask/store_test.go` 在不含 Issue/queue 表的 fixture 中验证独立账本与 Direct 单写者约束。这些数据库/兼容性回归不代表真实模型、Runtime 或渠道送达已验收；policy/assembly 版本和提示词保持不变。
 
 ## 7. 每次修改的守则
 
@@ -287,14 +287,14 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 - 开关层防护按账号：任一活跃的数字员工消息路由（Router tenant/account 等于该身份）时拒绝开启原生（409 `native_subscription_conflicts_with_message_binding`）；手动消息绑定的账号已归原生时拒绝。扫码绑定可能存其他 ID 格式，正确性以逐条消息规则为准。
 - 解绑执行身份时先关闭原生订阅；关闭失败则解绑整体失败（500 `native_subscription_cleanup_failed`），不留下孤行在同账号重新绑定时被复活。
 
-**服务端即 Router。** `acceptNativeMessage`（`server/internal/handler/dws_native_dispatch.go`）把一条事件投影成 Router 数字员工路由会送来的 DispatchCommand v2（`source=dingtalk/digital_employee`、`channel/message.created`、`surface=auto`、`outbound=dws`），在进程内调用 `handleAgentDispatchV2`。受理幂等、收集窗口、主动会话转换、用户决策、Coordinator job、任务与 task_finished 全部沿用本合同，不另开入口。受理键为 `dws-native:v1:` + sha256(org, CID, openMessageId)，命令是事件的纯函数：重投回放原受理结果；并发重投得到 409 pending 时不确认事件，稍后重投再回放。被引用者是否为本员工取决于回执何时落库，可能在两次投递之间变化，因此不计入原生受理指纹（`nativeFingerprintEvent`），重投只会回放、不会 409 冲突。进程内受理与事件流的 context 脱钩、限时 60 秒，事件流交接时已开始的受理照常完成或释放。
+**服务端即 Router。** `acceptNativeMessage`（`server/internal/handler/dws_native_dispatch.go`）把一条事件投影成 Router 数字员工路由会送来的 DispatchCommand v2（`source=dingtalk/digital_employee`、`channel/message.created`、`surface=auto`、`outbound=dws`），在进程内调用 `handleAgentDispatchV2`。受理幂等、收集窗口、主动会话转换、用户决策、Coordinator job、任务与 task_finished 全部沿用本合同，不另开入口。受理键为 `dws-native:v1:` + sha256(org, CID, openMessageId)，命令是事件的纯函数：重投回放原受理结果；并发重投得到 409 pending 时不确认事件，稍后重投再回放。被引用者是否为本员工取决于回执何时落库，群名是投递时向钉钉读的（可能读失败或已改名），两者都可能在两次投递之间变化，因此不计入原生受理指纹（`nativeFingerprintEvent`），重投只会回放、不会 409 冲突。进程内受理与事件流的 context 脱钩、限时 60 秒，事件流交接时已开始的受理照常完成或释放。
 
 **可信事实（COORD.F01）。**
 
-- 发言人只有 `senderOpenDingTalkId` 与显示名（DingTalk 省略时的字面 `null` 视为缺失），不补造 uid，人员归属按 staffId/openDingTalkId 的现有别名规则。
+- 发言人只有 `senderOpenDingTalkId` 与显示名（DingTalk 省略时的字面 `null` 视为缺失），不补造 uid 或 staffId，人员归属按 staffId/openDingTalkId 的现有别名规则。openDingTalkId 相对接收账号：同一个人在本账号的单聊和群里是同一个 ID（2026-10-03 实测），换一个账号看到的是另一个 ID。派发前服务端以本员工身份反查发言人的 staffId（`nativeSenderStaffID`）：先查 `dws_open_identity_staff` 里已记下的（组织、接收账号、openDingTalkId）映射，没有则在本员工通讯录里按发言人名字（群里再用群成员昵称）搜索，只认 openDingTalkId 完全相等的条目，查到即记下。查到的 staffId 像 Router 投递一样写进 `sender.staffId` 与各消息的 `senderStaffId`，不计入受理指纹。跨组织成员与通讯录里没有的账号查不到 staffId，退回 `odt:` + openDingTalkId。这就是触发者的个人能力 key（`contextcap.TriggerPersonKey`，`docs/context-capabilities.md` §2）：同一个人经 Router 或原生、在单聊或群里都是同一个 key。每条消息都必须自带同一个 openDingTalkId 才认人，群里没有发言人 ID 的消息不会继承窗口里别人的身份；只作用于个人能力层，例行任务从不带个人层。
 - 群消息的「@ 本员工」来自订阅键本身，记为对接收 uid 的可信 mention。同句是否还 @ 了别人未知，不能据此断言只 @ 了员工。单聊的 mentions 是已知的空列表，按单聊恒需回应。
 - 被引用消息只有在其 openMessageId 命中本员工已记录的出站回执（`response_action` / `sandbox_send_receipt` 的 provider_message_id）时才标为员工本人；与当前发言人 openDingTalkId 相同则标当前发言人；否则保持未知，不当作他人。
-- 事件没有附件与会话名：纯媒体或空内容事件确认后丢弃，不进入窗口。
+- 事件没有附件与会话名：纯媒体或空内容事件确认后丢弃，不进入窗口。群事件派发前以本员工身份读一次群名（`get_conversation_info`，内部群被拒时回退到本人的群列表；`h.DWSNativeConversationTitle` → `dwsclient.Shared.ConversationTitle`），作为派发的会话标题，`scene.Resolve` 据此写入 `agent_scene.title`，场域配置页不再显示无名「群聊」。读取与事件流的 context 脱钩、限时 3 秒，结果按（Agent、账号、会话）在进程内缓存 10 分钟（读失败 1 分钟）；读不到时照常派发，场域保留原名，记 Warn `dws_native_conversation_title_failed`。Coordinator follow-up 合批只比较会话 ID 与类型，不比较标题，改名或某次没读到群名不会把同一会话拆成两批。staffId 反查同样限时 3 秒、与事件流 context 脱钩，查不到 10 分钟内不再查、读失败 1 分钟内不再查；已记下的映射 7 天后重新核对，通讯录不再能证明时删除、读失败时沿用；不会派发的事件（无内容、缺消息引用）不做任何反查。Coordinator 能力回答在单聊里附带的配置链接同时授予该发言人的个人配置（15 分钟、首个打开的账号占有），执行器工具返回的链接不带个人。单聊仍以发言人显示名命名。
 
 **每条事件都复查。** 账号归属（见上）与托管回复资格。任一不满足即确认并记 `dws_native_event_skipped`，不投递。事件流按账号建立、只在下次巡检时更新所属 Agent；账号若已转到另一个 Agent 的原生订阅，这条事件按当前所有者处理（`dws_native_event_owner_moved`），不会两条都不处理。开启原生订阅时先清掉同一账号已不再拥有它的旧行（Agent 已归档或身份已换绑），运营身份换绑到其他账号时清掉本 Agent 的原生订阅，列表只在旧行仍对应当前身份时显示已开启。
 
@@ -358,7 +358,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 - 只有全部副本都运行新二进制后，才能对 Agent 开启原生订阅。
 - 回滚时先关闭 Agent 开关或运行时键，排空 `target_identity` 为原生目标的 outbox 与 job，再回退二进制。
 
-**验证状态。** 已完成 Host 单测，以及在本地迁移副本库上的 DB 测试：`TestNativeMessageRunsTheRouterPipeline`、`TestNativeMessageOwnOutputAndQuotes`、`TestNativeOwnershipIsExclusivePerMessage`（同一消息两路只处理一次、切换归属、Router 绑定与原生同时存在）、`TestNativeSubscriptionAccountIsUnique`、`TestNativeEchoOfOwnReplyIsDropped`。DWS 是否真的回推账号自己的消息、真实预发投递、模型回放均未验证。对照案例 `f01_native_ingress_trusted_facts`、`f01_native_own_output_not_reentered`、`f01_native_account_owned_by_one_path` 保持 `not_run`。
+**验证状态。** 已完成 Host 单测，以及在本地迁移副本库上的 DB 测试：`TestNativeMessageRunsTheRouterPipeline`、`TestNativeMessageOwnOutputAndQuotes`、`TestNativeOwnershipIsExclusivePerMessage`（同一消息两路只处理一次、切换归属、Router 绑定与原生同时存在）、`TestNativeSubscriptionAccountIsUnique`、`TestNativeEchoOfOwnReplyIsDropped`。DWS 是否真的回推账号自己的消息、真实预发投递、模型回放均未验证。对照案例 `f01_native_ingress_trusted_facts`、`f01_native_own_output_not_reentered`、`f01_native_account_owned_by_one_path` 保持 `not_run`。2026-10-03 群名与触发者 key：Host 单测 `TestBuildNativeDispatchCommandCarriesGroupTitle`、`TestNativeFingerprintIgnoresConversationTitle`、`TestNativeConversationTitleCachesAndDegrades`、`TestAcceptNativeMessageReadsTitlesOfGroupsOnly`、`TestNativeDispatchTriggerPersonIsTheSameInGroupAndSingleChat`，`contextcap` 的 `TestScopeFromTaskContext` 原生用例与 DB 测试 `TestOrgActivityAndPersons`（原生单聊发言人按 openDingTalkId 列出）通过；`f01_native_group_title_and_trigger_person` 保持 `not_run`，预发投递见部署记录。
 
 ## 11. 回复恢复的当前证据边界
 

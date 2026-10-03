@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -267,11 +268,14 @@ type Handler struct {
 	EventRouteReady  func(context.Context) (bool, error)
 	// EmployeeLoopReady checks whether this agent can admit new Employee work.
 	// Nil keeps the new mode unavailable while its consumer is not installed.
-	EmployeeLoopReady               func(context.Context, pgtype.UUID, pgtype.UUID) error
+	EmployeeLoopReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+	// EmployeeWatchdog records stall episodes and fences their notices at send.
+	EmployeeWatchdog                *service.EmployeeWatchdog
 	EmployeeSceneWorker             *EmployeeSceneWorker
 	EmployeeMemory                  *employeememory.Store
 	EmployeeRunNoticeArtifacts      func(context.Context, employeetask.Scope, string, string) ([]EmployeeTaskArtifactRef, error)
 	EventReceiptVerificationEnabled bool
+	TaskRunEventsEnabled            bool
 	SceneMemoryStore                *scenememory.Store
 	SceneMemoryWorker               *scenememory.Worker
 	A2AService                      *service.A2AService
@@ -391,6 +395,15 @@ type Handler struct {
 	// user_card_action_triggered for the A2UI loop, always on the production
 	// DWS gateway. Nil without Redis.
 	DWSNativeEvents *dwseventsource.Source
+	// DWSNativeConversationTitle reads a group's title as the native
+	// identity sees it (native IM events carry none). Nil leaves native
+	// group scenes untitled.
+	DWSNativeConversationTitle func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error)
+	// DWSNativeStaffID looks up the staffId of the person the native
+	// identity sees as openDingTalkID in its own address book (names narrow
+	// the search; conversationID is the group of a group event). Nil leaves
+	// native senders without a staffId.
+	DWSNativeStaffID func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error)
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.

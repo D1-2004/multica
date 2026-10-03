@@ -28,9 +28,13 @@ agent + tenant org + scene kind + stable scene instance → one scene_id
   (`scene.ErrUnknownKind`); a kind is never guessed.
 - **A 1:1 chat is keyed by its conversation, not by a person.** Two 1:1 chats
   with the same person are two scenes; a staffId/UID never creates, finds or
-  stands in for a dm scene. The person scope (staffId) still exists for
-  personal preferences (context capabilities §1.1) and is a separate thing;
-  a 1:1 chat's configuration link is its scene link, like a group's.
+  stands in for a dm scene. The person scope (staffId, or the openDingTalkId
+  of a sender a DWS native subscription names only so, context capabilities
+  §2) still exists for personal capabilities (context capabilities §1.1) and
+  is a separate thing;
+  a 1:1 chat's configuration link is its scene link; the one the Host
+  appends itself also carries the chat's person (2026-10-03, context
+  capabilities §5).
 - Renames, membership changes, credential rotation and model/session restarts
   do not change a scene_id. Holding a scene_id grants nothing by itself; every
   read and write still checks workspace, agent, tenant org and the caller's

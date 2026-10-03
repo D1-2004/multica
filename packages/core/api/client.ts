@@ -2,7 +2,10 @@ import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, Save
 import {
   AddedCatalogConnectorSchema,
   ConnectorAuthorizeUrlSchema,
+  EMPTY_CONTEXT_GITHUB_INSTALLATIONS,
+  ContextGitHubInstallationsSchema,
   InternalConnectorToolsRefreshSchema,
+  type ContextGitHubInstallations,
   type InternalConnectorToolsRefresh,
 } from "./internal-connector-schema";
 import {
@@ -4561,6 +4564,40 @@ export class ApiClient {
     return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
       endpoint: "POST /api/context-capabilities/agents/{agentId}/connections/start",
       includeReceived: false,
+    });
+  }
+
+  /** GitHub App installations covered by one configure-page credential.
+   * A malformed body becomes a failed list (error "malformed") rather than
+   * an empty success. */
+  async listContextGitHubInstallations(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    connectorId: string,
+  ): Promise<ContextGitHubInstallations> {
+    const params = new URLSearchParams({
+      scope_type: scope.scopeType,
+      scope_key: scope.scopeKey,
+      connector_id: connectorId,
+    });
+    if (scope.orgId) params.set("org_id", scope.orgId);
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/github-installations?${params.toString()}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextGitHubInstallations>(raw, ContextGitHubInstallationsSchema, EMPTY_CONTEXT_GITHUB_INSTALLATIONS, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/github-installations",
+      includeReceived: false,
+    });
+  }
+
+  /** Exchanges the signed token on a GitHub return for the configure-page cookie.
+   * A bad token is an error; the caller still opens the page. */
+  async openSceneConfigSession(token: string): Promise<void> {
+    await this.fetch<unknown>("/api/scene-config/session", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      headers: NO_WORKSPACE_HEADER,
     });
   }
 

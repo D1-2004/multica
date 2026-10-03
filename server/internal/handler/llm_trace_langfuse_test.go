@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -255,5 +256,44 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	if level != "ERROR" {
 		t.Fatalf("error generation level = %q", level)
+	}
+}
+
+func TestLangfuseLLMTraceToolInventoryRespectsCaptureTruncation(t *testing.T) {
+	for _, truncated := range []bool{false, true} {
+		t.Run(map[bool]string{false: "complete_capture", true: "truncated_valid_json"}[truncated], func(t *testing.T) {
+			exporter := tracetest.NewInMemoryExporter()
+			client := langfuse.NewWithExporter(langfuse.Config{}, exporter)
+			defer client.Shutdown(context.Background())
+			observer := NewLangfuseLLMTraceObserver(client)
+			request := `{"model":"m","messages":[{"role":"user","content":"actual prompt"}],"tools":[{"type":"function","function":{"name":"scene_tail_tool"}}]}`
+			payload, _ := json.Marshal(map[string]any{"sequence": 3, "request": map[string]any{"body": request, "truncated": truncated}, "response": map[string]any{"body": "{}", "status": 200}})
+			task := db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{8}, Valid: true}}
+			if err := observer.ObserveTaskLLMTrace(context.Background(), task, db.Agent{}, db.AgentRuntime{}, payload); err != nil {
+				t.Fatal(err)
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("spans=%d", len(spans))
+			}
+			var params map[string]any
+			for _, attr := range spans[0].Attributes {
+				if string(attr.Key) == "langfuse.observation.model.parameters" {
+					if err := json.Unmarshal([]byte(attr.Value.AsString()), &params); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			want := "complete"
+			if truncated {
+				want = "request_truncated"
+			}
+			if params["tool_capture_status"] != want || params["tool_names_complete"] != !truncated || params["tool_count_known"] != !truncated {
+				t.Fatalf("capture signal lost: %+v", params)
+			}
+			if params["tool_schemas_recorded"] != false || params["tool_schemas_status"] != "not_exported" {
+				t.Fatal("name completeness incorrectly claims full schema")
+			}
+		})
 	}
 }

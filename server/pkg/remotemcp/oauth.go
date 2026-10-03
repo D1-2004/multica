@@ -310,12 +310,14 @@ func BuildAuthorizationURL(metadata OAuthMetadata, registration OAuthClientRegis
 
 func ExchangeOAuthCode(ctx context.Context, tokenEndpoint, resource, code, redirectURI, verifier string, registration OAuthClientRegistration) (OAuthTokenResponse, error) {
 	values := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"client_id":     {registration.ClientID},
-		"code_verifier": {verifier},
-		"resource":      {resource},
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {redirectURI},
+		"client_id":    {registration.ClientID},
+		"resource":     {resource},
+	}
+	if verifier != "" {
+		values.Set("code_verifier", verifier)
 	}
 	return requestOAuthToken(ctx, tokenEndpoint, values, registration)
 }

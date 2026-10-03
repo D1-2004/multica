@@ -44,6 +44,7 @@ describe("context capability mobile client", () => {
       scopeKey: sceneId,
       scopeTitle: "Team",
       orgId: "",
+      extraSceneId: "",
     });
   });
 
@@ -154,6 +155,69 @@ describe("context capability mobile client", () => {
         connectorId,
       }),
     ).toBe("");
+  });
+
+  it("lists GitHub App installations for the scope without a workspace header", async () => {
+    const fetch = stubFetch({
+      connected: true,
+      installations: [
+        {
+          id: 2,
+          account_login: "acme",
+          account_type: "Organization",
+          repository_selection: "selected",
+          settings_url: "https://github.com/organizations/acme/settings/installations/2",
+        },
+      ],
+    });
+    const result = await new ApiClient(base).listContextGitHubInstallations(
+      agentId,
+      { scopeType: "scene", scopeKey: sceneId, orgId: "org-9" },
+      connectorId,
+    );
+    const { url, init } = requestOf(fetch);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe(`/api/context-capabilities/agents/${agentId}/github-installations`);
+    expect(parsed.searchParams.get("scope_type")).toBe("scene");
+    expect(parsed.searchParams.get("scope_key")).toBe(sceneId);
+    expect(parsed.searchParams.get("org_id")).toBe("org-9");
+    expect(parsed.searchParams.get("connector_id")).toBe(connectorId);
+    expect(init.headers["X-Workspace-Slug"]).toBe("");
+    expect(result.installations).toEqual([
+      {
+        id: 2,
+        accountLogin: "acme",
+        accountType: "Organization",
+        repositorySelection: "selected",
+        settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+        repositories: [],
+        repositoryCount: 0,
+        repositoriesTruncated: false,
+      },
+    ]);
+    expect(result.totalCount).toBe(0);
+    expect(result.filteredCount).toBe(0);
+  });
+
+  it("drops a non-https GitHub installation settings URL", async () => {
+    stubFetch({
+      connected: true,
+      installations: [
+        {
+          id: 1,
+          account_login: "octocat",
+          account_type: "User",
+          repository_selection: "all",
+          settings_url: "javascript:alert(1)",
+        },
+      ],
+    });
+    const result = await new ApiClient(base).listContextGitHubInstallations(
+      agentId,
+      { scopeType: "person", scopeKey: "staff-1" },
+      connectorId,
+    );
+    expect(result.installations[0]?.settingsUrl).toBe("");
   });
 
   it("deletes credentials with the scope in the query string", async () => {

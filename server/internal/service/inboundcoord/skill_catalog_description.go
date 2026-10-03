@@ -61,3 +61,9 @@ func completeCoordinatorSkillHeader(head string) string {
 	}
 	return ""
 }
+
+// SkillCatalogDescription shares the bounded capability label projection with Employee.
+// Labels never load a workflow or grant authority.
+func SkillCatalogDescription(metadata, contentHead string) string {
+	return coordinatorSkillDescription(metadata, contentHead)
+}

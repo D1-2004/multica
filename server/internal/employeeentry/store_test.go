@@ -73,6 +73,24 @@ func database(t *testing.T) fixture {
 	for _, path := range owned {
 		apply(t, pool, path)
 	}
+	// Task wakes read Employee Tasks; 990* is the Task lifecycle range and 991*
+	// the typed scene job range. Both apply after the original tables.
+	tasks := []string{"9650_employee_task_resume.up.sql", "9760_employee_task_steer_entry.up.sql"}
+	for _, pattern := range []string{"960*.up.sql", "990*.up.sql", "991*.up.sql"} {
+		matched, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(matched)
+		if pattern == "990*.up.sql" {
+			for _, name := range tasks {
+				apply(t, pool, filepath.Join(dir, name))
+			}
+		}
+		for _, path := range matched {
+			apply(t, pool, path)
+		}
+	}
 	if _, err = pool.Exec(ctx, `CREATE TABLE workspace(id uuid NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +313,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 		return json.RawMessage(`{"receipt":"run-one","text":"accepted"}`), nil
 	}
 	input := json.RawMessage(`{"name":"dispatch_task","goal":"work"}`)
-	first, err := f.store.ExecuteTool(ctx, job, "native-one", input, execute)
+	first, err := f.store.ExecuteTool(ctx, job, "native-one", input, nil, execute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +321,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	job = claim(t, f)
-	second, err := f.store.ExecuteTool(ctx, job, "native-one", input, execute)
+	second, err := f.store.ExecuteTool(ctx, job, "native-one", input, nil, execute)
 	var same bool
 	if compareErr := f.pool.QueryRow(ctx, `SELECT $1::jsonb=$2::jsonb`, first, second).Scan(&same); compareErr != nil {
 		t.Fatal(compareErr)
@@ -311,7 +329,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 	if err != nil || !same || calls != 1 {
 		t.Fatalf("tool replay: %s %s calls=%d %v", first, second, calls, err)
 	}
-	if _, err = f.store.ExecuteTool(ctx, job, "native-one", json.RawMessage(`{"goal":"other"}`), execute); !errors.Is(err, ErrConflict) {
+	if _, err = f.store.ExecuteTool(ctx, job, "native-one", json.RawMessage(`{"goal":"other"}`), nil, execute); !errors.Is(err, ErrConflict) {
 		t.Fatalf("same call changed effect: %v", err)
 	}
 }

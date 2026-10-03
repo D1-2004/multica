@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_routine_occurrence_workspace_idx ON employee_routine_occurrence (workspace_id);

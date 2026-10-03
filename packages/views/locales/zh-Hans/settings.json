@@ -1484,8 +1484,8 @@
     "agent_models": "Agent 可选模型",
     "agent_help": "只有勾选的模型会出现在 Agent 设置中。移除已被使用的模型前，请先迁移对应 Agent。",
     "default_model": "默认模型",
-    "coordinator": "Coordinator 模型",
-    "chain_help": "按顺序配置主模型和降级模型。调用失败时尝试下一项，不重复执行已完成的操作。",
+    "coordinator": "Coordinator / EmployeeLoop 模型",
+    "chain_help": "Coordinator 与 EmployeeLoop 共用这组主模型和降级模型。按顺序配置，调用失败时尝试下一项，不重复执行已完成的操作。",
     "add_fallback": "添加降级模型",
     "last_diamond": "最后使用 Diamond 默认模型",
     "save": "保存全局配置",
@@ -1517,8 +1517,8 @@
     "catalog_count": "显示 {{visible}} / {{total}} 个模型",
     "discovering": "正在拉取并检查…",
     "bailian_discovered": "百炼：检查 {{checked}} 个文本工具模型，保留 {{count}} 个；{{unavailable}} 个调用被拒绝，{{unverified}} 个暂未验证。保存后生效。",
-    "diamond_help": "勾选后，在上述降级链末尾追加 Diamond 中的 Coordinator 模型，重复项不再添加。未配置全局模型时，也会使用该默认模型。",
-    "coordinator_choice": "Coordinator 模型 {{index}}"
+    "diamond_help": "勾选后，在 Coordinator / EmployeeLoop 共用的降级链末尾追加 Diamond 中的 Coordinator 模型，重复项不再添加。未配置全局模型时，两者也使用该默认模型。",
+    "coordinator_choice": "Coordinator / EmployeeLoop 模型 {{index}}"
   },
   "tag": {
     "title": "Tag",

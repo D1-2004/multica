@@ -54,7 +54,7 @@ func (w *EmployeeSceneWorker) memoryCommands(ctx context.Context, job employeeen
 			}
 			sum := sha256.Sum256(encoded)
 			key := "host:reset-memory:" + hex.EncodeToString(sum[:])
-			raw, err := w.store.ExecuteTool(ctx, job, key, encoded, func(tx pgx.Tx) (json.RawMessage, error) {
+			raw, err := w.store.ExecuteTool(ctx, job, key, encoded, nil, func(tx pgx.Tx) (json.RawMessage, error) {
 				result := employeeMemoryCommandResult{Reply: "无法确认这条指令的发送者，记忆没有清理。"}
 				if source.RequesterRef != "" && source.SourceRef != "" {
 					if w.handler.EmployeeMemory == nil {

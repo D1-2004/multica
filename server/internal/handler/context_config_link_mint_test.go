@@ -105,41 +105,60 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 		ctxcapExpectStatus(t, redeem(user, sceneToken), http.StatusOK, "coordinator scene link redeem")
 	}
 
-	// 1:1 chat: the same scene link, of the chat's own scene. A digital
-	// employee's dispatch names the sender by openDingTalkId only (no
-	// staffId) and the chat has no title; the link still issues and takes
-	// the chat's title from the scene directory.
+	// 1:1 chat (冬翔 2026-10-03): the chat's Host-appended link also carries
+	// the chat's person, keyed by TriggerPersonKey (the staffId, else "odt:" + the
+	// openDingTalkId), and opens their own level for the first account that
+	// opens it; that account may open it again, nobody else may. A merged
+	// window of several speakers names no person: the plain scene link.
 	f.registerDirectScene(t)
-	for name, dispatch := range map[string][]byte{
-		"robot sender with staffId":         ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff),
-		"digital employee without staffId":  ctxcapDWSDispatch("single", ctxcapDirectScene),
-		"merged window of several speakers": ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff),
+	for _, tc := range []struct {
+		name, personKey, title string
+		dispatch               []byte
+	}{
+		{"robot sender with staffId", ctxcapStaff, "Alice", ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff)},
+		{"digital employee without staffId", "odt:DpJnOpenSender", "冬翔", ctxcapDWSDispatch("single", ctxcapDirectScene)},
+		{"merged window of several speakers", "", "Ctxcap group", ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)},
 	} {
-		direct, err := issue(dispatch)
-		if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM || direct.ValidFor != contextcap.LinkTTLScene {
-			t.Fatalf("%s: 1:1 link=%+v err=%v", name, direct, err)
+		// The Coordinator appends the link itself, so a 1:1 chat's carries
+		// its person and lives as long as a person link.
+		ttl := contextcap.LinkTTLPerson
+		if tc.personKey == "" {
+			ttl = contextcap.LinkTTLScene
 		}
-		ctxcapExpiresWithin(t, direct.ExpiresAt.UTC().Format(time.RFC3339), contextcap.LinkTTLScene)
+		direct, err := issue(tc.dispatch)
+		if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM || direct.ValidFor != ttl {
+			t.Fatalf("%s: 1:1 link=%+v err=%v", tc.name, direct, err)
+		}
+		ctxcapExpiresWithin(t, direct.ExpiresAt.UTC().Format(time.RFC3339), ttl)
 		token := coordinatorLinkToken(t, direct)
 		got := coordinatorStoredLinkFor(t, token)
-		if got.scopeType != contextcap.ScopeScene || got.orgID != ctxcapOrg || got.scopeKey != ctxcapDirectScene || got.extraScene != "" {
-			t.Fatalf("%s: stored 1:1 link=%+v", name, got)
+		if tc.personKey == "" {
+			if got.scopeType != contextcap.ScopeScene || got.scopeKey != ctxcapDirectScene || got.extraScene != "" || got.title != tc.title {
+				t.Fatalf("%s: stored 1:1 link=%+v", tc.name, got)
+			}
+			for _, user := range []string{alice, bob} {
+				ctxcapExpectStatus(t, redeem(user, token), http.StatusOK, tc.name+": 1:1 scene link redeem")
+			}
+			continue
 		}
-		if title := map[bool]string{true: "Alice", false: "Ctxcap group"}[name == "digital employee without staffId"]; got.title != title {
-			t.Fatalf("%s: stored title=%q want %q", name, got.title, title)
+		if got.scopeType != contextcap.ScopePerson || got.orgID != ctxcapOrg || got.scopeKey != tc.personKey ||
+			got.extraScene != ctxcapDirectScene || got.title != tc.title {
+			t.Fatalf("%s: stored 1:1 link=%+v", tc.name, got)
 		}
-		// Reusable until it expires, like a group's.
-		for _, user := range []string{alice, bob} {
-			ctxcapExpectStatus(t, redeem(user, token), http.StatusOK, name+": 1:1 scene link redeem")
+		ctxcapExpectStatus(t, redeem(alice, token), http.StatusOK, tc.name+": first account")
+		ctxcapExpectStatus(t, redeem(alice, token), http.StatusOK, tc.name+": the same account again")
+		ctxcapExpectStatus(t, redeem(bob, token), http.StatusGone, tc.name+": another account")
+		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopePerson, ctxcapOrg, tc.personKey); err != nil {
+			t.Fatalf("%s: the person was not granted: %v", tc.name, err)
 		}
 	}
 	for _, user := range []string{alice, bob} {
 		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, user, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapDirectScene); err != nil {
-			t.Fatalf("1:1 scene link did not grant the 1:1 scene: %v", err)
+			t.Fatalf("the 1:1 link did not grant the 1:1 scene: %v", err)
 		}
-		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, user, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
-			t.Fatal("a 1:1 scene link granted a personal scope")
-		}
+	}
+	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, bob, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
+		t.Fatal("another account took the person")
 	}
 }
 
@@ -176,8 +195,9 @@ func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, group)); got.scopeKey != ctxcapScene || got.title != "Envelope group" || got.orgID != ctxcapOrg {
 		t.Fatalf("group envelope stored=%+v", got)
 	}
-	// A digital employee's 1:1 chat: the sender has no staffId, the link is
-	// the chat's scene link.
+	// A digital employee's 1:1 chat: the sender has no staffId, so the
+	// link carries the person by "odt:" + openDingTalkId, with the chat as
+	// its extra scene; with a proved staffId, by the staffId.
 	dws := command("single", ctxcapDirectScene, ctxcapOrg)
 	dws.Event.Data.Sender = DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "DpJnOpenSender"}
 	dws.Event.Data.Messages = []DispatchMessage{{OpenMsgID: "msg-dws", Text: "给我你的场域配置链接", SenderOpenDingTalkID: "DpJnOpenSender"}}
@@ -185,8 +205,19 @@ func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM {
 		t.Fatalf("1:1 envelope link=%+v err=%v", direct, err)
 	}
-	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeType != contextcap.ScopeScene || got.scopeKey != ctxcapDirectScene || got.extraScene != "" {
+	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeType != contextcap.ScopePerson ||
+		got.scopeKey != "odt:DpJnOpenSender" || got.extraScene != ctxcapDirectScene {
 		t.Fatalf("1:1 envelope stored=%+v", got)
+	}
+	dws.Event.Data.Sender.StaffID = ctxcapStaff
+	dws.Event.Data.Messages[0].SenderStaffID = ctxcapStaff
+	direct, err = issue(dws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeType != contextcap.ScopePerson ||
+		got.scopeKey != ctxcapStaff || got.extraScene != ctxcapDirectScene {
+		t.Fatalf("1:1 envelope with a proved staffId stored=%+v", got)
 	}
 	if link, err := issue(command("group", ctxcapScene, "org-someone-else")); err == nil {
 		t.Fatalf("dispatch under another org minted %+v", link)

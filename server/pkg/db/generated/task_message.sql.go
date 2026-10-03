@@ -14,7 +14,7 @@ import (
 const createTaskMessage = `-- name: CreateTaskMessage :one
 INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, event
 `
 
 type CreateTaskMessageParams struct {
@@ -48,6 +48,51 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.Input,
 		&i.Output,
 		&i.CreatedAt,
+		&i.Event,
+	)
+	return i, err
+}
+
+const createTaskMessageEvent = `-- name: CreateTaskMessageEvent :one
+INSERT INTO task_message (task_id, seq, type, tool, content, input, output, event)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, event
+`
+
+type CreateTaskMessageEventParams struct {
+	TaskID  pgtype.UUID `json:"task_id"`
+	Seq     int32       `json:"seq"`
+	Type    string      `json:"type"`
+	Tool    pgtype.Text `json:"tool"`
+	Content pgtype.Text `json:"content"`
+	Input   []byte      `json:"input"`
+	Output  pgtype.Text `json:"output"`
+	Event   []byte      `json:"event"`
+}
+
+func (q *Queries) CreateTaskMessageEvent(ctx context.Context, arg CreateTaskMessageEventParams) (TaskMessage, error) {
+	row := q.db.QueryRow(ctx, createTaskMessageEvent,
+		arg.TaskID,
+		arg.Seq,
+		arg.Type,
+		arg.Tool,
+		arg.Content,
+		arg.Input,
+		arg.Output,
+		arg.Event,
+	)
+	var i TaskMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.Seq,
+		&i.Type,
+		&i.Tool,
+		&i.Content,
+		&i.Input,
+		&i.Output,
+		&i.CreatedAt,
+		&i.Event,
 	)
 	return i, err
 }
@@ -62,6 +107,45 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 	return err
 }
 
+const getTaskMessageBySeq = `-- name: GetTaskMessageBySeq :one
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, event FROM task_message WHERE task_id = $1 AND seq = $2
+ORDER BY created_at, id LIMIT 1
+`
+
+type GetTaskMessageBySeqParams struct {
+	TaskID pgtype.UUID `json:"task_id"`
+	Seq    int32       `json:"seq"`
+}
+
+func (q *Queries) GetTaskMessageBySeq(ctx context.Context, arg GetTaskMessageBySeqParams) (TaskMessage, error) {
+	row := q.db.QueryRow(ctx, getTaskMessageBySeq, arg.TaskID, arg.Seq)
+	var i TaskMessage
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.Seq,
+		&i.Type,
+		&i.Tool,
+		&i.Content,
+		&i.Input,
+		&i.Output,
+		&i.CreatedAt,
+		&i.Event,
+	)
+	return i, err
+}
+
+const getTaskMessageCursor = `-- name: GetTaskMessageCursor :one
+SELECT COALESCE(MAX(seq), 0)::int AS seq FROM task_message WHERE task_id = $1
+`
+
+func (q *Queries) GetTaskMessageCursor(ctx context.Context, taskID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, getTaskMessageCursor, taskID)
+	var seq int32
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const getTaskMessageSummary = `-- name: GetTaskMessageSummary :one
 SELECT
     COUNT(*)::int AS message_count,
@@ -69,12 +153,12 @@ SELECT
     (
         SELECT first_message.created_at
         FROM task_message AS first_message
-        WHERE first_message.task_id = $1
+        WHERE first_message.task_id = $1 AND first_message.type NOT IN ('status', 'log')
         ORDER BY first_message.seq ASC
         LIMIT 1
     )::timestamptz AS first_effective_reply_at
 FROM task_message
-WHERE task_id = $1
+WHERE task_id = $1 AND type NOT IN ('status', 'log')
 `
 
 type GetTaskMessageSummaryRow struct {
@@ -91,7 +175,7 @@ func (q *Queries) GetTaskMessageSummary(ctx context.Context, taskID pgtype.UUID)
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, event FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC
 `
@@ -115,6 +199,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.Event,
 		); err != nil {
 			return nil, err
 		}
@@ -127,7 +212,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 }
 
 const listTaskMessagesPage = `-- name: ListTaskMessagesPage :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, event FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 LIMIT $3
@@ -158,6 +243,7 @@ func (q *Queries) ListTaskMessagesPage(ctx context.Context, arg ListTaskMessages
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.Event,
 		); err != nil {
 			return nil, err
 		}
@@ -170,7 +256,7 @@ func (q *Queries) ListTaskMessagesPage(ctx context.Context, arg ListTaskMessages
 }
 
 const listTaskMessagesSince = `-- name: ListTaskMessagesSince :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, event FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 `
@@ -199,6 +285,64 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 			&i.Input,
 			&i.Output,
 			&i.CreatedAt,
+			&i.Event,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskRunEvents = `-- name: ListTaskRunEvents :many
+SELECT DISTINCT ON (seq) id, task_id, seq, type, tool, content, input, output, created_at, event FROM task_message
+WHERE task_id = $1 AND seq > $2
+AND (event IS NULL OR event->>'workspace_id' = $3::text)
+AND ($4::text = '' OR event->>'scene_id' = $4::text)
+AND ($5::text = '' OR event->'source'->>'session_id' = $5::text)
+ORDER BY seq, created_at, id
+LIMIT $6::int
+`
+
+type ListTaskRunEventsParams struct {
+	TaskID      pgtype.UUID `json:"task_id"`
+	Seq         int32       `json:"seq"`
+	WorkspaceID string      `json:"workspace_id"`
+	SceneID     string      `json:"scene_id"`
+	SessionID   string      `json:"session_id"`
+	PageLimit   int32       `json:"page_limit"`
+}
+
+func (q *Queries) ListTaskRunEvents(ctx context.Context, arg ListTaskRunEventsParams) ([]TaskMessage, error) {
+	rows, err := q.db.Query(ctx, listTaskRunEvents,
+		arg.TaskID,
+		arg.Seq,
+		arg.WorkspaceID,
+		arg.SceneID,
+		arg.SessionID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskMessage{}
+	for rows.Next() {
+		var i TaskMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.Seq,
+			&i.Type,
+			&i.Tool,
+			&i.Content,
+			&i.Input,
+			&i.Output,
+			&i.CreatedAt,
+			&i.Event,
 		); err != nil {
 			return nil, err
 		}

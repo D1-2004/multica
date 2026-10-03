@@ -12,11 +12,16 @@ package handler
 // DCR apps redirect to <production origin>/api/connectors/oauth/callback and reuse
 // one dynamic client registration per connector (connector_oauth_client),
 // registered with the client_name connectorOAuthClientName picks.
-// GitHub uses the deployment's GitHub App and its registered callback
-// <githubFrontend()>/api/github/authorize: its states carry the
-// connectorOAuthStatePrefix, and GitHubAuthorizeCallback hands those to
-// completeConnectorOAuth (Via connectorOAuthViaGitHub). States are 32 random
-// bytes, stored only as SHA-256 hashes, single use, valid for 10 minutes.
+// GitHub uses the deployment's GitHub App. The environment app starts at
+// the installation page (account, organization, all repositories or
+// selected repositories) and completes on the registered callback
+// <githubFrontend()>/api/github/authorize. A code returned with the
+// installation is exchanged without PKCE; a post-install redirect without
+// a code continues, on the same state, to the user authorization endpoint
+// with PKCE. States carry the connectorOAuthStatePrefix, and
+// GitHubAuthorizeCallback hands those to completeConnectorOAuth (Via
+// connectorOAuthViaGitHub). States are 32 random bytes, stored only as
+// SHA-256 hashes, single use, valid for 10 minutes.
 // A pre-release deployment sends both redirect URIs to the production
 // origin, which forwards the callbacks back
 // (internal_connector_oauth_forward.go); the state then also names the
@@ -28,12 +33,20 @@ package handler
 // sealed state records the nonce's hash; the callback refuses a state whose
 // cookie is missing or different. Without it, anyone who may start a
 // connect could send the provider authorize URL to a colleague, and the
-// colleague's account would be stored in the sender's scope. Every start
-// (workspace, scene and person scopes) binds the browser this way; there is
-// no link that binds whichever browser opens it. The desktop app, whose API
-// responses land in its own cookie jar, therefore never starts a connect: it
-// opens the web connectors page in the system browser, and the admin
-// connects there.
+// colleague's account would be stored in the sender's scope. Workspace
+// connects and every DCR connect bind the browser this way. The desktop
+// app, whose API responses land in its own cookie jar, therefore never
+// starts a connect: it opens the web connectors page in the system browser,
+// and the admin connects there.
+//
+// Scene and person GitHub App installs are the exception (Shareable). The
+// authorize link is meant to be opened on a phone that did not start it,
+// including by sharing the link. The state is still 32 random bytes, stored
+// only as a SHA-256 hash, single use, and valid for 10 minutes, and it
+// names the digital employee, tenant and scene on the server. Whoever
+// finishes it attaches their GitHub account to that scene. The callback
+// then returns to that scene's configure page with a signed, expiring
+// scene session so the page opens without a DingTalk login.
 
 import (
 	"context"
@@ -48,10 +61,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
@@ -86,6 +101,17 @@ const (
 	connectOAuthErrExchangeFailed  = "exchange_failed"
 	connectOAuthErrStoreFailed     = "store_failed"
 	connectOAuthErrOAuthNotEnabled = "oauth_unavailable"
+)
+
+const (
+	// connectorOAuthFlowInstall exchanges the code GitHub returns from the
+	// App installation page. That code is not PKCE. An empty AuthFlow is the
+	// legacy PKCE exchange.
+	connectorOAuthFlowInstall = "install"
+	// connectorOAuthFlowUser is the second hop: the installation page
+	// returned without a code, so the same state continues at the user
+	// authorization endpoint with PKCE.
+	connectorOAuthFlowUser = "user"
 )
 
 // connectorOAuthError is a start failure the API layer maps to Status.
@@ -149,9 +175,36 @@ type connectorOAuthCallback struct {
 	Code  string
 	// Error is the provider's "error" query parameter.
 	Error string
+	// InstallationID and SetupAction come from a GitHub App installation
+	// redirect (installation_id, setup_action=install|update). Zero and ""
+	// when the provider did not send a usable value.
+	InstallationID int64
+	SetupAction    string
 	// BrowserNonce is the value of the state's browser binding cookie
 	// ("" when the browser sent none).
 	BrowserNonce string
+}
+
+// parseConnectorOAuthInstallationID keeps a positive installation id and
+// drops anything else. The value is a number GitHub assigns; it is safe to
+// log.
+func parseConnectorOAuthInstallationID(raw string) int64 {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// parseConnectorOAuthSetupAction keeps only the two installation actions
+// GitHub documents. Anything else is ignored so it cannot be reflected.
+func parseConnectorOAuthSetupAction(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "install", "update":
+		return strings.TrimSpace(raw)
+	default:
+		return ""
+	}
 }
 
 // connectorOAuthOutcome is the result of completeConnectorOAuth.
@@ -169,6 +222,14 @@ type connectorOAuthOutcome struct {
 	// Discovered is the number of tools discovered right after connecting
 	// (0 when tools were already known or discovery failed).
 	Discovered int
+	// Continue means the callback is not finished. The browser goes to
+	// RedirectURL (the user authorization page) and the binding cookie
+	// stays, because the same state still has to complete.
+	Continue bool
+	// SceneSession is the signed configure-page token for a scene or person
+	// connect that finished. The callback sets it as a cookie and also puts
+	// it on the redirect. It is not logged.
+	SceneSession string
 }
 
 // startConnectorOAuth checks that in.UserID may connect an account for the
@@ -232,8 +293,9 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
 		}
 		// A GitHub App saved on the settings page registers the same console
-		// callback as every other app. The environment client keeps the
-		// GitHub App callback its existing registration already uses.
+		// callback as every other app and keeps the user authorize URL.
+		// The environment client starts at the installation page and
+		// completes on the GitHub App callback its registration already uses.
 		if ghClient.Source == connectorconfig.SourceWorkspace {
 			via = connectorOAuthViaDCR
 			homeOrigin, _ = h.connectorOAuthCallbackTarget(via)
@@ -283,19 +345,28 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		if ghClient.Source == connectorconfig.SourceWorkspace {
 			payload.Via = connectorOAuthViaDCR
 			payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
+			endpoint := ghClient.AuthorizationEndpoint
+			if endpoint == "" {
+				endpoint = app.AuthorizationEndpoint
+			}
+			requestedScope := ghClient.Scopes
+			if requestedScope == "" {
+				requestedScope = app.Scope
+			}
+			authorizeURL, err = githubConnectorAuthorizeURL(endpoint, ghClient.ClientID, requestedScope, payload.RedirectURI, state, verifier)
 		} else {
+			// Installation is where the person picks the account or
+			// organization and all repositories or selected repositories.
+			// The user authorize page cannot do that. An unset slug must
+			// not fall back to that page.
 			payload.Via = connectorOAuthViaGitHub
 			payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
+			payload.AuthFlow = connectorOAuthFlowInstall
+			authorizeURL, err = githubAppInstallAuthorizeURL(githubAppSlug(), state)
+			if err != nil {
+				return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, "github_app_slug_missing", "the GitHub App slug is not configured")
+			}
 		}
-		endpoint := ghClient.AuthorizationEndpoint
-		if endpoint == "" {
-			endpoint = app.AuthorizationEndpoint
-		}
-		requestedScope := ghClient.Scopes
-		if requestedScope == "" {
-			requestedScope = app.Scope
-		}
-		authorizeURL, err = githubConnectorAuthorizeURL(endpoint, ghClient.ClientID, requestedScope, payload.RedirectURI, state, verifier)
 	case connectorcatalog.AuthOAuthPreregistered:
 		payload.Via, payload.ClientID = connectorOAuthViaDCR, preregistered.ClientID
 		payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
@@ -329,6 +400,14 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		return connectorOAuthStarted{}, internalErr
 	}
 	payload.BrowserHash = hashConnectorOAuthState(nonce)
+	// A scene or person GitHub App install can be finished on a phone that
+	// did not start it. The reseal onto the user-authorization hop keeps
+	// this flag. Workspace installs and every DCR connect stay bound to the
+	// starting browser.
+	if payload.AuthFlow == connectorOAuthFlowInstall && payload.Via == connectorOAuthViaGitHub &&
+		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson) {
+		payload.Shareable = true
+	}
 	// The cookie belongs to this deployment's own origin (where the start
 	// response is served and a forwarded callback lands), never to the
 	// production callback origin a pre-release sends providers.
@@ -551,6 +630,9 @@ func (h *Handler) connectorOAuthReturnTo(ctx context.Context, raw string, scope 
 			}
 			return origin + path, nil
 		}
+		if scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson {
+			return sceneConfigureURL(origin, scope), nil
+		}
 		return origin + "/dingtalk/configure?agent=" + url.QueryEscape(scope.AgentID), nil
 	}
 	if len(raw) > connectorOAuthMaxReturnTo || strings.ContainsAny(raw, "\r\n\x00\\") {
@@ -579,6 +661,64 @@ func (h *Handler) connectorOAuthReturnTo(ctx context.Context, raw string, scope 
 
 // withOAuthResult sets one result parameter (connected / connect_error) on
 // a validated destination, dropping any earlier result parameters.
+// sceneConfigureURL is the configure page of one scene or person, including
+// the scope, so a phone that finishes GitHub has nothing in sessionStorage
+// and still lands on the chat that started the connect.
+func sceneConfigureURL(origin string, scope connectorOAuthScope) string {
+	query := url.Values{}
+	query.Set("agent", scope.AgentID)
+	if scope.OrgID != "" {
+		query.Set("org", scope.OrgID)
+	}
+	query.Set("scope_type", scope.ScopeType)
+	query.Set("scope_key", scope.ScopeKey)
+	return origin + "/dingtalk/configure?" + query.Encode()
+}
+
+// ensureScopeOnConfigureReturn fills a configure-page return that has no
+// scope_key with the scope the state stored. An existing scope_key is left
+// as the page sent it. Workspace and internal-connectors returns are left
+// alone.
+func ensureScopeOnConfigureReturn(destination string, scope connectorOAuthScope) string {
+	if (scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson) || scope.ScopeKey == "" || scope.AgentID == "" {
+		return destination
+	}
+	parsed, err := url.Parse(destination)
+	if err != nil || !strings.HasSuffix(parsed.Path, "/dingtalk/configure") {
+		return destination
+	}
+	query := parsed.Query()
+	if query.Get("scope_key") != "" {
+		return destination
+	}
+	if query.Get("agent") == "" {
+		query.Set("agent", scope.AgentID)
+	}
+	if query.Get("org") == "" && scope.OrgID != "" {
+		query.Set("org", scope.OrgID)
+	}
+	if query.Get("scope_type") == "" {
+		query.Set("scope_type", scope.ScopeType)
+	}
+	query.Set("scope_key", scope.ScopeKey)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func withSceneSession(destination, token string) string {
+	if token == "" {
+		return destination
+	}
+	parsed, err := url.Parse(destination)
+	if err != nil {
+		return destination
+	}
+	query := parsed.Query()
+	query.Set("scene_session", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
 func withOAuthResult(destination, key, value string) string {
 	u, err := url.Parse(destination)
 	if err != nil {
@@ -592,6 +732,61 @@ func withOAuthResult(destination, key, value string) string {
 	return u.String()
 }
 
+// connectorOAuthShareable reports whether this state may finish in a browser
+// that did not start it. The flag alone is not enough: the scope stored on
+// the row has to be a scene or a person, and the route has to be the GitHub
+// App callback.
+func connectorOAuthShareable(verifier connectorSealedVerifier, scope connectorOAuthScope) bool {
+	return verifier.Shareable && verifier.Via == connectorOAuthViaGitHub &&
+		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson)
+}
+
+// finishSceneConnectReturn sends a finished scene or person connect back to
+// its configure page and issues the signed page session. Workspace connects
+// get the connected parameter and no session.
+func (h *Handler) finishSceneConnectReturn(ctx context.Context, scope connectorOAuthScope, destination, slug string) (string, string) {
+	destination = ensureScopeOnConfigureReturn(destination, scope)
+	destination = withOAuthResult(destination, "connected", slug)
+	token := h.issueSceneConfigSession(ctx, scope)
+	if token == "" {
+		return destination, ""
+	}
+	return withSceneSession(destination, token), token
+}
+
+// issueSceneConfigSession grants the initiating user the scene or person for
+// the page TTL (a longer grant is kept) and signs the page session. The
+// token is the page opener; the OAuth state stays single use.
+func (h *Handler) issueSceneConfigSession(ctx context.Context, scope connectorOAuthScope) string {
+	if h == nil || h.DB == nil || (scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson) {
+		return ""
+	}
+	ttl := contextcap.LinkTTL(scope.ScopeType)
+	title := ""
+	if scope.ScopeType == contextcap.ScopeScene {
+		if loaded, err := contextcap.GetScene(ctx, h.DB, scope.WorkspaceID, scope.AgentID, scope.OrgID, scope.ScopeKey); err == nil {
+			title = agentSceneTitle(loaded)
+		}
+	}
+	if _, err := contextcap.UpsertGrant(ctx, h.DB, contextcap.Grant{
+		UserID: scope.UserID, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID,
+		ScopeType: scope.ScopeType, OrgID: scope.OrgID, ScopeKey: scope.ScopeKey, ScopeTitle: title,
+		Source: contextcap.GrantSourceAgentLink,
+	}, ttl); err != nil {
+		slog.WarnContext(ctx, "scene configure session: grant not stored", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "error", err)
+	}
+	token, err := auth.SignSceneSession(auth.SceneSession{
+		WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, OrgID: scope.OrgID,
+		ScopeType: scope.ScopeType, ScopeKey: scope.ScopeKey, UserID: scope.UserID,
+		ExpiresAt: time.Now().Add(auth.SceneSessionTTL).Unix(),
+	}, time.Now())
+	if err != nil {
+		slog.WarnContext(ctx, "scene configure session: could not sign", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "error", err)
+		return ""
+	}
+	return token
+}
+
 func randomOAuthValue() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -603,6 +798,18 @@ func randomOAuthValue() (string, error) {
 func hashConnectorOAuthState(state string) string {
 	sum := sha256.Sum256([]byte(state))
 	return hex.EncodeToString(sum[:])
+}
+
+// githubAppInstallAuthorizeURL is the GitHub App installation page for one
+// connect. state round-trips through GitHub onto the App's setup URL.
+// GitHub does not take redirect_uri or PKCE on this page; those stay sealed
+// for the code exchange and for the user-authorization hop.
+func githubAppInstallAuthorizeURL(slug, state string) (string, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" || strings.ContainsAny(slug, "/?#") {
+		return "", errors.New("github app slug is not configured")
+	}
+	return "https://github.com/apps/" + url.PathEscape(slug) + "/installations/new?state=" + url.QueryEscape(state), nil
 }
 
 func githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier string) (string, error) {
@@ -667,6 +874,15 @@ type connectorSealedVerifier struct {
 	RedirectURI string `json:"redirect_uri,omitempty"`
 	// BrowserHash is the SHA-256 (hex) of the browser binding nonce.
 	BrowserHash string `json:"browser_hash,omitempty"`
+	// AuthFlow is "" (PKCE, including states started by an older binary),
+	// connectorOAuthFlowInstall (exchange the installation code without
+	// PKCE) or connectorOAuthFlowUser (the second hop, with PKCE).
+	AuthFlow string `json:"auth_flow,omitempty"`
+	// Shareable is set only for a scene or person GitHub App install. That
+	// callback may finish in a browser that did not start it. Workspace
+	// connects and DCR connects leave it false and still require the
+	// browser binding cookie.
+	Shareable bool `json:"shareable,omitempty"`
 }
 
 func (h *Handler) sealConnectorOAuthVerifier(payload connectorSealedVerifier) ([]byte, error) {
@@ -734,16 +950,169 @@ func (h *Handler) consumeConnectorOAuthState(ctx context.Context, state string) 
 	return out, err
 }
 
+// peekConnectorOAuthState reads an unexpired, unconsumed state without
+// consuming it, or pgx.ErrNoRows. A GitHub installation redirect that has
+// no code yet must keep the state for the user-authorization hop.
+func (h *Handler) peekConnectorOAuthState(ctx context.Context, state string) (consumedConnectorOAuthState, error) {
+	out := consumedConnectorOAuthState{stateHash: hashConnectorOAuthState(state)}
+	var agentID *string
+	err := h.DB.QueryRow(ctx, `SELECT workspace_id::text, connector_id::text, agent_id::text, scope_type, org_id, scope_key, user_id::text, verifier_ciphertext, return_to
+		FROM connector_oauth_state
+		WHERE state_hash = $1 AND consumed_at IS NULL AND expires_at > now()`,
+		out.stateHash).Scan(&out.scope.WorkspaceID, &out.scope.ConnectorID, &agentID, &out.scope.ScopeType, &out.scope.OrgID,
+		&out.scope.ScopeKey, &out.scope.UserID, &out.verifier, &out.returnTo)
+	if agentID != nil {
+		out.scope.AgentID = *agentID
+	}
+	return out, err
+}
+
+// resealConnectorOAuthFlow stores payload on an unconsumed state. ok is
+// false when the state was consumed or expired between the peek and the
+// update.
+func (h *Handler) resealConnectorOAuthFlow(ctx context.Context, stateHash string, payload connectorSealedVerifier) (bool, error) {
+	sealed, err := h.sealConnectorOAuthVerifier(payload)
+	if err != nil {
+		return false, err
+	}
+	tag, err := h.DB.Exec(ctx, `UPDATE connector_oauth_state SET verifier_ciphertext = $2
+		WHERE state_hash = $1 AND consumed_at IS NULL AND expires_at > now()`, stateHash, sealed)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// connectorOAuthCredentialExists reports whether this scope already has a
+// connector credential. A post-install redirect with no code must not
+// replace that credential.
+func (h *Handler) connectorOAuthCredentialExists(ctx context.Context, scope connectorOAuthScope) (bool, error) {
+	if scope.ScopeType == connectorOAuthScopeWorkspace {
+		var ciphertext []byte
+		err := h.DB.QueryRow(ctx, `SELECT credential_ciphertext FROM internal_connector
+			WHERE id = $1::uuid AND workspace_id = $2::uuid`, scope.ConnectorID, scope.WorkspaceID).Scan(&ciphertext)
+		if err != nil {
+			return false, err
+		}
+		return len(ciphertext) > 0, nil
+	}
+	_, err := contextcap.GetCredential(ctx, h.DB, contextcap.CredentialBinding{
+		WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
+		ScopeType: scope.ScopeType, OrgID: scope.OrgID, ScopeKey: scope.ScopeKey,
+	})
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// githubInstallCallback is an installation-page return that carries no
+// authorization code: GitHub sent installation_id and setup_action, and
+// the connect still expects the installation flow.
+func githubInstallCallback(in connectorOAuthCallback, verifier connectorSealedVerifier) bool {
+	return in.Code == "" && in.Error == "" &&
+		in.Via == connectorOAuthViaGitHub &&
+		verifier.AuthFlow == connectorOAuthFlowInstall &&
+		(in.SetupAction == "install" || in.SetupAction == "update") &&
+		in.InstallationID > 0
+}
+
+// continueGitHubInstall handles that return. A scope that already has a
+// credential goes back to the configure page so the installation list
+// refreshes; the stored token is left as it is. A scope with no credential
+// keeps the state and continues to the user authorization endpoint.
+func (h *Handler) continueGitHubInstall(ctx context.Context, state consumedConnectorOAuthState, verifier connectorSealedVerifier, in connectorOAuthCallback, app connectorcatalog.App) connectorOAuthOutcome {
+	scope := state.scope
+	out := connectorOAuthOutcome{ConnectorID: scope.ConnectorID, ScopeType: scope.ScopeType, Slug: app.Slug}
+	fail := func(code string) connectorOAuthOutcome {
+		out.ErrorCode = code
+		out.RedirectURL = withOAuthResult(state.returnTo, "connect_error", code)
+		slog.InfoContext(ctx, "official app OAuth connect failed", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "user_id", scope.UserID, "error_code", code)
+		return out
+	}
+	consumeOrUnknown := func() bool {
+		if _, err := h.consumeConnectorOAuthState(ctx, in.State); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.ErrorContext(ctx, "connector OAuth state consume failed", "error", err)
+			}
+			return false
+		}
+		return true
+	}
+	exists, err := h.connectorOAuthCredentialExists(ctx, scope)
+	if err != nil {
+		slog.WarnContext(ctx, "github install callback: credential lookup failed", "connector_id", scope.ConnectorID, "error", err)
+		if !consumeOrUnknown() {
+			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+		}
+		return fail(connectOAuthErrExchangeFailed)
+	}
+	if exists {
+		if !consumeOrUnknown() {
+			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+		}
+		out.ErrorCode = ""
+		out.RedirectURL, out.SceneSession = h.finishSceneConnectReturn(ctx, scope, state.returnTo, app.Slug)
+		slog.InfoContext(ctx, "github install callback refreshed an existing connection", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "installation_id", in.InstallationID, "setup_action", in.SetupAction)
+		return out
+	}
+	client, clientErr := h.githubOAuthClient(ctx, scope.WorkspaceID)
+	if scene, own, sceneErr := h.sceneOAuthClient(ctx, connectorOAuthScopeBinding(scope), app); sceneErr != nil {
+		clientErr = sceneErr
+	} else if own {
+		client = scene
+	}
+	if clientErr != nil {
+		if !consumeOrUnknown() {
+			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+		}
+		return fail(connectOAuthErrExchangeFailed)
+	}
+	endpoint := client.AuthorizationEndpoint
+	if endpoint == "" {
+		endpoint = app.AuthorizationEndpoint
+	}
+	requestedScope := client.Scopes
+	if requestedScope == "" {
+		requestedScope = app.Scope
+	}
+	authorizeURL, err := githubConnectorAuthorizeURL(endpoint, verifier.ClientID, requestedScope, verifier.RedirectURI, in.State, verifier.Verifier)
+	if err != nil {
+		slog.WarnContext(ctx, "github install callback: user authorization URL failed", "connector_id", scope.ConnectorID, "error", err)
+		if !consumeOrUnknown() {
+			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+		}
+		return fail(connectOAuthErrExchangeFailed)
+	}
+	verifier.AuthFlow = connectorOAuthFlowUser
+	updated, err := h.resealConnectorOAuthFlow(ctx, state.stateHash, verifier)
+	if err != nil || !updated {
+		if err != nil {
+			slog.ErrorContext(ctx, "github install callback: could not keep the state", "connector_id", scope.ConnectorID, "error", err)
+		}
+		return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+	}
+	out.ErrorCode = ""
+	out.RedirectURL = authorizeURL
+	out.Continue = true
+	slog.InfoContext(ctx, "github install callback continues to user authorization", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "installation_id", in.InstallationID, "setup_action", in.SetupAction)
+	return out
+}
+
 // completeConnectorOAuth finishes a connect. See connectorOAuthOutcome for
 // the result; no error is returned because every failure becomes a
-// connect_error redirect (or an unknown-state outcome). The state is
-// consumed first, so a refused callback also burns it.
+// connect_error redirect (or an unknown-state outcome). A refused callback
+// burns the state. A GitHub installation return with no code does not,
+// when the scope still needs a user token: the same state continues.
 func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthCallback) connectorOAuthOutcome {
 	out := connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
 	if !validConnectorOAuthState(in.State) || h.InternalConnectorSecretBox == nil {
 		return out
 	}
-	state, err := h.consumeConnectorOAuthState(ctx, in.State)
+	state, err := h.peekConnectorOAuthState(ctx, in.State)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			slog.ErrorContext(ctx, "connector OAuth state lookup failed", "error", err)
@@ -758,13 +1127,24 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 		slog.InfoContext(ctx, "official app OAuth connect failed", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "user_id", scope.UserID, "error_code", code)
 		return out
 	}
+	// burn consumes the state, then reports code. A lost race has no
+	// trusted destination.
+	burn := func(code string) connectorOAuthOutcome {
+		if _, err := h.consumeConnectorOAuthState(ctx, in.State); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.ErrorContext(ctx, "connector OAuth state consume failed", "error", err)
+			}
+			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+		}
+		return fail(code)
+	}
 	c, err := h.loadInternalConnector(ctx, scope.WorkspaceID, scope.ConnectorID)
 	if err != nil {
-		return fail(connectOAuthErrConnectorGone)
+		return burn(connectOAuthErrConnectorGone)
 	}
 	app, ok := catalogApp(c.CatalogSlug)
 	if !ok || c.AuthMode != "oauth" {
-		return fail(connectOAuthErrConnectorGone)
+		return burn(connectOAuthErrConnectorGone)
 	}
 	out.Slug = app.Slug
 	wantVia := connectorOAuthViaDCR
@@ -776,7 +1156,7 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 			client = scene
 		}
 		if clientErr != nil {
-			return fail(connectOAuthErrExchangeFailed)
+			return burn(connectOAuthErrExchangeFailed)
 		}
 		if client.Source != connectorconfig.SourceWorkspace {
 			wantVia = connectorOAuthViaGitHub
@@ -784,23 +1164,45 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	}
 	verifier, ok := h.openConnectorOAuthVerifier(state.verifier, state.stateHash, scope.ConnectorID)
 	if !ok || in.Via != wantVia || verifier.Via != wantVia {
-		return fail(connectOAuthErrInvalidState)
+		return burn(connectOAuthErrInvalidState)
 	}
 	if _, err := normalizeConnectorOAuthScope(scope); err != nil {
-		return fail(connectOAuthErrInvalidState)
+		return burn(connectOAuthErrInvalidState)
 	}
-	// Only the browser that started the connect may complete it: the code
-	// must never land in another scope.
-	if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
-		!hmac.Equal([]byte(hashConnectorOAuthState(in.BrowserNonce)), []byte(verifier.BrowserHash)) {
-		return fail(connectOAuthErrBrowserMismatch)
+	// Only the browser that started the connect may complete it, except a
+	// scene or person GitHub App install, which is shareable on purpose.
+	// The state is still single use and expires.
+	if !connectorOAuthShareable(verifier, scope) {
+		if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
+			!hmac.Equal([]byte(hashConnectorOAuthState(in.BrowserNonce)), []byte(verifier.BrowserHash)) {
+			return burn(connectOAuthErrBrowserMismatch)
+		}
 	}
 	if in.Error == "access_denied" {
-		return fail(connectOAuthErrAccessDenied)
+		return burn(connectOAuthErrAccessDenied)
+	}
+	if githubInstallCallback(in, verifier) {
+		if err := h.authorizeConnectorOAuthScope(ctx, scope, c); err != nil {
+			return burn(connectOAuthErrForbidden)
+		}
+		return h.continueGitHubInstall(ctx, state, verifier, in, app)
 	}
 	if in.Error != "" || in.Code == "" {
 		slog.InfoContext(ctx, "official app provider returned an error", "connector_id", c.ID, "catalog_slug", app.Slug, "provider_error", contextcap.SanitizeAccount(in.Error))
-		return fail(connectOAuthErrProviderError)
+		return burn(connectOAuthErrProviderError)
+	}
+	consumed, err := h.consumeConnectorOAuthState(ctx, in.State)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.ErrorContext(ctx, "connector OAuth state consume failed", "error", err)
+		}
+		return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
+	}
+	// The ciphertext just consumed is the one to exchange with: a
+	// continuation may have resealed the flow after the peek.
+	verifier, ok = h.openConnectorOAuthVerifier(consumed.verifier, consumed.stateHash, scope.ConnectorID)
+	if !ok {
+		return fail(connectOAuthErrInvalidState)
 	}
 	if err := h.authorizeConnectorOAuthScope(ctx, scope, c); err != nil {
 		return fail(connectOAuthErrForbidden)
@@ -816,9 +1218,16 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if verifier.RedirectURI != "" {
 		endpoint.redirectURI = verifier.RedirectURI
 	}
+	// The installation page does not negotiate PKCE. A code it returns is
+	// exchanged without a verifier. The user-authorization hop and every
+	// older state still send one.
+	exchangeVerifier := verifier.Verifier
+	if verifier.AuthFlow == connectorOAuthFlowInstall {
+		exchangeVerifier = ""
+	}
 	exchangeCtx, cancel := context.WithTimeout(ctx, connectorOAuthHTTPTimeout)
 	defer cancel()
-	response, err := endpoint.client.ExchangeOAuthCode(exchangeCtx, endpoint.tokenURL, endpoint.resource, in.Code, endpoint.redirectURI, verifier.Verifier, endpoint.registration)
+	response, err := endpoint.client.ExchangeOAuthCode(exchangeCtx, endpoint.tokenURL, endpoint.resource, in.Code, endpoint.redirectURI, exchangeVerifier, endpoint.registration)
 	if err != nil {
 		slog.WarnContext(ctx, "official app OAuth code exchange failed", "connector_id", c.ID, "catalog_slug", app.Slug, "error", err)
 		return fail(connectOAuthErrExchangeFailed)
@@ -849,13 +1258,13 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 		out.Discovered = result.Discovered
 	}
 	out.ErrorCode = ""
-	out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
+	out.RedirectURL, out.SceneSession = h.finishSceneConnectReturn(ctx, scope, state.returnTo, app.Slug)
 	// A token of a scene's own application serves that scene only; the
 	// workspace's authorization instances hold the workspace client's.
 	if !endpoint.scene {
 		h.attachOAuthTokenToAuthInstance(ctx, scope.WorkspaceID, app.Slug, token.Account, token.AccessToken)
 	}
-	slog.InfoContext(ctx, "official app OAuth connected", "connector_id", c.ID, "catalog_slug", app.Slug, "scope_type", scope.ScopeType, "user_id", scope.UserID)
+	slog.InfoContext(ctx, "official app OAuth connected", "connector_id", c.ID, "catalog_slug", app.Slug, "scope_type", scope.ScopeType, "user_id", scope.UserID, "installation_id", in.InstallationID, "setup_action", in.SetupAction)
 	return out
 }
 

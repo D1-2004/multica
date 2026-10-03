@@ -27,25 +27,30 @@ type PacketHistory struct {
 // task text, not a source of permissions. Capabilities and ReturnAddress are Host
 // facts, never values copied from model tool arguments or user claims.
 type CompileInput struct {
-	Scope          Scope
-	PrincipalID    string
-	Definition     Definition
-	Prompt         string
-	Source         PacketMaterial
-	Corrections    []PacketMaterial
-	CompletedSteps []PacketMaterial
-	References     []PacketMaterial
-	History        PacketHistory
-	Capabilities   []string
-	ReturnAddress  string
+	Scope            Scope
+	PrincipalID      string
+	Definition       Definition
+	Prompt           string
+	Source           PacketMaterial
+	Corrections      []PacketMaterial
+	CompletedSteps   []PacketMaterial
+	References       []PacketMaterial
+	History          PacketHistory
+	Capabilities     []string
+	ReturnAddress    string
+	CompletionNotice CompletionNoticePolicy
+	// CompletionNoticeSource is the Host-verified original authorization when
+	// the current source inherits an earlier delivery constraint on this Task.
+	CompletionNoticeSource *PacketMaterial
 }
 
 // WorkPacket is deterministic compiler output. ContextUsed lists only refs that
 // were actually rendered, in first-use order; it is not a model's self-report.
 type WorkPacket struct {
-	Scope       Scope      `json:"scope"`
-	PrincipalID string     `json:"principal_id"`
-	Definition  Definition `json:"definition"`
-	Text        string     `json:"text"`
-	ContextUsed []string   `json:"context_used,omitempty"`
+	Scope            Scope                  `json:"scope"`
+	PrincipalID      string                 `json:"principal_id"`
+	Definition       Definition             `json:"definition"`
+	Text             string                 `json:"text"`
+	ContextUsed      []string               `json:"context_used,omitempty"`
+	CompletionNotice CompletionNoticePolicy `json:"completion_notice_policy"`
 }

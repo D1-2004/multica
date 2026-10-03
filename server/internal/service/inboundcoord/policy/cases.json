@@ -1654,6 +1654,16 @@
       "context_b": "同一会话里事件流短暂断开（重连、滚动发布）后几分钟内补到的消息，以及开启订阅之后新发的消息",
       "expected_effects": "前者确认并丢弃（sent_before_subscription / stale_message），不建 Coordinator 窗口、不回复；后者正常入窗回复；这是投递层新鲜度规则，不作为对话延续的时间阈值",
       "verification": "not_run"
+    },
+    {
+      "id": "f01_native_group_title_and_trigger_person",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "同一个人先在群里 @ 原生订阅的员工，再给员工发单聊；群名读取成功",
+      "context_b": "同一条群消息重投时群名读取失败或群已改名；或另一位成员在同一窗口里也 @ 了员工",
+      "expected_effects": "前者群场域以员工身份读到的群名命名，两次任务的个人层 key 都是该发言人的 staffId（本员工通讯录按 openDingTalkId 精确证明），跨组织或通讯录查不到时都是 odt:<openDingTalkId>；后者重投回放原受理（群名与 staffId 不计入指纹），读不到群名时照常派发、场域保留原名；多人合并窗口不带个人层；不从显示名或会话 ID 推断人",
+      "verification": "not_run"
     }
   ]
 }

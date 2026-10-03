@@ -209,6 +209,100 @@ export const ConnectorAuthorizeUrlSchema = z
   .transform((value) => safeExternalUrl(value.authorize_url))
   .pipe(z.string().min(1));
 
+/** One repository covered by a GitHub App installation. */
+export interface ContextGitHubRepository {
+  fullName: string;
+  private: boolean;
+}
+
+/** One GitHub App installation covered by a stored connector user token. */
+export interface ContextGitHubInstallation {
+  id: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: string;
+  settingsUrl: string;
+  repositories: ContextGitHubRepository[];
+  repositoryCount: number;
+  repositoriesTruncated: boolean;
+}
+
+/** Installations of the GitHub App for one scene, org, or person credential. */
+export interface ContextGitHubInstallations {
+  connected: boolean;
+  installations: ContextGitHubInstallation[];
+  /** "" | "reconnect" | "not_github_app_token", or another code the page treats as a failure. */
+  error: string;
+  truncated: boolean;
+  /** GitHub's installation total, or the number of objects read when GitHub omitted it. */
+  totalCount: number;
+  /** Objects dropped before display: suspended, id 0, or an unusable login. */
+  filteredCount: number;
+}
+
+export const EMPTY_CONTEXT_GITHUB_INSTALLATIONS: ContextGitHubInstallations = {
+  connected: false,
+  installations: [],
+  error: "malformed",
+  truncated: false,
+  totalCount: 0,
+  filteredCount: 0,
+};
+
+export const ContextGitHubInstallationsSchema = z
+  .object({
+    connected: z.boolean(),
+    installations: z
+      .array(
+        z.object({
+          id: z.number().int(),
+          account_login: z.string(),
+          account_type: z.string(),
+          repository_selection: z.string(),
+          settings_url: z.string(),
+          repositories: z
+            .array(
+              z.object({
+                full_name: z.string(),
+                private: z.boolean().optional().default(false),
+              }),
+            )
+            .optional()
+            .default([]),
+          repository_count: z.number().int().nonnegative().optional().default(0),
+          repositories_truncated: z.boolean().optional().default(false),
+        }),
+      )
+      .default([]),
+    error: z.string().optional().default(""),
+    truncated: z.boolean().optional().default(false),
+    total_count: z.number().int().nonnegative().optional().default(0),
+    filtered_count: z.number().int().nonnegative().optional().default(0),
+  })
+  .transform(
+    (value): ContextGitHubInstallations => ({
+      connected: value.connected,
+      installations: value.installations.map((item) => ({
+        id: item.id,
+        accountLogin: item.account_login,
+        accountType: item.account_type,
+        repositorySelection: item.repository_selection,
+        settingsUrl: safeExternalUrl(item.settings_url),
+        repositories: item.repositories.flatMap((repo) =>
+          repo.full_name.includes(" ") || repo.full_name === ""
+            ? []
+            : [{ fullName: repo.full_name, private: repo.private }],
+        ),
+        repositoryCount: item.repository_count,
+        repositoriesTruncated: item.repositories_truncated,
+      })),
+      error: value.error,
+      truncated: value.truncated,
+      totalCount: value.total_count,
+      filteredCount: value.filtered_count,
+    }),
+  );
+
 export interface InternalConnectorToolsRefresh {
   /** Tools the upstream server listed. */
   discovered: number;

@@ -51,9 +51,23 @@ func Compile(input CompileInput) (WorkPacket, error) {
 	default:
 		return WorkPacket{}, fmt.Errorf("%w: explicit history state is required", ErrInvalid)
 	}
+	noticeSourceRef := input.Source.Ref
+	if input.CompletionNoticeSource != nil {
+		if input.CompletionNotice.Mode != CompletionNoticeIfNotDelivered || strings.TrimSpace(input.CompletionNoticeSource.Body) == "" {
+			return WorkPacket{}, fmt.Errorf("%w: inherited notice requires original authorization material", ErrInvalid)
+		}
+		if err := validatePacketMaterial(input, *input.CompletionNoticeSource); err != nil {
+			return WorkPacket{}, err
+		}
+		noticeSourceRef = input.CompletionNoticeSource.Ref
+	}
+	input.CompletionNotice, err = NormalizeCompletionNoticePolicy(input.CompletionNotice, noticeSourceRef)
+	if err != nil {
+		return WorkPacket{}, err
+	}
 	input.Definition = definition
 	text, contextUsed := buildTaskExecutionPacketWithContext(input)
-	return WorkPacket{Scope: input.Scope, PrincipalID: input.PrincipalID, Definition: definition, Text: text, ContextUsed: contextUsed}, nil
+	return WorkPacket{Scope: input.Scope, PrincipalID: input.PrincipalID, Definition: definition, Text: text, ContextUsed: contextUsed, CompletionNotice: input.CompletionNotice}, nil
 }
 
 func validatePacketMaterial(input CompileInput, material PacketMaterial) error {

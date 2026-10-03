@@ -170,6 +170,38 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	homeGroup := f.insertScene(t, "org-home", "group", "cidHomeGroup", "Home", time.Hour)
 	annDM := f.insertScene(t, "org-home", "dm", "cidHomeDirect", "Ann", 2*time.Hour)
 	f.directSceneJob(t, "cidHomeDirect", annDM, "staff-ann", "Ann", "", 2*time.Hour)
+	// A DWS native subscription 1:1 chat names its sender only by the
+	// openDingTalkId the agent's account sees: that id is the person.
+	deeDM := f.insertScene(t, "org-home", "dm", "cidHomeNative", "Dee", 30*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNative", deeDM, "DopenDee", "DopenDee", "Dee", "org-home", 30*time.Minute)
+	// A native sender first seen by openDingTalkId only, whose staffId was
+	// proved later, is that staffId's person: one person, one entry.
+	annNative := f.insertScene(t, "org-home", "dm", "cidHomeNativeAnn", "Ann", 50*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNativeAnn", annNative, "DopenAnn", "DopenAnn", "Ann", "org-home", 50*time.Minute)
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn", "staff-ann"); err != nil {
+		t.Fatal(err)
+	}
+	if got, at, err := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn"); err != nil || got != "staff-ann" || at.IsZero() {
+		t.Fatalf("kept staff id = %q at %v %v", got, at, err)
+	}
+	if got, _, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-2", "DopenAnn"); got != "" {
+		t.Fatalf("another viewer's openDingTalkId resolved to %q", got)
+	}
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone", "staff-gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ForgetOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone"); got != "" {
+		t.Fatalf("a forgotten staff id is still kept: %q", got)
+	}
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenX", "odt:DopenX"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a prefixed staff id was kept: %v", err)
+	}
+	// Two openDingTalkIds that disagree name nobody.
+	eveDM := f.insertScene(t, "org-home", "dm", "cidHomeNativeEve", "Eve", 40*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNativeEve", eveDM, "DopenEve", "DopenOther", "Eve", "org-home", 40*time.Minute)
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, nil, []string{f.skillID}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +220,7 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := activity["org-home"]; got.GroupCount != 1 || got.PersonCount != 2 {
+	if got := activity["org-home"]; got.GroupCount != 1 || got.PersonCount != 3 {
 		t.Fatalf("org-home activity=%+v", got)
 	}
 	if got := activity["org-x"]; got.GroupCount != 2 || got.PersonCount != 1 {
@@ -199,11 +231,20 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	}
 
 	persons, err := ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-home", "org-home")
-	if err != nil || len(persons) != 2 {
+	if err != nil || len(persons) != 3 {
 		t.Fatalf("org-home persons=%+v err=%v", persons, err)
 	}
+	if dee, ok := FindPerson(persons, "odt:DopenDee"); !ok || dee.Title != "Dee" || dee.DMSceneID != deeDM {
+		t.Fatalf("dee=%+v", dee)
+	}
+	for _, key := range []string{"odt:DopenEve", "odt:DopenOther", "DopenDee", "odt:DopenAnn"} {
+		if _, ok := FindPerson(persons, key); ok {
+			t.Fatalf("%s listed: %+v", key, persons)
+		}
+	}
+	// Ann's newest 1:1 chat is the native one, now hers by the kept staffId.
 	ann, ok := FindPerson(persons, "staff-ann")
-	if !ok || ann.Title != "Ann" || ann.DMSceneID != annDM || ann.LastActiveAt.IsZero() {
+	if !ok || ann.Title != "Ann" || ann.DMSceneID != annNative || ann.LastActiveAt.IsZero() {
 		t.Fatalf("ann=%+v", ann)
 	}
 	if bo, ok := FindPerson(persons, "staff-bo"); !ok || bo.Title != "Bo" || bo.DMSceneID != "" {
@@ -231,15 +272,40 @@ func TestOrgActivityAndPersons(t *testing.T) {
 		t.Fatal(err)
 	}
 	persons, err = ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-home", "org-home")
-	if err != nil || len(persons) != 2 {
+	if err != nil || len(persons) != 3 {
 		t.Fatalf("org-home persons with an expired grant=%+v err=%v", persons, err)
 	}
 	if _, ok := FindPerson(persons, "staff-expired"); ok {
 		t.Fatal("a person known only from an expired grant is listed")
 	}
 	activity, err = ListAgentOrgActivity(ctx, f.tx, f.workspaceID, f.agentID, "org-home")
-	if err != nil || activity["org-home"].PersonCount != 2 {
+	if err != nil || activity["org-home"].PersonCount != 3 {
 		t.Fatalf("org-home activity with an expired grant=%+v err=%v", activity["org-home"], err)
+	}
+}
+
+// nativeDirectSceneJob plants a 1:1 Coordinator job as a DWS native
+// subscription dispatches it: the sender is named only by openDingTalkId.
+func (f storeFixture) nativeDirectSceneJob(t *testing.T, cid, sceneID, openID, senderOpenID, name, dispatchOrg string, age time.Duration) {
+	t.Helper()
+	command, err := json.Marshal(map[string]any{
+		"source":      map[string]any{"platform": "dingtalk", "type": "digital_employee"},
+		"agent_scene": map[string]any{"scene_id": sceneID},
+		"event": map[string]any{"data": map[string]any{
+			"conversation": map[string]any{"openConversationId": cid, "type": "single"},
+			"sender":       map[string]any{"displayName": name, "openDingTalkId": openID, "senderOpenDingTalkId": senderOpenID},
+		}},
+		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg, "uid": "viewer-1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.tx.Exec(context.Background(), `INSERT INTO inbound_coordinator_job
+		(acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, idempotency_key, command, chat_session_id, user_message_id, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', now() - make_interval(secs => $10::double precision))`,
+		uuid.NewString(), f.workspaceID, f.agentID, uuid.NewString(), uuid.NewString(), uuid.NewString(), command,
+		uuid.NewString(), uuid.NewString(), age.Seconds()); err != nil {
+		t.Fatal(err)
 	}
 }
 

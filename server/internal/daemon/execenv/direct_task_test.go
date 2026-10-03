@@ -16,3 +16,32 @@ func TestDirectTaskBriefAndContext(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectTaskBriefIsExecutionOnly(t *testing.T) {
+	ctx := TaskContextForEnv{
+		DirectTaskPrompt: "Execute task", AgentName: "Employee",
+		AgentInstructions: "ROLE_SENTINEL\nUser-authored multica issue instructions stay verbatim.\nSCENE_SENTINEL",
+		WorkspaceContext:  "WORKSPACE_SENTINEL",
+		AgentSkills:       []SkillContextForEnv{{Name: "domain-analysis"}},
+	}
+	for _, provider := range []string{"codex", "unknown"} {
+		got := buildMetaSkillContent(provider, ctx)
+		for _, forbidden := range []string{"# Multica Agent Runtime", "## Available Commands", "## Issue", "## Workflow", "## Repositories", "## Important: Always Use", "multica attachment upload", "multica issue comment add", "run result is text-only"} {
+			if strings.Contains(got, forbidden) {
+				t.Errorf("%s: Direct brief leaked %q", provider, forbidden)
+			}
+		}
+		for _, required := range []string{ctx.AgentInstructions, "WORKSPACE_SENTINEL", "final assistant output", "Background Task Safety"} {
+			if !strings.Contains(got, required) {
+				t.Errorf("%s: Direct brief lost %q", provider, required)
+			}
+		}
+		if provider == "unknown" && !strings.Contains(got, "domain-analysis") {
+			t.Fatal("fallback provider lost its skill index")
+		}
+	}
+	ctx.DirectTaskPrompt = ""
+	if got := buildMetaSkillContent("codex", ctx); !strings.Contains(got, "# Multica Agent Runtime") || !strings.Contains(got, "## Available Commands") {
+		t.Fatal("ordinary task lost platform brief")
+	}
+}

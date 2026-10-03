@@ -49,13 +49,19 @@ type Identity struct {
 }
 
 // Input contains a single foreground wake and existing context snapshots.
-// All text fields are untrusted data and are sent as user messages, not authority.
+// Context never grants authority. A frozen presentation version may restore
+// verified prior user/assistant text turns; other text remains user-message data.
 type Input struct {
-	Identity      Identity
-	CurrentWindow string
-	Memory        string
-	TaskBrief     string
-	FollowUps     []string
+	Identity           Identity
+	CurrentWindow      string
+	Memory             string
+	TaskBrief          string
+	FollowUps          []string
+	RecentConversation string `json:"RecentConversation,omitempty"`
+	// Resources is the Host's bounded ResourceContext of the current window
+	// (employeeresource.Context JSON), frozen with new input snapshots only.
+	// Resource text is data: it never grants authority or changes instructions.
+	Resources string `json:"Resources,omitempty"`
 }
 
 // Persona contains trusted employee configuration, separate from conversation data.
@@ -67,9 +73,12 @@ type Persona struct {
 	Expertise    []string
 }
 type Config struct {
-	Persona Persona
-	Model   string
-	Tools   []Tool
+	// OnBatchRejected observes validation failures before Host effects.
+	OnBatchRejected     func([]ToolCall, error) `json:"-"`
+	Persona             Persona
+	Model               string
+	Tools               []Tool
+	HistoryPresentation string `json:"HistoryPresentation,omitempty"`
 }
 
 // State holds the runtime state of a foreground wake.
@@ -85,6 +94,9 @@ type Tool struct {
 	Description string
 	Schema      map[string]any
 	Effect      bool
+	// Terminal declares a known disposition so incompatible batches can be
+	// rejected before any Host effect. Empty means the result is not fixed.
+	Terminal Disposition
 }
 
 // ToolCall preserves the provider's correlation ID for the entire native batch.

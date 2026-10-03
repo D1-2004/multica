@@ -539,6 +539,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
 	h.RunnerRelay = opts.RunnerRelay
+	h.TaskRunEventsEnabled = os.Getenv("MULTICA_TASK_RUN_EVENTS_ENABLED") == "1"
 	if setter, ok := opts.RunnerRelay.(interface {
 		SetRunnerMachineDeliverer(realtime.RunnerMachineDeliverer)
 	}); ok {
@@ -953,9 +954,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
-	employeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
+	// Only snapshots created before model routing retain the old transport.
+	// Every new Employee wake freezes the Coordinator registry's effective chain.
+	legacyEmployeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
 	h.EmployeeMemory = employeememory.NewStore(pool)
-	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, employeeModel)
+	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
+	h.EmployeeSceneWorker.ModelRoutes = h.Models
+	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
 			return errors.New("employee replica capability verification is unavailable")
@@ -965,13 +970,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:2")
+			return errors.New("live server replicas do not all support employee-loop:12")
 		}
 		return nil
 	}
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
+	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {
@@ -1057,6 +1063,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				slog.Error("DWS native subscription source disabled", "event", "dws_native_source_disabled", "error", err)
 			} else {
 				h.DWSNativeEvents = nativeSource
+				// Native IM events carry no group title: read it as the identity
+				// sees the group, through the same sessions as its stream.
+				h.DWSNativeConversationTitle = func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error) {
+					return native.ConversationTitle(ctx, id, mint, conversationID)
+				}
+				// Native events name the sender only by openDingTalkId: its
+				// staffId comes from the identity's own address book.
+				h.DWSNativeStaffID = func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error) {
+					return native.StaffID(ctx, id, mint, openDingTalkID, names, conversationID)
+				}
 			}
 		}
 	}
@@ -1104,7 +1120,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.TaskCompletionWorker.ResponseActions = h
 		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
-		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeRunNoticeSend
+		// Stall notices pass their own BeforeSend re-check; everything else keeps
+		// the Run notice gate. Wired on every replica so a notice queued by a
+		// new replica is never sent unchecked by any other.
+		employeeWatchdog := &service.EmployeeWatchdog{DB: pool, Targets: h, Outbox: h.DingTalkResponses}
+		if opts.RuntimeConfig != nil {
+			employeeWatchdog.LoadConfig = opts.RuntimeConfig.employeeWatchdog
+		}
+		if h.EmployeeSceneWorker != nil {
+			employeeWatchdog.Ready = h.EmployeeSceneWorker.ReplicaReady
+		}
+		h.EmployeeWatchdog = employeeWatchdog
+		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeResponseSend(employeeWatchdog)
 		h.EmployeeRunNoticeArtifacts = h.ListEmployeeTaskArtifacts
 		// Native dispatches complete to their own target. The worker exists
 		// whenever managed responses do, so queued native callbacks drain
@@ -2203,6 +2230,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		githubAuthorize(w, req)
 	})
+	// The configure page exchanges the signed token on a GitHub return for a
+	// cookie. No Multica session: the token is the proof, and a bad one is 400.
+	r.Post("/api/scene-config/session", h.OpenSceneConfigSession)
 	// Official app OAuth callback for dynamically registered clients (Notion,
 	// Linear, ...). No Multica session: the single-use state and the browser
 	// binding cookie set by the start response are the proof. Provider
@@ -2293,6 +2323,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/a2a-control", h.ControlA2ATask)
 		r.Get("/tasks/{taskId}/a2a-attachments/{attachmentId}", h.DownloadDaemonA2AAttachment)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Get("/tasks/{taskId}/events", h.ListDaemonTaskRunEvents)
 		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 
@@ -2381,7 +2412,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the agent (workspace owner/admin or agent owner); plain workspace
 		// membership grants nothing.
 		r.Route("/api/context-capabilities", func(r chi.Router) {
-			r.Use(handler.RequireDingTalkHumanActor)
+			r.Use(handler.RequireConfigPageActor)
 			r.Post("/links/redeem", h.RedeemContextConfigLink)
 			r.Get("/agents", h.ListContextConfigAgents)
 			r.Get("/agents/{agentId}", h.GetContextConfigAgent)
@@ -2391,6 +2422,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+			r.Get("/agents/{agentId}/github-installations", h.ListContextConfigGitHubInstallations)
 			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
 			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
 			// Official apps added and connected from the page.
@@ -2834,7 +2866,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// User-readable task artifacts plus the task-token-only DSH upload.
 			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/events", h.ListTaskRunEventsByUser)
 			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
+			r.With(handler.RequireHumanActor).Post("/api/employee-tasks/{id}/steer", h.SteerEmployeeTask)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
 			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
 			r.Get("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.GetDSHSchedule)
@@ -3091,6 +3125,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/github-installations", h.ListAgentGitHubInstallations)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.ListAgentContextRoutines)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.CreateAgentContextRoutine)

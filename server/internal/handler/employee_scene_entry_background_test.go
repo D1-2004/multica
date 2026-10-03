@@ -20,7 +20,7 @@ func TestEmployeeSceneBackgroundReconcilesRunsButGatesNotices(t *testing.T) {
 		default:
 		}
 		if !ready.Load() {
-			return errors.New("live replica lacks employee-loop:2")
+			return errors.New("live replica lacks employee-loop:4")
 		}
 		return nil
 	}

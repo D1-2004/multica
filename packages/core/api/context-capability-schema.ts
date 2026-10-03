@@ -367,6 +367,9 @@ export const ContextConfigRedeemSchema = z
     scope_key: text,
     scope_title: text,
     org_id: orgIdOf,
+    // The link was already spent when this arrives: a malformed value is no
+    // scene rather than a lost redemption.
+    extra_scene_id: z.unknown().transform((value) => (typeof value === "string" ? value.trim() : "")),
   })
   .transform(
     (value): ContextConfigRedeemResult => ({
@@ -376,6 +379,7 @@ export const ContextConfigRedeemSchema = z
       scopeKey: value.scope_key,
       scopeTitle: value.scope_title,
       orgId: value.org_id,
+      extraSceneId: value.extra_scene_id,
     }),
   );
 
@@ -386,6 +390,7 @@ export const EMPTY_CONTEXT_CONFIG_REDEEM: ContextConfigRedeemResult = {
   scopeKey: "",
   scopeTitle: "",
   orgId: "",
+  extraSceneId: "",
 };
 
 const AgentSummaryWireSchema = z.object({

@@ -39,6 +39,7 @@ const api = vi.hoisted(() => ({
   deleteSceneRoutine: vi.fn(),
   runSceneRoutine: vi.fn(),
   rotateSceneRoutineWebhook: vi.fn(),
+  listContextGitHubInstallations: vi.fn(),
 }));
 
 const { ApiError, errorCode } = vi.hoisted(() => {
@@ -215,6 +216,12 @@ beforeEach(() => {
   api.getContextConfigAgent.mockResolvedValue(agentDetail());
   api.getContextConfigScene.mockResolvedValue(sceneDetail);
   api.listSceneRoutines.mockResolvedValue([]);
+  api.listContextGitHubInstallations.mockResolvedValue({
+    connected: true,
+    installations: [],
+    error: "",
+    truncated: false,
+  });
   api.setContextCapabilityBinding.mockImplementation(
     async (
       _agentId: string,
@@ -304,13 +311,16 @@ describe("ContextConfigPage", () => {
     expect(onAuthRequired).not.toHaveBeenCalled();
   });
 
-  it("explains an expired link and still lists existing access", async () => {
+  it("shows only how to get a new link when the link is no longer valid", async () => {
     api.redeemContextConfigLink.mockRejectedValue(new ApiError("gone", 410));
-    api.listContextConfigAgents.mockResolvedValue([]);
     renderPage({ linkToken: "old" });
 
     expect(await screen.findByText(copy.link_expired)).toBeInTheDocument();
-    expect(await screen.findByText(copy.no_access_title)).toBeInTheDocument();
+    // No other page: no agents are listed, nothing else renders.
+    expect(api.listContextConfigAgents).not.toHaveBeenCalled();
+    expect(screen.queryByText(copy.no_access_title)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
   it("explains a personal link whose scope already belongs to another account", async () => {
@@ -907,13 +917,12 @@ describe("ContextConfigPage", () => {
       expect(within(dialog).getByText(copy.connect_required)).toBeInTheDocument();
       // OAuth connectors never show the raw Bearer input.
       expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
-      expect(within(dialog).getByRole("link", { name: copy.install_link })).toHaveAttribute(
-        "href",
-        githubConnector.installUrl,
-      );
+      expect(within(dialog).getByText(copy.install_hint)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("link", { name: copy.install_link })).not.toBeInTheDocument();
+      expect(api.listContextGitHubInstallations).not.toHaveBeenCalled();
       expect(within(dialog).getByText("get_me")).toBeInTheDocument();
 
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
 
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith(
@@ -940,11 +949,119 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Sales team" });
       const dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_failed));
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
-      expect(within(dialog).getByRole("button", { name: copy.connect })).toBeEnabled();
+      expect(within(dialog).getByRole("button", { name: copy.connect_github })).toBeEnabled();
+    });
+
+    it("lists GitHub App installations covered by the one authorization", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          person: {
+            ...person,
+            bindings: [connectorOn("conn-github")],
+            credentials: [{ connectorId: "conn-github", hint: "@dingtalk-fde", updatedAt: "", kind: "oauth" }],
+          },
+        }),
+      );
+      api.listContextGitHubInstallations.mockResolvedValue({
+        connected: true,
+        installations: [
+          {
+            id: 1,
+            accountLogin: "dingtalk-fde",
+            accountType: "User",
+            repositorySelection: "all",
+            settingsUrl: "https://github.com/settings/installations/1",
+          },
+          {
+            id: 2,
+            accountLogin: "acme",
+            accountType: "Organization",
+            repositorySelection: "selected",
+            settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+            repositories: [
+              { fullName: "acme/one", private: false },
+              { fullName: "acme/two", private: true },
+              { fullName: "acme/three", private: false },
+            ],
+            repositoryCount: 3,
+            repositoriesTruncated: false,
+          },
+        ],
+        error: "",
+        truncated: false,
+      });
+      api.startContextConnectorConnection.mockResolvedValue(
+        "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.y",
+      );
+      const openAuthorizeUrl = vi.fn();
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl });
+
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
+      const region = await screen.findByRole("region", { name: "Alice" });
+      const dialog = await openConnector(user, region, "GitHub");
+
+      expect(await within(dialog).findByText("@dingtalk-fde")).toBeInTheDocument();
+      expect(within(dialog).getByText("@acme")).toBeInTheDocument();
+      expect(dialog).toHaveTextContent(copy.install_covers);
+      expect(dialog).toHaveTextContent(copy.install_org);
+      expect(dialog).toHaveTextContent(copy.install_all);
+      expect(dialog).toHaveTextContent(copy.install_selected);
+      expect(dialog).toHaveTextContent("acme/one");
+      expect(dialog).toHaveTextContent("acme/two");
+      expect(dialog).toHaveTextContent("acme/three");
+      expect(dialog).toHaveTextContent(copy.install_repo_private);
+      expect(
+        within(dialog)
+          .getAllByRole("link", { name: copy.install_settings })
+          .map((link) => link.getAttribute("href")),
+      ).toContain("https://github.com/organizations/acme/settings/installations/2");
+      await user.click(within(dialog).getByRole("button", { name: copy.install_add }));
+      await waitFor(() =>
+        expect(openAuthorizeUrl).toHaveBeenCalledWith(
+          "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.y",
+          { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1" },
+        ),
+      );
+      expect(api.listContextGitHubInstallations).toHaveBeenCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        "conn-github",
+      );
+    });
+
+    it("says no repositories are selected when the GitHub App is not installed", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          person: {
+            ...person,
+            bindings: [connectorOn("conn-github")],
+            credentials: [{ connectorId: "conn-github", hint: "@xdxer", updatedAt: "", kind: "oauth" }],
+          },
+        }),
+      );
+      api.listContextGitHubInstallations.mockResolvedValue({
+        connected: true,
+        installations: [],
+        error: "",
+        truncated: false,
+        totalCount: 0,
+        filteredCount: 0,
+      });
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
+
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
+      const region = await screen.findByRole("region", { name: "Alice" });
+      const dialog = await openConnector(user, region, "GitHub");
+
+      expect(await within(dialog).findByText(copy.install_empty)).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: copy.install_add })).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent(copy.install_covers);
     });
 
     it("shows the connected account and disconnects only after confirmation", async () => {
@@ -1116,11 +1233,11 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Sales team" });
       const dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith(copy.connect_unavailable_pat.replace("{{name}}", "GitHub")),
       );
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_forbidden));
       expect(toast.error).not.toHaveBeenCalledWith(copy.connect_failed);
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
@@ -1712,7 +1829,7 @@ describe("ContextConfigPage", () => {
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
       dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=x", {
           agentId: "agent-1",
@@ -1728,6 +1845,43 @@ describe("ContextConfigPage", () => {
         connectorId: "conn-github",
       });
     });
+  });
+
+  it("opens the 1:1 chat a personal link came from, not another one its manager sees", async () => {
+    const otherDM = "33333333-3333-4333-8333-333333333333";
+    const ownDM = "44444444-4444-4444-8444-444444444444";
+    const dmScene = (scopeKey: string, scopeTitle: string, source: string) => ({
+      scopeKey,
+      scopeTitle,
+      source,
+      expiresAt: "",
+      kind: "dm" as const,
+      orgId: "",
+    });
+    const detail = agentDetail({
+      access: "manager",
+      person: { ...agentDetail().person!, scopeKey: "odt:DpJnOpenSender", scopeTitle: "冬翔" },
+      scenes: [dmScene(otherDM, "Bob", "manager"), dmScene(ownDM, "冬翔", "agent_link"), dmScene(otherDM.replace("3333-4", "3333-5"), "Cy", "manager")],
+    });
+    api.getContextConfigAgent.mockResolvedValue(detail);
+    api.redeemContextConfigLink.mockResolvedValue({
+      agentId: "agent-1",
+      workspaceId: "ws-1",
+      scopeType: "person",
+      scopeKey: "odt:DpJnOpenSender",
+      scopeTitle: "冬翔",
+      orgId: "",
+      extraSceneId: ownDM,
+    });
+    const user = userEvent.setup();
+    const onBind = vi.fn();
+    renderPage({ linkToken: "dm-link", onBind });
+
+    const levels = await screen.findByRole("tablist", { name: copy.levels_aria });
+    await user.click(within(levels).getByRole("tab", { name: copy.level_scene }));
+    await waitFor(() => expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", ownDM, expect.anything()));
+    expect(api.getContextConfigScene).not.toHaveBeenCalledWith("agent-1", otherDM, expect.anything());
+    expect(onBind).toHaveBeenCalledWith(expect.objectContaining({ scopeType: "person", extraSceneId: ownDM }));
   });
 
   it("lets a person with several agents choose one", async () => {
@@ -1916,7 +2070,7 @@ describe("bound configuration page", () => {
 
     const region = await screen.findByRole("region", { name: "Alice" });
     const dialog = await openConnector(user, region, "GitHub");
-    await user.click(within(dialog).getByRole("button", { name: copy.connect }));
+    await user.click(within(dialog).getByRole("button", { name: copy.connect_github }));
     await waitFor(() =>
       expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
         scopeType: "person",

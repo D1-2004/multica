@@ -101,6 +101,21 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// CONFLICT arbiters).
 	"9521_context_scope_routine_autopilot_idx":    cleanupInvalidConcurrentIndexHook("context_scope_routine_autopilot_idx"),
 	"9522_context_scope_routine_scene_dedupe_idx": cleanupInvalidConcurrentIndexHook("context_scope_routine_scene_dedupe_idx"),
+	// EmployeeTask lifecycle v2: one wait per task kind/ref, and at most one
+	// goal completion per goal revision.
+	"9902_employee_task_wait_id_idx":          cleanupInvalidConcurrentIndexHook("employee_task_wait_id_idx"),
+	"9903_employee_task_wait_ref_idx":         cleanupInvalidConcurrentIndexHook("employee_task_wait_ref_idx"),
+	"9904_employee_task_entry_completion_idx": cleanupInvalidConcurrentIndexHook("employee_task_entry_completion_idx"),
+	// Cross-scene collection ledger (taskinput): ids, one collection per task
+	// source, one invitation per slot, one input per source and version, and
+	// one ready intent per collection revision (ON CONFLICT arbiters).
+	"9921_employee_task_collection_id_idx":     cleanupInvalidConcurrentIndexHook("employee_task_collection_id_idx"),
+	"9922_employee_task_collection_source_idx": cleanupInvalidConcurrentIndexHook("employee_task_collection_source_idx"),
+	"9923_employee_task_invitation_id_idx":     cleanupInvalidConcurrentIndexHook("employee_task_invitation_id_idx"),
+	"9924_employee_task_invitation_slot_idx":   cleanupInvalidConcurrentIndexHook("employee_task_invitation_slot_idx"),
+	"9926_employee_task_input_source_idx":      cleanupInvalidConcurrentIndexHook("employee_task_input_source_idx"),
+	"9927_employee_task_input_version_idx":     cleanupInvalidConcurrentIndexHook("employee_task_input_version_idx"),
+	"9928_employee_task_ready_intent_idx":      cleanupInvalidConcurrentIndexHook("employee_task_ready_intent_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

@@ -178,7 +178,7 @@ func (s *IssueCommentService) ProcessCoordinatorFollowUp(ctx context.Context) (b
 			rows.Close()
 			return false, err
 		}
-		itemScope := string(envelope["external_identity"]) + "|" + string(data.Conversation) + "|" + string(envelope["dispatch_endpoint_id"])
+		itemScope := string(envelope["external_identity"]) + "|" + followUpConversationScope(data.Conversation) + "|" + string(envelope["dispatch_endpoint_id"])
 		if len(ids) > 0 && itemScope != scope {
 			break
 		}
@@ -393,4 +393,19 @@ func tryClaimCoordinatorFollowUpIssue(ctx context.Context, outer pgx.Tx, workspa
 		return db.Issue{}, false, err
 	}
 	return issue, true, nil
+}
+
+// followUpConversationScope is the conversation a follow-up belongs to: its
+// openConversationId and type. The title is left out: a rename, or a native
+// delivery whose title could not be read, does not split one conversation's
+// follow-ups. A conversation that does not decode keeps its raw JSON.
+func followUpConversationScope(raw json.RawMessage) string {
+	var conversation struct {
+		OpenConversationID string `json:"openConversationId"`
+		Type               string `json:"type"`
+	}
+	if json.Unmarshal(raw, &conversation) != nil {
+		return string(raw)
+	}
+	return strings.TrimSpace(conversation.OpenConversationID) + "\x00" + strings.TrimSpace(conversation.Type)
 }

@@ -57,6 +57,10 @@ func (h *Handler) captureEmployeeRunCandidate(ctx context.Context, tx pgx.Tx, c 
 		return employeelearning.Result{}, err
 	}
 	execution, valid := service.ParseDirectTaskContext(queue)
+	// Automation is not a requester-private human learning source.
+	if (valid && execution.AutomationOrigin != nil) || service.IsAutomationRequesterRef(c.RequesterRef) {
+		return skip("automation_origin")
+	}
 	if !valid || execution.EmployeeTaskID != c.TaskID || execution.WorkspaceID != c.Scope.WorkspaceID || queue.AgentID != agent {
 		return skip("execution_scope_mismatch")
 	}

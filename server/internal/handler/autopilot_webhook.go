@@ -431,21 +431,48 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	envelopeBytes, err := json.Marshal(envelope)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode envelope")
-		return
-	}
-	// 6. Provider + dedupe + signature.
+	// 6. Provider event id.
 	provider := trigRow.Provider
 	if provider == "" {
 		provider = "generic"
 	}
 	dedupeKey, dedupeSource := extractDedupeKey(provider, r.Header)
+	if dedupeKey != "" && !validWebhookEventID(dedupeKey) {
+		writeError(w, http.StatusBadRequest, "invalid event id header")
+		return
+	}
+	// 7. Signature over the raw bytes, decided before event identity.
 	sigStatus := verifyWebhookSignatureForProvider(provider, trigRow.SigningSecret.String, r.Header, body)
+	signatureFailed := sigStatus == sigStatusInvalid || sigStatus == sigStatusMissing
 
-	// 7. Persist (INSERT delivery). Dedupe collision → bump existing row.
-	delivery, dup, err := h.persistInboundDelivery(r, persistDeliveryInput{
+	// 8. Binding from PostgreSQL and the effective payload digest.
+	binding, bindingProblem, err := h.resolveWebhookEndpointBinding(r.Context(), autopilot, trigRow.ID, provider, trigRow.SigningSecret.String)
+	if err != nil {
+		slog.Error("webhook: resolve endpoint binding failed",
+			"error", err,
+			"trigger_id", uuidToString(trigRow.ID),
+		)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	bindingJSON, err := json.Marshal(binding)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	digest, err := webhookSourceDigest(envelope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// 9. Persist (INSERT delivery + frozen source). Event id collision →
+	//    duplicate or conflict.
+	status := deliveryStatusQueued
+	if signatureFailed {
+		status = deliveryStatusRejected
+	}
+	delivery, outcome, err := h.persistInboundDelivery(r, persistDeliveryInput{
 		WorkspaceID:     autopilot.WorkspaceID,
 		AutopilotID:     autopilot.ID,
 		TriggerID:       trigRow.ID,
@@ -454,9 +481,11 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		DedupeKey:       dedupeKey,
 		DedupeSource:    dedupeSource,
 		SignatureStatus: sigStatus,
+		Status:          status,
 		ContentType:     envelope.Request.ContentType,
 		RawBody:         body,
 		SelectedHeaders: selectedHeadersJSON(r.Header),
+		Frozen:          webhookFrozenColumns{Digest: digest, SecretRevision: binding.SecretRevision, Binding: bindingJSON},
 	})
 	if err != nil {
 		slog.Error("webhook: persist delivery failed",
@@ -466,7 +495,44 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if dup {
+
+	// Every answer from here on is about a persisted delivery; log it with
+	// ids, identity and route only.
+	respond := func(code int, body map[string]any) {
+		logWebhookOutcome(r.Context(), delivery, binding, digest, code, body)
+		writeJSON(w, code, body)
+	}
+
+	// Signature failure → rejected delivery + 401. No dispatch, no replay.
+	// Providers will look for 4xx feedback when their secret is wrong.
+	if signatureFailed {
+		reason := "invalid_signature"
+		if sigStatus == sigStatusMissing {
+			reason = "missing_signature"
+		}
+		respBody := map[string]any{
+			"status":      "rejected",
+			"delivery_id": uuidToString(delivery.ID),
+			"reason":      reason,
+		}
+		if ip != "" && h.WebhookIPRateLimiter != nil {
+			h.WebhookIPRateLimiter.Allow(r.Context(), ip)
+		}
+		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusRejected, http.StatusUnauthorized, respBody, reason)
+		respond(http.StatusUnauthorized, respBody)
+		return
+	}
+
+	if outcome == persistConflict {
+		// The event id was accepted before with a different effective
+		// payload. The refused attempt stays visible as a rejected delivery;
+		// the accepted one and its run are untouched.
+		code, respBody := webhookConflictResponse(delivery.ID)
+		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusRejected, code, respBody, webhookEventIDConflict)
+		respond(code, respBody)
+		return
+	}
+	if outcome == persistDuplicate {
 		// A previous delivery already covered this dedupe key. Return the
 		// original delivery_id + admitted run_id with 200 so the caller can
 		// correlate. The delivery row is not linked until worker completion,
@@ -497,54 +563,40 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		if delivery.Status == deliveryStatusQueued && h.WebhookDeliveryWorker != nil {
 			h.WebhookDeliveryWorker.Notify()
 		}
-		writeJSON(w, http.StatusOK, resp)
+		respond(http.StatusOK, resp)
 		return
 	}
 
-	// 8. Signature failure → rejected delivery + 401. No dispatch, no replay.
-	//    Providers will look for 4xx feedback when their secret is wrong.
-	if sigStatus == sigStatusInvalid || sigStatus == sigStatusMissing {
-		reason := "invalid_signature"
-		if sigStatus == sigStatusMissing {
-			reason = "missing_signature"
-		}
-		respBody := map[string]any{
-			"status":      "rejected",
-			"delivery_id": uuidToString(delivery.ID),
-			"reason":      reason,
-		}
-		if ip != "" && h.WebhookIPRateLimiter != nil {
-			h.WebhookIPRateLimiter.Allow(r.Context(), ip)
-		}
-		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusRejected, http.StatusUnauthorized, respBody, reason)
-		writeJSON(w, http.StatusUnauthorized, respBody)
-		return
-	}
-
-	// 9. Trigger disabled / autopilot paused / archived → ignored. We return
-	//     200 so the sender's webhook-retry machinery doesn't keep hammering
-	//     us; the "ignored" status + delivery row makes the no-op visible if
-	//     the operator inspects the delivery log.
+	// 10. Trigger disabled / autopilot paused / archived / binding invalid →
+	//     ignored. We return 200 so the sender's webhook-retry machinery
+	//     doesn't keep hammering us; the "ignored" status + delivery row makes
+	//     the no-op visible if the operator inspects the delivery log.
 	if !trigRow.Enabled {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "trigger_disabled"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "trigger_disabled")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 	if autopilot.Status == "archived" {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "autopilot_archived"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "autopilot_archived")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 	if autopilot.Status != "active" {
 		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": "autopilot_paused"}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "autopilot_paused")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
+		return
+	}
+	if bindingProblem != "" {
+		respBody := map[string]any{"status": "ignored", "delivery_id": uuidToString(delivery.ID), "reason": bindingProblem}
+		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, bindingProblem)
+		respond(http.StatusOK, respBody)
 		return
 	}
 
-	// 10. Event filter scope → ignored. If the trigger declares a concrete
+	// 11. Event filter scope → ignored. If the trigger declares a concrete
 	//     event_filters list and the incoming event is outside that scope,
 	//     record an ignored delivery without creating an expensive run/task.
 	if !webhookEventAllowedByTriggerScope(trigRow.EventFilters, envelope) {
@@ -555,14 +607,25 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 			"event":       envelope.Event,
 		}
 		h.finaliseDeliveryTerminal(r, delivery.ID, deliveryStatusIgnored, http.StatusOK, respBody, "event_filtered")
-		writeJSON(w, http.StatusOK, respBody)
+		respond(http.StatusOK, respBody)
 		return
 	}
 
-	// 11. Allocate the idempotent run synchronously so existing webhook clients
+	// 12. Allocate the idempotent run synchronously so existing webhook clients
 	//     keep the v0.4.0 response contract. The queued delivery remains the
 	//     durable dispatch source: the worker resumes this run after the response
-	//     and can recover it after a process crash.
+	//     and can recover it after a process crash. The envelope is built from
+	//     the delivery row, exactly as a worker retry rebuilds it.
+	admitted, err := webhookEnvelopeFromDelivery(delivery)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	envelopeBytes, err := json.Marshal(admitted)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode envelope")
+		return
+	}
 	run, err := h.AutopilotService.AdmitAutopilotWebhookDelivery(
 		r.Context(),
 		autopilot,
@@ -615,7 +678,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	if h.WebhookDeliveryWorker != nil {
 		h.WebhookDeliveryWorker.Notify()
 	}
-	writeJSON(w, http.StatusOK, respBody)
+	respond(http.StatusOK, respBody)
 }
 
 // ── Event filter helpers ────────────────────────────────────────────────────
@@ -777,16 +840,36 @@ type persistDeliveryInput struct {
 	DedupeKey       string
 	DedupeSource    string
 	SignatureStatus string
+	// Status is queued for an authenticated request and rejected for a
+	// signature failure; a rejected row is outside the dedupe index.
+	Status          string
 	ContentType     string
 	RawBody         []byte
 	SelectedHeaders []byte
+	Frozen          webhookFrozenColumns
 }
 
-// persistInboundDelivery INSERTs a fresh `queued` delivery, returning (row,
-// false, nil) on the happy path. On dedupe-key unique-violation it returns
-// (existing-row, true, nil) after bumping attempt_count on the prior row.
-// Any other error bubbles up so the handler can 500 cleanly.
-func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInput) (db.WebhookDelivery, bool, error) {
+// persistOutcome is what persisting an inbound delivery decided.
+type persistOutcome int
+
+const (
+	// persistCreated: a new delivery row.
+	persistCreated persistOutcome = iota
+	// persistDuplicate: the event id was accepted before with the same
+	// effective payload; the returned row is that delivery.
+	persistDuplicate
+	// persistConflict: the event id was accepted before with a different
+	// effective payload; the returned row is the rejected audit delivery.
+	persistConflict
+)
+
+// persistInboundDelivery INSERTs the delivery with its frozen source. On an
+// event id collision it compares effective payloads: the same one bumps
+// attempt_count on the prior row (duplicate); a different one records a
+// rejected audit row (conflict) and leaves the prior row untouched. Any
+// other error bubbles up so the handler can 500 cleanly.
+func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInput) (db.WebhookDelivery, persistOutcome, error) {
+	ctx := r.Context()
 	params := db.CreateWebhookDeliveryParams{
 		WorkspaceID:     in.WorkspaceID,
 		AutopilotID:     in.AutopilotID,
@@ -794,9 +877,12 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 		Provider:        in.Provider,
 		Event:           in.Event,
 		SignatureStatus: in.SignatureStatus,
-		Status:          deliveryStatusQueued,
+		Status:          in.Status,
 		SelectedHeaders: in.SelectedHeaders,
 		RawBody:         in.RawBody,
+	}
+	if params.Status == "" {
+		params.Status = deliveryStatusQueued
 	}
 	if in.DedupeKey != "" {
 		params.DedupeKey = pgtype.Text{String: in.DedupeKey, Valid: true}
@@ -806,22 +892,36 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 		params.ContentType = pgtype.Text{String: in.ContentType, Valid: true}
 	}
 
-	delivery, err := h.Queries.CreateWebhookDelivery(r.Context(), params)
+	delivery, err := h.insertWebhookDelivery(ctx, params, in.Frozen)
 	if err == nil {
-		return delivery, false, nil
+		return delivery, persistCreated, nil
 	}
 	if !isUniqueViolation(err) || in.DedupeKey == "" {
-		return db.WebhookDelivery{}, false, err
+		return db.WebhookDelivery{}, persistCreated, err
 	}
-	// Dedupe collision: fetch the original row, bump attempt count.
-	existing, lookupErr := h.Queries.GetWebhookDeliveryByTriggerAndDedupe(r.Context(), db.GetWebhookDeliveryByTriggerAndDedupeParams{
+	existing, lookupErr := h.Queries.GetWebhookDeliveryByTriggerAndDedupe(ctx, db.GetWebhookDeliveryByTriggerAndDedupeParams{
 		TriggerID: in.TriggerID,
 		DedupeKey: pgtype.Text{String: in.DedupeKey, Valid: true},
 	})
 	if lookupErr != nil {
-		return db.WebhookDelivery{}, false, fmt.Errorf("lookup duplicate delivery: %w", lookupErr)
+		return db.WebhookDelivery{}, persistCreated, fmt.Errorf("lookup duplicate delivery: %w", lookupErr)
 	}
-	bumped, bumpErr := h.Queries.BumpWebhookDeliveryAttempt(r.Context(), existing.ID)
+	existingDigest, digestErr := h.webhookStoredDigest(ctx, existing)
+	if digestErr != nil && !errors.Is(digestErr, errWebhookSourceDrift) {
+		slog.Warn("webhook: digest of the accepted delivery unavailable; treating the reuse as a conflict",
+			"delivery_id", uuidToString(existing.ID),
+			"error", digestErr,
+		)
+	}
+	if digestErr != nil || existingDigest != in.Frozen.Digest {
+		params.Status = deliveryStatusRejected
+		audit, auditErr := h.insertWebhookDelivery(ctx, params, in.Frozen)
+		if auditErr != nil {
+			return db.WebhookDelivery{}, persistConflict, fmt.Errorf("record conflicting delivery: %w", auditErr)
+		}
+		return audit, persistConflict, nil
+	}
+	bumped, bumpErr := h.Queries.BumpWebhookDeliveryAttempt(ctx, existing.ID)
 	if bumpErr != nil {
 		// Still treat as duplicate; just log the bump failure so the
 		// operator can investigate, returning the row we DID read.
@@ -829,9 +929,9 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 			"delivery_id", uuidToString(existing.ID),
 			"error", bumpErr,
 		)
-		return existing, true, nil
+		return existing, persistDuplicate, nil
 	}
-	return bumped, true, nil
+	return bumped, persistDuplicate, nil
 }
 
 // finaliseDeliveryTerminal records a non-dispatched outcome (rejected,

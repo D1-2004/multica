@@ -46,9 +46,39 @@ means its outcome and delivery intent were committed, not that DingTalk has
 confirmed delivery. Callback-less replies use a stable scene notice ID.
 Runtime completion notices are a separate required delivery consumer.
 
+Jobs have a kind. `message` is a human window of 1-32 messages; `task_wake`
+is one Host-derived wake of an existing Employee Task with no messages.
+`AdmitTaskWake` writes the wake's own receipt (source
+`employee.task_wake/<producer>`, category `wake`), consumption and job in one
+transaction. It never fabricates a message and never joins a human window.
+The source identity is producer source plus a stable event id: the first commit
+freezes occurred_at and the fingerprint, an identical replay returns the
+original job and a changed payload under the same identity is a conflict.
+The payload only carries references. The Task's origin is resolved by a
+`TaskOriginRegistry` reader chosen by the Task request entry's source
+namespace; it returns the admission principal and kind, the delivery anchor
+and an explicit history policy (`scene_principal`,
+`scene_endpoint_principal`, `not_applicable`) from PostgreSQL and verifies
+the principal's current permission. A Task without a registered reader cannot
+be woken. A producer must hold a `TaskWakeHost`: admission is refused with
+`ErrTaskWakeNotReady` until every live replica executes wakes.
+
+`employee_host_notice` links a Host-initiated send (task wake reply, later
+invitations and watchdog notices) to its scene and principal. It is written in
+the transaction that enqueues the response action; once the provider confirms
+delivery, the message appears as assistant history for that principal. A
+withdrawal of memory evidence from its origin receipt hides it.
+
+Claim takes only the job kinds, wake kinds and wake schema versions the binary
+supports; other work stays pending for a binary that supports it. Within a
+scene, a message window that is not completed is claimed before any wake, so
+a wake never runs ahead of newer human input (GawkBot drains human input
+before follow-ups; this is a PostgreSQL re-implementation, no code copied).
+
 Enabling Employee requires a configured model with SDK retries disabled,
 response services, an authenticated `employee-direct-v1` runtime capability,
-and support for `[employee-loop:1]` on every live server replica. Switching the
+and support for the current `EmployeeLoopReplicaMarker` on every live server
+replica. Switching the
 setting changes only new work. Before rolling back to a binary that lacks the
 Employee consumer, drain accepted Employee work; changing the setting alone is
 not a safe binary rollback procedure.

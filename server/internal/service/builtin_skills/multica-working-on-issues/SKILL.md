@@ -11,6 +11,16 @@ Product contracts the runtime brief does not fully encode: PR linking vs close
 intent, reading linked-PR state, metadata keys, status side effects, and
 sub-issue enqueue behavior.
 
+## Durable run progress
+
+`multica issue run-events <queue-task-uuid> --since <seq> --limit 500 --output json`
+reads the fact-only execution stream (`docs/task-run-events.md`). Save the returned
+`next_seq` per execution and continue while `has_more` is true. Diagnostics count
+toward the cursor but are not reportable; tool completion and provider final text
+do not prove task completion or user delivery. The endpoint is opt-in through
+`MULTICA_TASK_RUN_EVENTS_ENABLED=1` and keeps the transcript's Direct/A2A access
+boundaries. This command reads facts; it does not send progress to anyone.
+
 For building mention links, load `multica-mentioning` instead — not this skill.
 
 Every contract below is traced to source in

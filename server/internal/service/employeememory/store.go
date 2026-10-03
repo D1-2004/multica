@@ -151,7 +151,7 @@ func (s *Store) Record(ctx context.Context, scope Scope, rec LearningRecord, e T
 		return LearningRecord{}, err
 	}
 	defer tx.Rollback(ctx)
-	rec, err = recordLocked(ctx, tx, scope, rec, e)
+	rec, err = recordLocked(ctx, tx, scope, rec, e, false)
 	if err != nil {
 		return LearningRecord{}, err
 	}
@@ -171,10 +171,10 @@ func (s *Store) RecordTx(ctx context.Context, tx pgx.Tx, scope Scope, rec Learni
 	if err = lockWriteScope(ctx, tx, scope); err != nil {
 		return LearningRecord{}, err
 	}
-	return recordLocked(ctx, tx, scope, rec, e)
+	return recordLocked(ctx, tx, scope, rec, e, false)
 }
 
-func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, e TrustedEvidence) (LearningRecord, error) {
+func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, e TrustedEvidence, orderedObservation bool) (LearningRecord, error) {
 	if !e.OccurredAt.IsZero() {
 		var resetAt *time.Time
 		if err := tx.QueryRow(ctx, `SELECT reset_at FROM employee_memory_state WHERE `+scopePredicate, scope.args()...).Scan(&resetAt); err != nil {
@@ -211,12 +211,29 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 			return LearningRecord{}, fmt.Errorf("%w: supersedes must name the current record for this exact scope/type/key", ErrInvalidLearning)
 		}
 	}
-	if previous.ID != "" {
-		if previous.Trusted && !rec.Trusted {
-			return LearningRecord{}, ErrUntrustedCorrection
+	lateObservation := false
+	fenceID := ""
+	if previous.ID != "" && previous.Trusted && !rec.Trusted {
+		return LearningRecord{}, ErrUntrustedCorrection
+	}
+	if orderedObservation {
+		// Forgotten and superseded records still fence older sources. Otherwise
+		// forgetting the current value could reactivate an unseen delayed event.
+		var fenceAt time.Time
+		err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(NULLIF(record->>'evidence_occurred_at','0001-01-01T00:00:00Z')::timestamptz,created_at) AS evidence_time FROM employee_learning WHERE `+scopePredicate+` AND record->>'type'=$7 AND record->>'key'=$8 ORDER BY evidence_time DESC,id DESC LIMIT 1`, append(scope.args(), string(rec.Type), rec.Key)...).Scan(&fenceID, &fenceAt)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return LearningRecord{}, err
 		}
+		if err == nil {
+			lateObservation = !e.OccurredAt.After(fenceAt)
+		}
+	}
+	if lateObservation {
+		rec.Supersedes = ""
+	} else if previous.ID != "" {
 		rec.Supersedes = previous.ID
 	}
+
 	rec.ID = uuid.NewString()
 	rec.CreatedAt = time.Now().UTC()
 	timestamp := rec.CreatedAt.Format(time.RFC3339Nano)
@@ -231,10 +248,14 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 	if len(raw) > 14000 {
 		return LearningRecord{}, fmt.Errorf("%w: record too large", ErrInvalidLearning)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO employee_learning(workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id,id,replay_key,record,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, append(scope.args(), rec.ID, replay, raw, rec.CreatedAt)...); err != nil {
+	supersededBy := ""
+	if lateObservation {
+		supersededBy = fenceID
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO employee_learning(workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id,id,replay_key,record,created_at,superseded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::uuid)`, append(scope.args(), rec.ID, replay, raw, rec.CreatedAt, supersededBy)...); err != nil {
 		return LearningRecord{}, err
 	}
-	if previous.ID != "" {
+	if previous.ID != "" && !lateObservation {
 		if _, err = tx.Exec(ctx, `UPDATE employee_learning SET superseded_by=$7 WHERE `+scopePredicate+` AND id=$8`, append(scope.args(), rec.ID, previous.ID)...); err != nil {
 			return LearningRecord{}, err
 		}
@@ -251,7 +272,19 @@ func (s *Store) Search(ctx context.Context, scope Scope, query string, limit int
 	if s == nil || s.pool == nil {
 		return nil, ErrInvalidScope
 	}
-	if err := authorize(ctx, db.New(s.pool), scope); err != nil {
+	return search(ctx, s.pool, scope, query, limit)
+}
+
+// SearchTx reuses the caller's journal transaction without borrowing the pool.
+func (s *Store) SearchTx(ctx context.Context, tx pgx.Tx, scope Scope, query string, limit int) ([]LearningSearchResult, error) {
+	if tx == nil {
+		return nil, ErrInvalidScope
+	}
+	return search(ctx, tx, scope, query, limit)
+}
+
+func search(ctx context.Context, conn db.DBTX, scope Scope, query string, limit int) ([]LearningSearchResult, error) {
+	if err := authorize(ctx, db.New(conn), scope); err != nil {
 		return nil, err
 	}
 	if len(query) > 512 || !utf8.ValidString(query) {
@@ -263,7 +296,7 @@ func (s *Store) Search(ctx context.Context, scope Scope, query string, limit int
 	if limit > MaxLearningLimit {
 		limit = MaxLearningLimit
 	}
-	rows, err := s.pool.Query(ctx, `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL ORDER BY created_at DESC,id DESC LIMIT 2000`, scope.args()...)
+	rows, err := conn.Query(ctx, `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL ORDER BY created_at DESC,id DESC LIMIT 2000`, scope.args()...)
 	if err != nil {
 		return nil, err
 	}
@@ -341,10 +374,37 @@ func (s *Store) Reset(ctx context.Context, scope Scope) error {
 // Distill is invoked by a background consumer after Host verification commits.
 // Its text assembly is deterministic; no LLM or foreground waiting is involved.
 func (s *Store) Distill(ctx context.Context, scope Scope, run VerifiedRun) (LearningRecord, error) {
-	if !run.Passed || !validText(run.Proof, 2000) || !validText(run.ProofKind, 80) || !validText(run.TaskID, 128) || !validText(run.ExecutionID, 128) || !validText(run.Title, 512) || !validText(run.ActorID, 128) || !validText(run.EvidenceID, 256) || len(run.Details) > 8000 {
+	rec, e, err := verifiedLearning(run)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	return s.Record(ctx, scope, rec, e)
+}
+
+// DistillTx joins the durable consumer's transaction so the verified learning
+// and the consumption receipt commit together. It requires the Host work-end
+// time, so evidence that predates a namespace reset is rejected under the
+// namespace lock and a replay returns the original (possibly forgotten) record.
+func (s *Store) DistillTx(ctx context.Context, tx pgx.Tx, scope Scope, run VerifiedRun) (LearningRecord, error) {
+	if tx == nil {
+		return LearningRecord{}, ErrInvalidScope
+	}
+	if run.OccurredAt.IsZero() {
 		return LearningRecord{}, ErrUnverified
 	}
-	return s.Record(ctx, scope, LearningRecord{Type: LearningTypeOperational, Key: learningKeyForTask(run.Title, run.TaskID), Insight: taskDistillInsight(run), Confidence: 7}, TrustedEvidence{TaskID: run.TaskID, ExecutionID: run.ExecutionID, SourceID: "execution:" + run.ExecutionID, EvidenceID: run.EvidenceID, ActorID: run.ActorID, VerifiedExecution: true})
+	rec, e, err := verifiedLearning(run)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	return s.RecordTx(ctx, tx, scope, rec, e)
+}
+
+func verifiedLearning(run VerifiedRun) (LearningRecord, TrustedEvidence, error) {
+	if !run.Passed || !validText(run.Proof, 2000) || !validText(run.ProofKind, 80) || !validText(run.TaskID, 128) || !validText(run.ExecutionID, 128) || !validText(run.Title, 512) || !validText(run.ActorID, 128) || !validText(run.EvidenceID, 256) || len(run.Details) > 8000 {
+		return LearningRecord{}, TrustedEvidence{}, ErrUnverified
+	}
+	return LearningRecord{Type: LearningTypeOperational, Key: learningKeyForTask(run.Title, run.TaskID), Insight: taskDistillInsight(run), Confidence: 7},
+		TrustedEvidence{TaskID: run.TaskID, ExecutionID: run.ExecutionID, SourceID: "execution:" + run.ExecutionID, EvidenceID: run.EvidenceID, ActorID: run.ActorID, OccurredAt: run.OccurredAt, VerifiedExecution: true}, nil
 }
 func normalizeRecord(rec LearningRecord, scope Scope, e TrustedEvidence) (LearningRecord, error) {
 	bad := func(message string) (LearningRecord, error) {
@@ -356,6 +416,7 @@ func normalizeRecord(rec LearningRecord, scope Scope, e TrustedEvidence) (Learni
 	rec.ID = ""
 	rec.Workflow = nil
 	rec.CreatedAt = time.Time{}
+	rec.EvidenceOccurredAt = time.Time{}
 	rec.CreatedBy = e.ActorID
 	rec.SourceID = e.SourceID
 	rec.EvidenceID = e.EvidenceID

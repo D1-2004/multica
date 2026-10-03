@@ -33,7 +33,8 @@ func NewService(store *Store) *Service { return &Service{Store: store} }
 const taskColumns = `id::text, workspace_id::text, agent_id::text, tenant_org_id,
  scope_kind, COALESCE(scene_id::text,''), COALESCE(legacy_id::text,''), owner_loop,
  dispatch_mode, requester_ref, definition, goal_revision, version, state,
- last_entry_seq, COALESCE(active_run_id::text,''), COALESCE(issue_id::text,''), created_at, updated_at`
+ last_entry_seq, COALESCE(active_run_id::text,''), COALESCE(issue_id::text,''),
+ lifecycle_version, completion_mode, autonomous_rounds, created_at, updated_at`
 const taskScope = `workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3
  AND scope_kind=$4 AND COALESCE(scene_id,legacy_id)=$5::uuid`
 const taskWhere = taskScope + ` AND id=$6::uuid`
@@ -98,7 +99,7 @@ func mapError(err error) error {
 func scanTask(row pgx.Row) (Task, error) {
 	var task Task
 	var definition []byte
-	err := row.Scan(&task.ID, &task.Scope.WorkspaceID, &task.Scope.AgentID, &task.Scope.TenantOrgID, &task.Scope.Kind, &task.Scope.Scene.SceneID, &task.Scope.LegacyID, &task.OwnerLoop, &task.DispatchMode, &task.RequesterRef, &definition, &task.GoalRevision, &task.Version, &task.State, &task.LastEntrySeq, &task.ActiveRunID, &task.IssueID, &task.CreatedAt, &task.UpdatedAt)
+	err := row.Scan(&task.ID, &task.Scope.WorkspaceID, &task.Scope.AgentID, &task.Scope.TenantOrgID, &task.Scope.Kind, &task.Scope.Scene.SceneID, &task.Scope.LegacyID, &task.OwnerLoop, &task.DispatchMode, &task.RequesterRef, &definition, &task.GoalRevision, &task.Version, &task.State, &task.LastEntrySeq, &task.ActiveRunID, &task.IssueID, &task.LifecycleVersion, &task.CompletionMode, &task.AutonomousRounds, &task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		return Task{}, mapError(err)
 	}
@@ -157,6 +158,10 @@ func (s *Store) Create(ctx context.Context, p CreateParams) (Task, error) {
 	if (p.OwnerLoop != LoopEmployee && p.OwnerLoop != LoopCoordinator) || (p.DispatchMode != DispatchDirect && p.DispatchMode != DispatchIssue) || (p.OwnerLoop == LoopEmployee && p.Scope.Kind != ScopeScene) {
 		return Task{}, ErrInvalid
 	}
+	version, mode, err := normalizeLifecycle(&p)
+	if err != nil {
+		return Task{}, err
+	}
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return Task{}, err
@@ -185,9 +190,9 @@ func (s *Store) Create(ctx context.Context, p CreateParams) (Task, error) {
 		}
 	}
 	task, err := scanTask(tx.QueryRow(ctx, `INSERT INTO employee_task
- (workspace_id,agent_id,tenant_org_id,scope_kind,scene_id,legacy_id,owner_loop,dispatch_mode,requester_ref,definition,source_namespace,source_key,create_payload)
- VALUES($1::uuid,$2::uuid,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10::jsonb,$11,$12,$13::jsonb)
- ON CONFLICT DO NOTHING RETURNING `+taskColumns, p.Scope.WorkspaceID, p.Scope.AgentID, p.Scope.TenantOrgID, p.Scope.Kind, p.Scope.Scene.SceneID, p.Scope.LegacyID, p.OwnerLoop, p.DispatchMode, p.RequesterRef, definition, p.Source.Namespace, p.Source.Key, payload))
+ (workspace_id,agent_id,tenant_org_id,scope_kind,scene_id,legacy_id,owner_loop,dispatch_mode,requester_ref,definition,source_namespace,source_key,create_payload,lifecycle_version,completion_mode)
+ VALUES($1::uuid,$2::uuid,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15)
+ ON CONFLICT DO NOTHING RETURNING `+taskColumns, p.Scope.WorkspaceID, p.Scope.AgentID, p.Scope.TenantOrgID, p.Scope.Kind, p.Scope.Scene.SceneID, p.Scope.LegacyID, p.OwnerLoop, p.DispatchMode, p.RequesterRef, definition, p.Source.Namespace, p.Source.Key, payload, version, mode))
 	if errors.Is(err, ErrNotFound) {
 		args := append(scopeArgs(p.Scope), p.Source.Namespace, p.Source.Key, payload)
 		task, err = scanTask(tx.QueryRow(ctx, `SELECT `+taskColumns+` FROM employee_task WHERE `+taskScope+` AND source_namespace=$6 AND source_key=$7 AND create_payload=$8::jsonb`, args...))
@@ -220,7 +225,7 @@ func insertEntry(ctx context.Context, tx pgx.Tx, task Task, e Entry, payload []b
 
 // mutate serializes one aggregate, checks a replay before CAS, and persists the
 // changed snapshot and entry in one transaction. It never invokes external code.
-func (s *Store) mutate(ctx context.Context, scope Scope, id string, source Source, payload any, expected int64, apply func(pgx.Tx, *Task) (Entry, error)) (Task, Entry, error) {
+func (s *Store) mutate(ctx context.Context, scope Scope, id string, source Source, payload any, expected int64, c cause, apply func(pgx.Tx, *Task) (Entry, error)) (Task, Entry, error) {
 	if err := validateScope(scope); err != nil {
 		return Task{}, Entry{}, err
 	}
@@ -268,10 +273,14 @@ func (s *Store) mutate(ctx context.Context, scope Scope, id string, source Sourc
 	if expected > 0 && task.Version != expected {
 		return Task{}, Entry{}, ErrConflict
 	}
-	previous := task.Version
+	previous, before := task.Version, task.State
 	e, err = apply(tx, &task)
 	if err != nil {
 		return Task{}, Entry{}, mapError(err)
+	}
+	// Every persisted state write passes the lifecycle chokepoint.
+	if err = transition(task.Lifecycle(), before, task.State, c); err != nil {
+		return Task{}, Entry{}, err
 	}
 	task.Version++
 	task.LastEntrySeq++
@@ -285,8 +294,8 @@ func (s *Store) mutate(ctx context.Context, scope Scope, id string, source Sourc
 	if err != nil {
 		return Task{}, Entry{}, err
 	}
-	args := append(taskArgs(scope, id), definition, task.GoalRevision, task.Version, task.State, task.LastEntrySeq, task.ActiveRunID, task.IssueID, previous)
-	task, err = scanTask(tx.QueryRow(ctx, `UPDATE employee_task SET definition=$7::jsonb,goal_revision=$8,version=$9,state=$10,last_entry_seq=$11,active_run_id=NULLIF($12,'')::uuid,issue_id=NULLIF($13,'')::uuid,updated_at=now() WHERE `+taskWhere+` AND version=$14 RETURNING `+taskColumns, args...))
+	args := append(taskArgs(scope, id), definition, task.GoalRevision, task.Version, task.State, task.LastEntrySeq, task.ActiveRunID, task.IssueID, previous, task.AutonomousRounds)
+	task, err = scanTask(tx.QueryRow(ctx, `UPDATE employee_task SET definition=$7::jsonb,goal_revision=$8,version=$9,state=$10,last_entry_seq=$11,active_run_id=NULLIF($12,'')::uuid,issue_id=NULLIF($13,'')::uuid,autonomous_rounds=$15,updated_at=now() WHERE `+taskWhere+` AND version=$14 RETURNING `+taskColumns, args...))
 	if err != nil {
 		return Task{}, Entry{}, err
 	}
@@ -319,7 +328,11 @@ func (s *Store) AppendInput(ctx context.Context, scope Scope, id string, p Input
 			return Task{}, Entry{}, err
 		}
 	}
-	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(_ pgx.Tx, task *Task) (Entry, error) {
+	c := causeInput
+	if p.Correction != nil {
+		c = causeAmendment
+	}
+	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, c, func(tx pgx.Tx, task *Task) (Entry, error) {
 		e := Entry{Kind: "input", ActorRef: p.ActorRef, Body: p.Body}
 		if p.Correction != nil {
 			current, _ := json.Marshal(task.Definition)
@@ -333,9 +346,19 @@ func (s *Store) AppendInput(ctx context.Context, scope Scope, id string, p Input
 			// A correction does not claim that an existing worker has stopped, nor
 			// does it override a cancellation fence.
 			if task.ActiveRunID == "" && task.State != StateCancelled {
-				task.State = StateReady
+				if task.Lifecycle() == LifecycleV2 {
+					// It reopens a completed goal, but never resolves a wait.
+					state, err := openGoalState(ctx, tx, *task)
+					if err != nil {
+						return Entry{}, err
+					}
+					task.State = state
+				} else {
+					task.State = StateReady
+				}
 			}
 		}
+		noteHumanInput(task, p.ActorRef)
 		return e, nil
 	})
 }
@@ -350,10 +373,19 @@ func (s *Store) Resume(ctx context.Context, scope Scope, id string, p ResumePara
 	if p.ExpectedVersion <= 0 || strings.TrimSpace(p.ActorRef) == "" || strings.TrimSpace(p.Body) == "" {
 		return Task{}, Entry{}, ErrInvalid
 	}
-	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(_ pgx.Tx, task *Task) (Entry, error) {
+	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeResume, func(_ pgx.Tx, task *Task) (Entry, error) {
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
 		}
+		if task.Lifecycle() == LifecycleV2 {
+			// A v2 goal is completed explicitly; reopening it needs a new goal
+			// revision (an amendment), so a second completion stays distinct.
+			if task.State == StateCancelled {
+				return Entry{}, lifecycleErr(CodeStopped, ReasonStopped)
+			}
+			return Entry{}, lifecycleErr(CodeConflict, ReasonReopenNeedsAmendment)
+		}
+		noteHumanInput(task, p.ActorRef)
 		if task.State == StateFailed || task.State == StateCancelled {
 			return Entry{}, ErrRunNotReady
 		}
@@ -371,25 +403,33 @@ func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRun
 	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) || p.InputSeq < 0 {
 		return Run{}, ErrInvalid
 	}
-	_, e, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+	_, e, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeStartRun, func(tx pgx.Tx, task *Task) (Entry, error) {
+		goal := task.Lifecycle() == LifecycleV2
+		if goal && task.State == StateCancelled {
+			return Entry{}, lifecycleErr(CodeStopped, ReasonStopped)
+		}
 		if task.DispatchMode == DispatchDirect {
 			// A correction or late result can change the goal snapshot to ready,
 			// but neither proves that a failed/cancelled external writer exited.
-			// Until explicit termination evidence exists, the durable Run history
-			// is the final fence for every new Direct execution.
-			var unresolvedWriter bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND state IN ('failed','cancelled'))`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id).Scan(&unresolvedWriter)
+			// Until the host records explicit fence evidence (FenceRunWriter), the
+			// durable Run history is the final fence for every new Direct execution.
+			unresolved, err := unresolvedWriter(ctx, tx, scope, id)
 			if err != nil {
 				return Entry{}, err
 			}
-			if unresolvedWriter {
+			if unresolved {
 				return Entry{}, ErrRunNotReady
+			}
+		}
+		if goal {
+			if err := goalRetryGuard(ctx, tx, scope, id); err != nil {
+				return Entry{}, err
 			}
 		}
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
 		}
-		if task.State != StateReady {
+		if task.State != StateReady && !(goal && task.State == StateWaiting) {
 			return Entry{}, ErrConflict
 		}
 		inputSeq := p.InputSeq
@@ -414,10 +454,11 @@ func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRun
 	return s.getRun(ctx, scope, id, e.RunID)
 }
 
-// ObserveIssueRun preserves actual legacy execution facts, including retries.
-// It cannot dispatch, cannot apply to Direct/Employee-owned work, and verifies
-// the queue's authoritative Issue/agent/workspace binding before recording it.
-func (s *Store) ObserveIssueRun(ctx context.Context, scope Scope, id string, p ObserveIssueRunParams) (Run, error) {
+// ObserveBackendRun records execution facts accepted by the existing backend.
+// Following GawkBot's task_ledger boundary (71e82a1809565281cbd0bf8185d3c125b715d934),
+// the ledger owns aggregate invariants; the Host adapter validates external
+// identities in the same transaction. This never dispatches or admits Direct work.
+func (s *Store) ObserveBackendRun(ctx context.Context, scope Scope, id string, p ObserveBackendRunParams) (Run, error) {
 	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) || p.InputSeq <= 0 || p.GoalRevision <= 0 {
 		return Run{}, ErrInvalid
 	}
@@ -428,20 +469,12 @@ func (s *Store) ObserveIssueRun(ctx context.Context, scope Scope, id string, p O
 	if current.OwnerLoop != LoopCoordinator || current.DispatchMode != DispatchIssue || current.IssueID == "" {
 		return Run{}, ErrInvalid
 	}
-	_, entry, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+	_, entry, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeObserveRun, func(tx pgx.Tx, task *Task) (Entry, error) {
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
 		}
 		if p.InputSeq > task.LastEntrySeq || p.GoalRevision > task.GoalRevision {
 			return Entry{}, ErrInvalid
-		}
-		var accepted bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue q JOIN issue i ON i.id=q.issue_id WHERE q.id=$1::uuid AND q.agent_id=$2::uuid AND q.issue_id=$3::uuid AND i.workspace_id=$4::uuid)`, p.QueueTaskID, scope.AgentID, task.IssueID, scope.WorkspaceID).Scan(&accepted)
-		if err != nil {
-			return Entry{}, err
-		}
-		if !accepted {
-			return Entry{}, ErrNotFound
 		}
 		run, err := scanRun(tx.QueryRow(ctx, `INSERT INTO employee_task_run(workspace_id,agent_id,tenant_org_id,task_id,queue_task_id,goal_revision,input_seq) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7) RETURNING `+runColumns, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.QueueTaskID, p.GoalRevision, p.InputSeq))
 		if err != nil {
@@ -463,7 +496,7 @@ func (s *Store) RecordResult(ctx context.Context, scope Scope, id string, p Resu
 	if !validUUID(p.RunID) || (p.State != StateSucceeded && p.State != StateFailed && p.State != StateCancelled) {
 		return Task{}, Run{}, ErrInvalid
 	}
-	task, e, err := s.mutate(ctx, scope, id, p.Source, p, 0, func(tx pgx.Tx, task *Task) (Entry, error) {
+	task, e, err := s.mutate(ctx, scope, id, p.Source, p, 0, causeRunResult, func(tx pgx.Tx, task *Task) (Entry, error) {
 		run, err := scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+` FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND id=$5::uuid FOR UPDATE`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.RunID))
 		if err != nil {
 			return Entry{}, err
@@ -478,7 +511,15 @@ func (s *Store) RecordResult(ctx context.Context, scope Scope, id string, p Resu
 		if task.ActiveRunID == run.ID {
 			task.ActiveRunID = ""
 			if task.State != StateCancelled {
-				if task.GoalRevision == run.GoalRevision {
+				if task.Lifecycle() == LifecycleV2 {
+					// A Run terminal never finishes a v2 goal; a failed Run leaves
+					// it awaiting a decision, with no automatic retry.
+					state, err := openGoalState(ctx, tx, *task)
+					if err != nil {
+						return Entry{}, err
+					}
+					task.State = state
+				} else if task.GoalRevision == run.GoalRevision {
 					task.State = p.State
 				} else {
 					task.State = StateReady
@@ -500,7 +541,7 @@ func (s *Store) BindIssue(ctx context.Context, scope Scope, id string, p BindIss
 	if !validUUID(p.IssueID) || p.ExpectedVersion <= 0 {
 		return Task{}, ErrInvalid
 	}
-	task, _, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(_ pgx.Tx, task *Task) (Entry, error) {
+	task, _, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeBindIssue, func(_ pgx.Tx, task *Task) (Entry, error) {
 		if task.IssueID != "" && task.IssueID != p.IssueID {
 			return Entry{}, ErrConflict
 		}

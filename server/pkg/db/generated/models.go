@@ -1953,6 +1953,7 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Event     []byte             `json:"event"`
 }
 
 type TaskToken struct {

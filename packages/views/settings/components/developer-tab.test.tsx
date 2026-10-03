@@ -115,9 +115,9 @@ it("filters a catalog without altering its content", () => {
   ).toHaveTextContent("qwen");
 });
 
-it("searches Coordinator model choices without changing the selected model", () => {
+it("searches shared Coordinator / EmployeeLoop model choices without changing the selected model", () => {
   renderWithI18n(<DeveloperTab />);
-  fireEvent.click(screen.getByRole("button", { name: "Coordinator model 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Coordinator / EmployeeLoop model 1" }));
   const search = screen
     .getAllByPlaceholderText("Search models or providers")
     .at(-1)!;

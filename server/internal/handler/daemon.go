@@ -36,7 +36,6 @@ import (
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
-	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
@@ -2073,9 +2072,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// migration and no client upgrade. agent.Instructions holds only the
 		// workspace's own notes, so a release can never overwrite them.
 		//
-		// Composing here covers every task kind, because this is the single
-		// place a claimed task's agent payload is assembled.
-		if agent.SystemKey.String == service.MikaSystemKey {
+		// Platform tasks receive the system layer here. Direct keeps the
+		// agent-authored instructions and the effective context layers only.
+		if resp.DirectTaskPrompt == "" && agent.SystemKey.String == service.MikaSystemKey {
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		// Skills the org, scene and person layers switch on extend the
@@ -2085,7 +2084,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// config-qwen-tag-scene skill (the resolve path decides the same).
 		sceneConfig := h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, *task)
 		if useSkillRefs {
-			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, service.ExecutionSurfaceForTask(*task), messagePolicy)
 			if sceneConfig {
 				skillList = service.WithSceneConfigSkill(skillList)
 			}
@@ -2100,13 +2099,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 		} else {
-			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, service.ExecutionSurfaceForTask(*task), messagePolicy)
 			if sceneConfig {
 				skills = service.WithSceneConfigSkill(skills)
 			}
 			agentSkillCount = len(skills)
-			builtinSkills := h.TaskService.BuiltinSkills()
-			builtinSkillCount = len(builtinSkills)
+			if resp.DirectTaskPrompt == "" {
+				builtinSkillCount = len(h.TaskService.BuiltinSkills())
+			}
 			resp.Agent.Skills = skills
 		}
 	}
@@ -2860,8 +2860,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 
 	// Autopilot run_only task: resolve workspace from autopilot_run →
 	// autopilot, and include the autopilot instructions because there is no
-	// issue for the agent to fetch.
-	if task.AutopilotRunID.Valid {
+	// issue for the agent to fetch. A Direct execution of a routine occurrence
+	// already carries its frozen packet; the current autopilot text never
+	// reaches it.
+	if task.AutopilotRunID.Valid && resp.DirectTaskPrompt == "" {
 		if run, err := h.Queries.GetAutopilotRun(r.Context(), task.AutopilotRunID); err == nil {
 			resp.AutopilotID = uuidToString(run.AutopilotID)
 			resp.AutopilotSource = run.Source
@@ -3098,8 +3100,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// OKR tagging catalog. Appended to the agent's own instructions so it
 	// reaches every task kind through the runtime brief, the same way the squad
 	// briefing does — the dispatch instruction only covers DingTalk runs, and
-	// tagging applies to all work the agent owns.
-	if resp.Agent != nil {
+	// Direct execution omits this platform-owned tagging layer.
+	if resp.Agent != nil && resp.DirectTaskPrompt == "" {
 		if okrInstructions := h.agentOKRInstructionsFor(r.Context(), task.AgentID, parseUUID(resp.WorkspaceID)); okrInstructions != "" {
 			if strings.TrimSpace(resp.Agent.Instructions) == "" {
 				resp.Agent.Instructions = okrInstructions
@@ -3628,7 +3630,7 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 	for _, ref := range req.Skills {
 		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
 	}
-	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend, service.ExecutionSurfaceForTask(task))
 	// The scene configuration skill is static documentation: serve it to any
 	// task whose claim listed it, so a scene lookup failing now cannot fail
 	// the whole resolve. Claim alone decides whether a task gets it (and its
@@ -4041,6 +4043,11 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	messageSeq, err := h.Queries.GetTaskMessageCursor(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read transcript cursor")
+		return
+	}
 	started, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
 	if err != nil {
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
@@ -4049,7 +4056,9 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(started.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*started, workspaceID))
+	response := taskToResponse(*started, workspaceID)
+	response.MessageSeq = messageSeq
+	writeJSON(w, http.StatusOK, response)
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -4951,12 +4960,13 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 // ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq     int                       `json:"seq"`
+	Type    string                    `json:"type"`
+	Tool    string                    `json:"tool,omitempty"`
+	Content string                    `json:"content,omitempty"`
+	Input   map[string]any            `json:"input,omitempty"`
+	Output  string                    `json:"output,omitempty"`
+	Event   *protocol.TaskEventSource `json:"event,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -4968,7 +4978,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	var req TaskMessageBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -4978,52 +4988,29 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the caller owns this task's workspace.
-	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
 
-	workspaceID := ""
-	if task.IssueID.Valid {
-		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
-			workspaceID = uuidToString(issue.WorkspaceID)
-		}
-	}
-	if workspaceID == "" && task.ChatSessionID.Valid {
-		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
-			workspaceID = uuidToString(cs.WorkspaceID)
-		}
-	}
 	suppressHumanRealtime := service.IsEmployeeDirectTask(task) || h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task)
-
-	for _, msg := range req.Messages {
-		// Redact sensitive information before persisting or broadcasting.
-		msg.Content = redact.Text(msg.Content)
-		msg.Output = redact.Text(msg.Output)
-		msg.Input = redact.InputMap(msg.Input)
-
-		var inputJSON []byte
-		if msg.Input != nil {
-			inputJSON, _ = json.Marshal(msg.Input)
+	created, err := h.persistTaskMessageBatch(r.Context(), task, workspaceID, req.Messages)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errTaskEventInvalid) {
+			status = http.StatusBadRequest
 		}
-		created, createErr := h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
-			TaskID:  parseUUID(taskID),
-			Seq:     int32(msg.Seq),
-			Type:    msg.Type,
-			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
-			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
-			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
-		})
-		if createErr != nil {
-			slog.Error("failed to create task message", "task_id", taskID, "seq", msg.Seq, "error", createErr)
-			writeError(w, http.StatusInternalServerError, "failed to persist task message")
-			return
+		if errors.Is(err, errTaskEventConflict) {
+			status = http.StatusConflict
 		}
-
+		slog.Warn("task message batch rejected", "task_id", taskID, "error", err)
+		writeError(w, status, "task message batch rejected")
+		return
+	}
+	for _, message := range created {
 		if workspaceID != "" && !suppressHumanRealtime {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
-				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
+				taskMessageToPayload(message, taskID, uuidToString(task.IssueID)))
 		}
 	}
 	h.bindAssocOutboundFromTools(r.Context(), task, workspaceID, req.Messages)
@@ -5206,6 +5193,12 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 	var input map[string]any
 	if m.Input != nil {
 		json.Unmarshal(m.Input, &input)
+	}
+	if m.Type == "status" && !m.Content.Valid {
+		var meta protocol.TaskEventContext
+		if json.Unmarshal(m.Event, &meta) == nil {
+			m.Content = pgtype.Text{String: meta.Source.Status, Valid: meta.Source.Status != ""}
+		}
 	}
 	createdAt := ""
 	if m.CreatedAt.Valid {
@@ -5481,39 +5474,49 @@ func (h *Handler) hydrateTaskSandboxIDs(ctx context.Context, resp []AgentTaskRes
 // Verifies the task belongs to the caller's workspace and that the caller can
 // view the task's agent. DTA service members use the same native visibility rules.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
+	task, ok := h.requireUserTaskMessageRead(w, r)
+	if !ok {
+		return
+	}
+	taskID := uuidToString(task.ID)
+	taskUUID := task.ID
+	h.listTaskMessagesByUser(w, r, task, taskID, taskUUID)
+}
+
+func (h *Handler) requireUserTaskMessageRead(w http.ResponseWriter, r *http.Request) (db.AgentTaskQueue, bool) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
 	if !ok {
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	if h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task) {
 		// A2A execution transcripts are external-principal data. They are
 		// intentionally absent from ordinary member APIs; owner audit belongs
 		// on the A2A management surface, not the human task-message endpoint.
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	// Verify the task belongs to the caller's workspace.
 	wsID := h.TaskService.ResolveTaskWorkspaceID(r.Context(), task)
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
 	if err != nil || uuidToString(agent.WorkspaceID) != wsID {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	member, ok := h.workspaceMember(w, r, wsID)
 	if !ok {
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
 	allowed := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, wsID)
@@ -5522,9 +5525,13 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	_ = member
+	return task, true
+}
+
+func (h *Handler) listTaskMessagesByUser(w http.ResponseWriter, r *http.Request, task db.AgentTaskQueue, taskID string, taskUUID pgtype.UUID) {
 	sinceSeq := 0
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
 		parsed, parseErr := strconv.Atoi(sinceStr)

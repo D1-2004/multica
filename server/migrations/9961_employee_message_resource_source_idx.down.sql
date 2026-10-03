@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_message_resource_source_idx;

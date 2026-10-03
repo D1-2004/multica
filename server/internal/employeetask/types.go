@@ -15,6 +15,7 @@ var (
 	ErrConflict    = errors.New("employee task version or source payload conflict")
 	ErrActiveRun   = errors.New("employee task already has an active run")
 	ErrRunNotReady = errors.New("employee task runner termination is not confirmed")
+	ErrStopped     = errors.New("employee task was stopped by a human; a correction does not restart it")
 )
 
 type ScopeKind string
@@ -53,8 +54,11 @@ const (
 type State string
 
 const (
-	StateReady     State = "ready"
-	StateRunning   State = "running"
+	StateReady   State = "ready"
+	StateRunning State = "running"
+	// StateWaiting exists only in lifecycle v2: the goal has no active Run
+	// and at least one open mandatory wait. Runs never use it.
+	StateWaiting   State = "waiting"
 	StateSucceeded State = "succeeded"
 	StateFailed    State = "failed"
 	StateCancelled State = "cancelled"
@@ -87,8 +91,15 @@ type Task struct {
 	LastEntrySeq int64        `json:"last_entry_seq"`
 	ActiveRunID  string       `json:"active_run_id,omitempty"`
 	IssueID      string       `json:"issue_id,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	// LifecycleVersion and CompletionMode are frozen at creation. Snapshots
+	// written before lifecycle v2 decode as zero, which means v1/single_run.
+	LifecycleVersion LifecycleVersion `json:"lifecycle_version"`
+	CompletionMode   CompletionMode   `json:"completion_mode"`
+	// AutonomousRounds counts non-human wakes since the last accepted human
+	// input. It is a governor input only; this package does not enforce a cap.
+	AutonomousRounds int64     `json:"autonomous_rounds"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Entry struct {
@@ -124,6 +135,11 @@ type CreateParams struct {
 	Definition   Definition   `json:"definition"`
 	Source       Source       `json:"source"`
 	Input        string       `json:"input"`
+	// Lifecycle selects the goal lifecycle. The zero value (or v1) keeps the
+	// accepted single-run contract and the exact v1 create payload bytes, so a
+	// source replay across old and new binaries still matches.
+	Lifecycle      LifecycleVersion `json:"lifecycle_version,omitempty"`
+	CompletionMode CompletionMode   `json:"completion_mode,omitempty"`
 }
 
 type InputParams struct {
@@ -154,9 +170,10 @@ type ResumeParams struct {
 	ExpectedVersion int64  `json:"-"`
 }
 
-// ObserveIssueRunParams records a queue already accepted by the Coordinator's
-// existing Issue backend. It is never an instruction to dispatch a worker.
-type ObserveIssueRunParams struct {
+// ObserveBackendRunParams records a queue already accepted and validated by
+// the Host's existing backend adapter. It grants no permission to dispatch,
+// and the observation path remains unavailable to Direct/Employee-owned tasks.
+type ObserveBackendRunParams struct {
 	Source          Source `json:"source"`
 	QueueTaskID     string `json:"queue_task_id"`
 	GoalRevision    int64  `json:"goal_revision"`

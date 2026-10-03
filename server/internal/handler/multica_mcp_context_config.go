@@ -36,6 +36,9 @@ type multicaMCPContextConfigLinkResult struct {
 	// or "dm" (a 1:1 chat).
 	SceneKind string `json:"scene_kind"`
 	ExpiresAt string `json:"expires_at"`
+	// IncludesPerson: a 1:1 chat's link also opens its person's own level
+	// (个人能力), for the first DingTalk account that opens it.
+	IncludesPerson bool `json:"includes_person,omitempty"`
 }
 
 // multicaMCPContextConfigLinkVisible lists the tool only for task tokens while
@@ -68,6 +71,8 @@ func multicaMCPContextConfigLinkDefinition() map[string]any {
 				"scope":        map[string]any{"type": "string", "enum": []string{contextcap.ScopeScene}},
 				"scene_kind":   map[string]any{"type": "string", "enum": []string{contextcap.SceneKindGroup, contextcap.SceneKindDM}},
 				"expires_at":   map[string]any{"type": "string"},
+				"includes_person": map[string]any{"type": "boolean",
+					"description": "A 1:1 chat's link also opens the person's own level (个人能力) for the first DingTalk account that opens it."},
 			},
 			"required": []string{"url", "dingtalk_url", "scope", "scene_kind", "expires_at"},
 		},

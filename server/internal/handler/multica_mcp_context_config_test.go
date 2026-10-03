@@ -41,6 +41,9 @@ type ctxcapLinkResult struct {
 	Scope       string `json:"scope"`
 	SceneKind   string `json:"scene_kind"`
 	ExpiresAt   string `json:"expires_at"`
+	// IncludesPerson: a 1:1 chat's Host-appended link also opens its
+	// person's level; an executor's tool link never does.
+	IncludesPerson bool `json:"includes_person"`
 }
 
 func ctxcapToolResult(t *testing.T, got map[string]any) (ctxcapLinkResult, bool, string) {
@@ -214,10 +217,11 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 			t.Fatalf("rerun task minted a link: %s", text)
 		}
 	}
-	// A 1:1 chat is minted exactly like a group: the scene link of its own
-	// scene (the scene_id its openConversationId resolved to), whoever
-	// speaks. A digital employee's dispatch has no sender staffId, a merged
-	// window several speakers; neither matters.
+	// An executor's tool mints a 1:1 chat's link exactly like a group's: the
+	// scene link of its own scene (the scene_id its openConversationId
+	// resolved to), whoever speaks. Its result lands in the task's messages,
+	// which members who may read the run can see, so it never carries the
+	// chat's person (only the Host-appended link does, 2026-10-03).
 	f.registerDirectScene(t)
 	dmTask := f.task(t, ctxcapDWSDispatch("single", ctxcapDirectScene))
 	var dmToken string
@@ -227,8 +231,8 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 		"several speakers": f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)),
 	} {
 		dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, task, nil))
-		if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM {
-			t.Fatalf("%s: 1:1 mint isError=%v text=%q", name, isError, text)
+		if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM || dmLink.IncludesPerson {
+			t.Fatalf("%s: 1:1 mint isError=%v link=%+v text=%q", name, isError, dmLink, text)
 		}
 		ctxcapExpiresWithin(t, dmLink.ExpiresAt, contextcap.LinkTTLScene)
 		token := ctxcapLinkToken(t, dmLink)
@@ -279,8 +283,9 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapDirectScene), bob, nil), http.StatusOK, "bob 1:1 scene via link")
 
-	// No run mints personal links any more; one stored before (single use,
-	// 15 minutes) still redeems by the stored rules until it expires.
+	// A person link (a 1:1 chat's Host-appended link, or one stored before
+	// 2026-10-02) is consumed by its first account, which may reopen it while
+	// it holds the person's grant.
 	legacyPersonLink := func() string {
 		token, err := contextcap.NewLinkToken()
 		if err != nil {
@@ -296,8 +301,15 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	personToken := legacyPersonLink()
 	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "stored person link redeem")
+	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "person link reopened by its account")
 	ctxcapExpectStatus(t, redeem(bob, personToken), http.StatusGone, "stored person link reuse")
 	ctxcapExpectStatus(t, redeem(bob, legacyPersonLink()), http.StatusConflict, "stored person link redeemed by another account")
+	// A revoked grant is not restored by reopening the link.
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM context_config_grant WHERE user_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person'`,
+		alice, agentID); err != nil {
+		t.Fatal(err)
+	}
+	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusGone, "person link reopened after its grant was revoked")
 
 	// Grants from the links authorize the mobile page.
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapScene), bob, nil), http.StatusOK, "bob scene via link")
