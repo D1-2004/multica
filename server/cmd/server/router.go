@@ -2386,6 +2386,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+			r.Get("/agents/{agentId}/github-installations", h.ListContextConfigGitHubInstallations)
 			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
 			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
 			// Official apps added and connected from the page.
@@ -3086,6 +3087,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/github-installations", h.ListAgentGitHubInstallations)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.ListAgentContextRoutines)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.CreateAgentContextRoutine)

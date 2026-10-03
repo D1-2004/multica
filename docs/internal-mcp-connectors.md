@@ -346,9 +346,19 @@ desktop list refetches on focus, so the new account shows up on return.
   hands states with the `mcpc.` prefix to the connector callback before its
   install-cookie check; every other state keeps the GitHub App install flow.
   **The GitHub App's callback URL must stay `/api/github/authorize`.**
-  GitHub App user tokens only see repositories where the App is installed,
-  so the UI links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
-  (`install_url`, omitted when `GITHUB_APP_SLUG` is unset).
+  GitHub App user tokens do not use OAuth scopes (`scope` on the token
+  response is empty; requesting `repo` or `read:org` on the authorize URL
+  does not grant them). A token sees a repository only when this App is
+  installed on that account or organization and the signed-in user can
+  access it. One authorization already covers every installation of the
+  App. The configure page lists them
+  (`GET /api/context-capabilities/agents/{agentId}/github-installations`)
+  and links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
+  (`install_url`, omitted when `GITHUB_APP_SLUG` is unset) so a private
+  repository or another organization's repository is included by installing
+  the App there and selecting those repositories. A personal access token
+  cannot list installations (GitHub returns 403); the page says so instead
+  of pretending the token is an App installation.
 
   A workspace owner or admin can register that client on Settings →
   连接器配置, or with the same admin API

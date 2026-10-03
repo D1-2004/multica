@@ -39,6 +39,7 @@ const api = vi.hoisted(() => ({
   deleteSceneRoutine: vi.fn(),
   runSceneRoutine: vi.fn(),
   rotateSceneRoutineWebhook: vi.fn(),
+  listContextGitHubInstallations: vi.fn(),
 }));
 
 const { ApiError, errorCode } = vi.hoisted(() => {
@@ -215,6 +216,12 @@ beforeEach(() => {
   api.getContextConfigAgent.mockResolvedValue(agentDetail());
   api.getContextConfigScene.mockResolvedValue(sceneDetail);
   api.listSceneRoutines.mockResolvedValue([]);
+  api.listContextGitHubInstallations.mockResolvedValue({
+    connected: true,
+    installations: [],
+    error: "",
+    truncated: false,
+  });
   api.setContextCapabilityBinding.mockImplementation(
     async (
       _agentId: string,
@@ -911,6 +918,7 @@ describe("ContextConfigPage", () => {
         "href",
         githubConnector.installUrl,
       );
+      expect(api.listContextGitHubInstallations).not.toHaveBeenCalled();
       expect(within(dialog).getByText("get_me")).toBeInTheDocument();
 
       await user.click(within(dialog).getByRole("button", { name: copy.connect }));
@@ -945,6 +953,60 @@ describe("ContextConfigPage", () => {
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_failed));
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
       expect(within(dialog).getByRole("button", { name: copy.connect })).toBeEnabled();
+    });
+
+    it("lists GitHub App installations covered by the one authorization", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          person: {
+            ...person,
+            bindings: [connectorOn("conn-github")],
+            credentials: [{ connectorId: "conn-github", hint: "@dingtalk-fde", updatedAt: "", kind: "oauth" }],
+          },
+        }),
+      );
+      api.listContextGitHubInstallations.mockResolvedValue({
+        connected: true,
+        installations: [
+          {
+            id: 1,
+            accountLogin: "dingtalk-fde",
+            accountType: "User",
+            repositorySelection: "all",
+            settingsUrl: "https://github.com/settings/installations/1",
+          },
+          {
+            id: 2,
+            accountLogin: "acme",
+            accountType: "Organization",
+            repositorySelection: "selected",
+            settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+          },
+        ],
+        error: "",
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
+
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
+      const region = await screen.findByRole("region", { name: "Alice" });
+      const dialog = await openConnector(user, region, "GitHub");
+
+      expect(await within(dialog).findByText("@dingtalk-fde")).toBeInTheDocument();
+      expect(within(dialog).getByText("@acme")).toBeInTheDocument();
+      expect(dialog).toHaveTextContent(copy.install_org);
+      expect(dialog).toHaveTextContent(copy.install_selected);
+      expect(
+        within(dialog)
+          .getAllByRole("link", { name: copy.install_settings })
+          .map((link) => link.getAttribute("href")),
+      ).toContain("https://github.com/organizations/acme/settings/installations/2");
+      expect(api.listContextGitHubInstallations).toHaveBeenCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        "conn-github",
+      );
     });
 
     it("shows the connected account and disconnects only after confirmation", async () => {
