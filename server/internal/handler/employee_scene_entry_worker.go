@@ -36,7 +36,11 @@ import (
 // work plans (dispatch_task follow_up_steps, continue_plan, Host-dispatched
 // plan steps and their execution proof), refused tool calls that the model may
 // correct, and the autonomous-round governor.
-const EmployeeLoopReplicaMarker = "[employee-loop:13]"
+// Marker 14 adds quote-located task control: q1-style quoted candidates in
+// chat snapshots that continue_task and stop_task accept from a quote reply.
+// An older replica replays them with the old quote refusal, so they are
+// produced only when every live replica has 14.
+const EmployeeLoopReplicaMarker = "[employee-loop:14]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
