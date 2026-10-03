@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
@@ -19,7 +20,7 @@ import (
 
 type digestSliceTranscript []digest.TranscriptMessage
 
-func (s digestSliceTranscript) After(_ context.Context, _ digest.Queryer, _ digest.SceneKey, at time.Time, id string, limit int) ([]digest.TranscriptMessage, error) {
+func (s digestSliceTranscript) After(_ context.Context, _ pgx.Tx, _ digest.SceneKey, at time.Time, id string, limit int) ([]digest.TranscriptMessage, error) {
 	var out []digest.TranscriptMessage
 	for _, m := range s {
 		if at.IsZero() || m.SentAt.After(at) || m.SentAt.Equal(at) && m.ProviderMessageID > id {
@@ -31,7 +32,7 @@ func (s digestSliceTranscript) After(_ context.Context, _ digest.Queryer, _ dige
 	}
 	return out, nil
 }
-func (digestSliceTranscript) Before(context.Context, digest.Queryer, digest.SceneKey, time.Time, string, int) ([]digest.TranscriptMessage, error) {
+func (digestSliceTranscript) Before(context.Context, pgx.Tx, digest.SceneKey, time.Time, string, int) ([]digest.TranscriptMessage, error) {
 	return nil, nil
 }
 
