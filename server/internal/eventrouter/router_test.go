@@ -368,3 +368,41 @@ func TestAdmissionHookCommitsOnceAndNeverUpgradesHistoricalReplayDatabase(t *tes
 		t.Fatalf("historical fact got a new consumer: calls=%d replay=%v err=%v", calls, replay, err)
 	}
 }
+
+// An ExistingSceneOnly admission (observations) never registers or touches a
+// scene: an unknown locator is unmapped, a registered one is used as is.
+func TestExistingSceneOnlyNeverRegistersDatabase(t *testing.T) {
+	p := database(t)
+	ctx := context.Background()
+	h := fixtureHost(t, p)
+	h.ExistingSceneOnly = true
+	e := fixtureEvent()
+	e.Category = Observation
+	row, _, err := Admit(ctx, p, e, h)
+	if err != nil || row.State != Unmapped || row.SceneID.Valid || row.Reason != UnregisteredScene {
+		t.Fatalf("unknown scene: %+v, %v", row, err)
+	}
+	if _, err := scene.Lookup(ctx, db.New(p), h.Owner, h.Locator); !errors.Is(err, scene.ErrNotFound) {
+		t.Fatalf("observation registered a scene: %v", err)
+	}
+	registered, err := scene.Resolve(ctx, db.New(p), h.Owner, h.Locator, scene.Observation{KindStated: true, Title: "before", ActiveAt: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ID = "observation-2"
+	h.Observation = scene.Observation{KindStated: true, Title: "after", ActiveAt: time.Now()}
+	row, _, err = Admit(ctx, p, e, h)
+	if err != nil || row.State != Ready || row.SceneID != registered.ID {
+		t.Fatalf("registered scene: %+v, %v", row, err)
+	}
+	after, err := scene.Get(ctx, db.New(p), h.Owner, registered.ID)
+	if err != nil || after.Title != "before" || !after.LastActiveAt.Time.Equal(registered.LastActiveAt.Time) {
+		t.Fatalf("observation touched the scene: %+v, %v", after, err)
+	}
+	e.ID = "observation-3"
+	h.Locator.Kind = scene.KindDM
+	row, _, err = Admit(ctx, p, e, h)
+	if err != nil || row.State != Unmapped || row.Reason != "kind_conflict" {
+		t.Fatalf("kind conflict: %+v, %v", row, err)
+	}
+}
