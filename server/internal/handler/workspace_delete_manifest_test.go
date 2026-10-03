@@ -86,6 +86,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_scene_job":              workspaceDelete,
 	"employee_learning":               workspaceDelete,
 	"employee_learning_consumption":   workspaceDelete,
+	"employee_routine_occurrence":     workspaceDelete,
 	"employee_memory_state":           workspaceDelete,
 	"employee_run_notice":             workspaceDelete,
 	"employee_task_artifact":          workspaceDeleteSettle,
