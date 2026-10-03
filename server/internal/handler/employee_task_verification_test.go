@@ -82,6 +82,10 @@ func TestEmployeeVerificationReadsSealedRunArtifactAndDistillsOnce(t *testing.T)
 		t.Fatalf("records after failed read=%d %v", records, err)
 	}
 
+	// The durable trigger finds the Run without any notification.
+	if n, err := testHandler.ReconcileEmployeeVerifications(ctx, 100); err != nil || n < 1 {
+		t.Fatalf("pending verification n=%d %v", n, err)
+	}
 	result, err := testHandler.VerifyEmployeeRun(ctx, f.scope, f.task.ID, f.run.ID)
 	if err != nil || result.Gate.Status != employeeverification.GatePassed || !result.Intent {
 		t.Fatalf("verify %+v %v", result, err)

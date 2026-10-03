@@ -15,9 +15,10 @@ import (
 )
 
 // Host adapters for deterministic Employee Run verification (G1). Nothing in
-// the request path calls these yet: the Task lifecycle owner invokes
-// VerifyEmployeeRun from its terminal/CompleteGoal path, and the scene entry
-// worker calls ReconcileEmployeeVerifiedDistill beside ReconcileEmployeeLearnings.
+// the request path or worker calls these yet: activation adds
+// ReconcileEmployeeVerifications and ReconcileEmployeeVerifiedDistill to the
+// scene entry worker beside ReconcileEmployeeLearnings, and the Task lifecycle
+// owner may call VerifyEmployeeRun / GateTx before completing a goal.
 
 func (h *Handler) employeeVerifier() (*employeeverification.Verifier, error) {
 	database, ok := employeeEntryDB(h)
@@ -45,6 +46,26 @@ func (h *Handler) VerifyEmployeeRun(ctx context.Context, scope employeetask.Scop
 			"correct", result.Gate.Correct, "spec_revision", result.Gate.SpecRevision, "records", len(result.Records), "distill_intent", result.Intent)
 	}
 	return result, err
+}
+
+// ReconcileEmployeeVerifications is the durable verification trigger: it
+// verifies succeeded Runs whose Task has an active spec and no result under
+// the current spec digest. Fenced or failed attempts are logged and retried
+// on a later pass; nothing here calls a model.
+func (h *Handler) ReconcileEmployeeVerifications(ctx context.Context, limit int) (int, error) {
+	verifier, err := h.employeeVerifier()
+	if err != nil {
+		return 0, err
+	}
+	outcomes, err := verifier.ProcessPending(ctx, limit)
+	for _, o := range outcomes {
+		if o.Err != nil {
+			slog.WarnContext(ctx, "employee_task_verification_deferred", "task_id", o.TaskID, "run_id", o.RunID, "error", o.Err)
+			continue
+		}
+		slog.InfoContext(ctx, "employee_task_verification", "task_id", o.TaskID, "run_id", o.RunID, "gate", o.Gate, "distill_intent", o.Intent)
+	}
+	return len(outcomes), err
 }
 
 // ReconcileEmployeeVerifiedDistill consumes durable verified-distill intents

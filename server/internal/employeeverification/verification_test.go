@@ -437,3 +437,48 @@ func TestSetSpecReplayAndConflict(t *testing.T) {
 		t.Fatalf("current %+v %v", current, err)
 	}
 }
+
+// Durable trigger: succeeded Runs with an active spec are found without any
+// in-memory notification, verified once per spec digest, and fenced Runs are
+// never discovered.
+func TestVerificationPendingDiscoveryIsDurableAndOncePerSpec(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	pass := f.task(t, humanTaskSource, alice, "通过的任务")
+	f.spec(t, pass, OriginHumanCue, alice, reportChecks(t))
+	passRun := f.run(t, pass, employeetask.StateSucceeded, "done")
+	f.artifact(t, pass.ID, passRun, "report.csv", []byte(reportCSV))
+	fail := f.task(t, humanTaskSource, alice, "没交付的任务")
+	failSpec := f.spec(t, fail, OriginHumanCue, alice, reportChecks(t))
+	failRun := f.run(t, fail, employeetask.StateSucceeded, "PASS")
+	plain := f.task(t, humanTaskSource, alice, "没有完成标准")
+	f.run(t, plain, employeetask.StateSucceeded, "done")
+	cancelled := f.task(t, humanTaskSource, alice, "被取消")
+	f.spec(t, cancelled, OriginHumanCue, alice, reportChecks(t))
+	f.run(t, cancelled, employeetask.StateCancelled, "PASS")
+
+	outcomes, err := f.verifier().ProcessPending(ctx, 50)
+	if err != nil || len(outcomes) != 2 {
+		t.Fatalf("pending %+v %v", outcomes, err)
+	}
+	got := map[string]PendingOutcome{}
+	for _, o := range outcomes {
+		got[o.RunID] = o
+	}
+	if o := got[passRun.ID]; o.Err != nil || o.Gate != GatePassed || !o.Intent {
+		t.Fatalf("pass %+v", o)
+	}
+	if o := got[failRun.ID]; o.Err != nil || o.Gate != GateFailed || o.Intent {
+		t.Fatalf("fail %+v", o)
+	}
+	if again, err := f.verifier().ProcessPending(ctx, 50); err != nil || len(again) != 0 {
+		t.Fatalf("rediscovered %+v %v", again, err)
+	}
+	if _, err = f.store.SetSpec(ctx, f.scope, fail.ID, SetSpecParams{Origin: OriginHumanCue, SourceRef: "msg:relaxed", AuthorRef: alice, ExpectedRevision: failSpec.Revision, Checks: DeriveFromHumanText("完成标准：生成 report.csv")}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.verifier().ProcessPending(ctx, 50)
+	if err != nil || len(again) != 1 || again[0].RunID != failRun.ID || again[0].Gate != GateFailed {
+		t.Fatalf("changed spec %+v %v", again, err)
+	}
+}
