@@ -75,8 +75,10 @@
       "kind": "deap_actor",
       "agent_uuid": "41b554af-df66-4c0b-9611-35229b9f36cf",
       "open_ids": {
-        "director": "Do124gHNiPwuH7gthaNiShnhaye1bpB32kc"
-      }
+        "director": "Do124gHNiPwuH7gthaNiShnhaye1bpB32kc",
+        "self": "DzFpDMXt6mYuYEL9rAuvGWChRo50ACdeS"
+      },
+      "lease_note": "lease board 5598799a had no live leases at 2026-10-03T18:16; not connected/modified"
     }
   },
   "deap_pool": {
@@ -147,7 +149,7 @@
       "kind": "group",
       "name": "EL-E2E-1003-DE",
       "cid": "cid1aKA0Jmc1HO3/G3BrfyTHg==",
-      "scene_id": null,
+      "scene_id": "3d5e9ca7-02e8-4769-83af-14b71e754743",
       "members": [
         "director",
         "daiyu"
@@ -156,8 +158,9 @@
         "director"
       ],
       "created_by": "director",
-      "created_at": "2026-10-03T18:20:30+08:00",
-      "note": "DEAP-actor probe group (Director + Qwen-Real + 红楼·林黛玉); used to test DE-sent group lines and quote-reply auto-@"
+      "created_at": "2026-10-03T18:17:03+08:00",
+      "note": "DEAP-actor probe group (Director + Qwen-Real + 红楼·林黛玉); used to test DE-sent group lines and quote-reply auto-@",
+      "probe_result": "2026-10-03: plain DEAP line (EL-DE-PROBE-1) never reached EmployeeLoop; quote-reply to a Qwen-Real message rendered '@Qwen-Real …', admitted as a native @ event (trace 3d14c06e89204c7d9d678745609bedde, 2 calls) and answered in 5 s"
     }
   }
 }

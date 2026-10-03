@@ -89,13 +89,15 @@ def cmd_send(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     from el2e import driver
+    roles = dict(r.split("=", 1) for r in (args.role or []))
     return driver.run(Path(args.cases), args.run_id, only=[x for x in (args.only or "").split(",") if x],
-                      skip_gate=args.skip_gate)
+                      skip_gate=args.skip_gate, conversation=args.conversation, roles=roles or None)
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
     from el2e import evidence
-    return evidence.collect_run(args.run_id, only=[x for x in (args.only or "").split(",") if x])
+    return evidence.collect_run(args.run_id, only=[x for x in (args.only or "").split(",") if x],
+                                with_sls=not args.no_sls)
 
 
 def cmd_grade(args: argparse.Namespace) -> int:
@@ -133,10 +135,13 @@ def main(argv: list[str] | None = None) -> int:
     ru.add_argument("--run-id", required=True)
     ru.add_argument("--only")
     ru.add_argument("--skip-gate", action="store_true")
+    ru.add_argument("--conversation", help="override the case conversation (rerun elsewhere)")
+    ru.add_argument("--role", action="append", help="override a role, e.g. 主管=zhujue")
     ru.set_defaults(fn=cmd_run)
     c = sub.add_parser("collect")
     c.add_argument("--run-id", required=True)
     c.add_argument("--only")
+    c.add_argument("--no-sls", action="store_true")
     c.set_defaults(fn=cmd_collect)
     gr = sub.add_parser("grade")
     gr.add_argument("--run-id", required=True)

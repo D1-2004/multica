@@ -118,7 +118,7 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
     rec: dict[str, Any] = {
         "case_id": case["id"], "title": case["title"], "attempt": attempt, "run_id": run_id,
         "suite": spec.get("suite"), "scene": case.get("scene"), "roles": case["roles"], "vars": vars_,
-        "gate": gate, "started_at": iso(now()), "steps": [], "status": "running",
+        "gate": gate, "started_at": iso(now()), "steps": [], "status": "running", "override": case.get("override"),
         "employee": {"agent_id": reg["employee"]["agent_id"], "name": reg["employee"]["name"]},
     }
     write_json(out_path, rec)
@@ -248,7 +248,8 @@ def poll_optional(reg: dict[str, Any], conv: dict[str, Any], reader: str, since:
     return first
 
 
-def run(cases_path: Path, run_id: str, *, only: list[str], skip_gate: bool = False) -> int:
+def run(cases_path: Path, run_id: str, *, only: list[str], skip_gate: bool = False,
+        conversation: str | None = None, roles: dict[str, str] | None = None) -> int:
     spec = json.loads(Path(cases_path).read_text(encoding="utf-8"))
     rd = run_dir(run_id)
     manifest_path = rd / "manifest.json"
@@ -267,6 +268,14 @@ def run(cases_path: Path, run_id: str, *, only: list[str], skip_gate: bool = Fal
         selected.sort(key=lambda c: order[c["id"]])
     rc = 0
     for case in selected:
+        if conversation or roles:
+            # Rerun in another conversation / with other actors (e.g. to escape a polluted history);
+            # steps that name their own conversation keep it.
+            case = json.loads(json.dumps(case))
+            if conversation:
+                case["conversation"] = conversation
+            case["roles"].update(roles or {})
+            case["override"] = {"conversation": conversation, "roles": roles}
         rec = run_case(case, spec, run_id, rd, skip_gate=skip_gate)
         print(json.dumps({"case": case["id"], "attempt": rec["attempt"], "status": rec["status"],
                           "started_at": rec["started_at"], "ended_at": rec["ended_at"]}, ensure_ascii=False), flush=True)

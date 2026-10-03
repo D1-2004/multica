@@ -111,7 +111,9 @@ def attribute(rec: dict[str, Any], transcripts: dict[str, list[dict[str, Any]]],
                 entry["attributed_by"] = "quote"
                 by_step[step_msgs[quoted]].append(entry)
                 continue
-            if quoted and quoted in other_case_msgs:
+            if quoted:
+                # A reply quoting a message that is not one of this case's steps belongs elsewhere
+                # (another case, an aborted attempt or a human message we did not drive).
                 continue
             if span_end is not None and ts >= span_end:
                 continue
@@ -125,7 +127,7 @@ def attribute(rec: dict[str, Any], transcripts: dict[str, list[dict[str, Any]]],
                 if parse_dws_time(s["msg"]["createTime"]) <= ts + im.CLOCK_TOLERANCE:
                     owner = s["id"]
             if owner:
-                entry["attributed_by"] = "time" if not quoted else "time_quote_unknown"
+                entry["attributed_by"] = "time"
                 by_step[owner].append(entry)
     for msgs in by_step.values():
         msgs.sort(key=lambda e: (e["createTime"], e["messageId"]))
@@ -251,7 +253,15 @@ def validity(rd: Path, rec: dict[str, Any], attributed: dict[str, Any]) -> dict[
     restarts = restarts_in_window(list(uniq.values()), rec["started_at"], end)
     deploys = pipeline_runs_in_window(timeline, rec["started_at"], end)
     sls_ok = bool(sls.get("ok")) or any(r.get("kind") == "sls_server_starting" and r.get("ok") for r in timeline)
-    return {"window": [rec["started_at"], end], "restarts": restarts, "deploys_overlapping": deploys,
+    # The code a case ran on: the latest pipeline-66 run whose 预发 deploy finished before the case began.
+    live = None
+    for row in timeline:
+        dep = row.get("deploy") or {} if row.get("kind") == "pipeline" else {}
+        done = dep.get("completed_at")
+        if dep.get("status") == "SUCCESS" and done and parse_iso(done) <= parse_iso(rec["started_at"]):
+            if live is None or parse_iso(done) > parse_iso(live["deploy_completed"]):
+                live = {"runId": row.get("runId"), "deploy_completed": done, "releaseBranch": row.get("releaseBranch")}
+    return {"window": [rec["started_at"], end], "live_code": live, "restarts": restarts, "deploys_overlapping": deploys,
             "restart_source_ok": sls_ok, "valid": not restarts and not deploys}
 
 
@@ -378,6 +388,7 @@ def grade_run(run_id: str, *, baseline: str | None = None, refresh: bool = True,
                      "auto_verdict": res["auto_verdict"], "failed_checks": nfail, "reason": res["reason"][:300],
                      "known_gap": bool(res.get("known_gap")),
                      "model_calls": res["evidence"].get("model_calls_total"),
+                     "live_run": (res["validity"].get("live_code") or {}).get("runId"),
                      "max_calls_per_wake": res["evidence"].get("max_model_calls_per_wake"),
                      "trace_ids": [t["trace_id"] for t in res["evidence"].get("traces", [])],
                      "diff": diff_status(prev["verdict"] if prev else None, res["verdict"],

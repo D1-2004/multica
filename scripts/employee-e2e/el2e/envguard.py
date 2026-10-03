@@ -41,7 +41,8 @@ def pipeline_snapshot() -> dict[str, Any]:
 def sls_server_starts(start: _dt.datetime, end: _dt.datetime | None = None, *, retries: int = 2) -> dict[str, Any]:
     """Per-pod 'server starting' times from backend.log within [start, end]."""
     env = registry()["env"]["sls"]
-    query = f'__tag__:__user_defined_id__: {env["prehost_tag"]} and "server starting" and backend.log'
+    # The log path is a tag, not searchable text; backend.log is filtered locally below.
+    query = f'__tag__:__user_defined_id__: {env["prehost_tag"]} and "server starting"'
     args = ["normandy", "log", "list", "--source", "sls", "--project", env["project"], "--logstore",
             env["logstore"], "--query", query, "--from", iso(start), "--size", "100", "-o", "json"]
     if end is not None:
@@ -67,7 +68,7 @@ def sls_server_starts(start: _dt.datetime, end: _dt.datetime | None = None, *, r
     return {"ok": False, "from": iso(start), "error": last_err}
 
 
-def watch(run_dir: Path, *, pipeline_every_s: int = 150, sls_every_s: int = 300, stop_after_s: int = 6 * 3600) -> None:
+def watch(run_dir: Path, *, pipeline_every_s: int = 120, sls_every_s: int = 600, stop_after_s: int = 6 * 3600) -> None:
     """Append pipeline and SLS restart snapshots to env_timeline.jsonl until killed."""
     timeline = run_dir / "env_timeline.jsonl"
     started = now()

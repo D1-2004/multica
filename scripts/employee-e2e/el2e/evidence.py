@@ -258,7 +258,7 @@ def discover_scene_ids(rd: Path) -> dict[str, str]:
     return found
 
 
-def collect_run(run_id: str, *, only: list[str]) -> int:
+def collect_run(run_id: str, *, only: list[str], with_sls: bool = True) -> int:
     rd = run_dir(run_id)
     (rd / "evidence").mkdir(exist_ok=True)
     drivers = sorted((rd / "cases").glob("*.driver.json"))
@@ -285,7 +285,7 @@ def collect_run(run_id: str, *, only: list[str]) -> int:
     if changed:
         from .common import save_registry
         save_registry(reg)
-    if windows:
+    if windows and with_sls:
         start = min(w[0] for w in windows)
         end = max(w[1] for w in windows)
         write_json(rd / "evidence" / "sls_agent_lines.json", sls_agent_lines(start, end))
