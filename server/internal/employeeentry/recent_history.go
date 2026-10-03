@@ -142,7 +142,7 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	if err != nil {
 		return RecentConversation{}, err
 	}
-	if len(withdrawn.sources) > 0 {
+	if len(withdrawn.sources) > 0 || withdrawn.replies {
 		out.WithdrawnMemoryEvidenceOmitted = true
 		kept := out.Messages[:0]
 		for _, message := range out.Messages {
@@ -251,6 +251,8 @@ type recentWithdrawals struct {
 	sources       map[string]bool
 	notices, jobs []string
 	callbacks     []recentCallback
+	// replies is set when a capture's own confirmation was withdrawn.
+	replies bool
 }
 
 // Only exact, scoped memory_capture evidence withdraws dialogue. Never inspect
@@ -276,22 +278,53 @@ func (s *Store) withdrawnRecentEvidence(ctx context.Context, request RecentConve
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var receipt, job, message, replyReceipt, callback string
 		if err := rows.Scan(&receipt, &job, &message, &replyReceipt, &callback); err != nil {
+			rows.Close()
 			return out, err
 		}
 		out.sources[receipt+"/"+message] = true
-		if validID(job) {
-			out.jobs = append(out.jobs, job)
-			out.notices = append(out.notices, job, uuid.NewSHA1(uuid.MustParse(job), []byte("receipt:"+replyReceipt)).String())
+		out.withdrawReplies(job, replyReceipt, callback)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	// A capture grounded in other evidence (an overheard group line) names the
+	// admitted message that requested it. Its withdrawal hides that job's
+	// confirmation reply, which may repeat the value, but not the request.
+	rows, err = s.db.Query(ctx, `SELECT DISTINCT COALESCE(c.job_id::text,''),COALESCE(other.receipt_id::text,c.receipt_id::text),COALESCE(other.payload#>>'{command,completionCallback,responseUrl}',c.payload#>>'{command,completionCallback,responseUrl}','')
+ FROM employee_event_consumption c
+ JOIN employee_learning l ON l.workspace_id=c.workspace_id AND l.agent_id=c.agent_id AND l.tenant_org_id=c.tenant_org_id AND l.scene_id=c.scene_id
+ AND (l.superseded_by IS NOT NULL OR l.forgotten_at IS NOT NULL) AND l.record->>'capture_source_id'='employee-message:'||c.receipt_id::text
+ LEFT JOIN employee_event_consumption other ON other.job_id=c.job_id AND other.workspace_id=c.workspace_id AND other.agent_id=c.agent_id AND other.tenant_org_id=c.tenant_org_id AND other.scene_id=c.scene_id AND other.principal_id=c.principal_id
+ WHERE c.workspace_id=$1::uuid AND c.agent_id=$2::uuid AND c.tenant_org_id=$3 AND c.scene_id=$4::uuid AND c.principal_id=$5::uuid
+ AND (c.receipt_id::text=ANY($6::text[]) OR c.job_id::text=ANY($7::text[]))`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var job, replyReceipt, callback string
+		if err := rows.Scan(&job, &replyReceipt, &callback); err != nil {
+			return out, err
 		}
-		if pair, ok := recentReplyCallback(callback); ok {
-			out.callbacks = append(out.callbacks, pair)
-		}
+		out.replies = true
+		out.withdrawReplies(job, replyReceipt, callback)
 	}
 	return out, rows.Err()
+}
+
+func (w *recentWithdrawals) withdrawReplies(job, replyReceipt, callback string) {
+	if validID(job) {
+		w.jobs = append(w.jobs, job)
+		w.notices = append(w.notices, job, uuid.NewSHA1(uuid.MustParse(job), []byte("receipt:"+replyReceipt)).String())
+	}
+	if pair, ok := recentReplyCallback(callback); ok {
+		w.callbacks = append(w.callbacks, pair)
+	}
 }
 
 type recentCallback struct {

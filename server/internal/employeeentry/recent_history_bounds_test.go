@@ -110,3 +110,43 @@ func TestRecentConversationIncludesUnlinkedSceneHostSends(t *testing.T) {
 		t.Fatalf("another principal of the scene: %v %s", err, historyTexts(t, got))
 	}
 }
+
+// MEMX-W1: a capture grounded in an overheard line names the admitted request
+// as capture_source_id. Forgetting it hides that job's confirmation reply
+// (which repeats the value) but keeps the request itself.
+func TestRecentConversationHidesWithdrawnCaptureConfirmation(t *testing.T) {
+	for _, state := range []string{"active", "forgotten", "superseded"} {
+		t.Run(state, func(t *testing.T) {
+			f, before := recentHistoryDatabase(t)
+			scope, principal := f.admission.Scope, f.admission.Item.PrincipalID
+			receipt, job := recentHistoryInput(t, f, scope, principal, "记一下上面说的周报时间", "capture-request", before.Add(-10*time.Minute))
+			recentHistoryReply(t, f, scope, job, "delivered", "已记下：周报每周五 18 点前交", "capture-confirm", "cid-test", before.Add(-9*time.Minute))
+			_, laterJob := recentHistoryInput(t, f, scope, principal, "别的事", "later", before.Add(-5*time.Minute))
+			recentHistoryReply(t, f, scope, laterJob, "delivered", "别的回复", "later-reply", "cid-test", before.Add(-4*time.Minute))
+			record, _ := json.Marshal(map[string]string{"source_id": "dingtalk-message:" + scope.SceneID, "evidence_id": "overheard-line", "capture_source_id": "employee-message:" + receipt})
+			if _, err := f.pool.Exec(context.Background(), `INSERT INTO employee_learning(id,workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id,replay_key,record,superseded_by,forgotten_at) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,'scene','',$6,$7::jsonb,CASE WHEN $8='superseded' THEN $1::uuid ELSE NULL END,CASE WHEN $8='forgotten' THEN now() ELSE NULL END)`,
+				uuid.NewString(), scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.SceneID, strings.Repeat("c", 64), record, state); err != nil {
+				t.Fatal(err)
+			}
+			got, err := f.store.RecentConversation(context.Background(), RecentConversationRequest{Scope: scope, PrincipalID: principal, Before: before})
+			if err != nil {
+				t.Fatal(err)
+			}
+			texts := historyTexts(t, got)
+			withdrawn := state != "active"
+			if strings.Contains(texts, "周报每周五") == withdrawn || !strings.Contains(texts, "记一下上面说的周报时间") || !strings.Contains(texts, "别的回复") || got.WithdrawnMemoryEvidenceOmitted != withdrawn {
+				t.Fatalf("state=%s omitted=%v history=%s", state, got.WithdrawnMemoryEvidenceOmitted, texts)
+			}
+		})
+	}
+}
+
+func TestTranscriptDropsQuotesOfWithdrawnEvidence(t *testing.T) {
+	before := time.Date(2026, 10, 3, 11, 0, 0, 0, time.UTC)
+	b := transcriptBounds(before)
+	b.Evidence.WithdrawnEvidenceIDs["forgotten"] = true
+	got := BuildSceneTranscript([]TranscriptSource{{ID: "reply", SentAt: before.Add(-time.Minute), SenderOpenID: "h", Content: "同意", QuotedID: "forgotten", QuotedSender: "主管", QuotedContent: "周报周五 18 点前交"}}, transcriptReader, b)
+	if len(got.Lines) != 1 || got.Lines[0].Quoted != "" || !got.WithdrawnEvidenceOmitted {
+		t.Fatalf("quote of withdrawn evidence: %+v", got)
+	}
+}

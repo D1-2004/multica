@@ -196,7 +196,13 @@ func BuildSceneTranscript(sources []TranscriptSource, self TranscriptReader, b T
 			continue
 		}
 		line := TranscriptLine{MessageID: id, SentAt: m.SentAt.UTC(), Speaker: transcriptSpeaker(m.Sender), SenderRef: transcriptSenderRef(b.Org, m), Class: class, Text: text, Truncated: clipped || m.Truncated}
-		if quoted := strings.TrimSpace(m.QuotedContent); quoted != "" {
+		quoted := strings.TrimSpace(m.QuotedContent)
+		if quoted != "" && b.Evidence.WithdrawnEvidenceIDs[strings.TrimSpace(m.QuotedID)] {
+			// Quoting withdrawn evidence must not repeat it; the reply stays.
+			quoted = ""
+			out.WithdrawnEvidenceOmitted = true
+		}
+		if quoted != "" {
 			line.Quoted, clipped = clipTranscriptRunes(quoted, transcriptQuotedRunes)
 			line.QuotedSpeaker = transcriptSpeaker(m.QuotedSender)
 			line.Truncated = line.Truncated || clipped || m.QuotedTruncated
