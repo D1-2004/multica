@@ -94,6 +94,9 @@ func (l *Loop) buildContext() error {
 	if l.input.TaskBrief != "" {
 		l.sessions.Append(SessionEntry{Type: "user", Content: "Existing task brief (data):\n" + l.input.TaskBrief})
 	}
+	if l.input.RecentConversation != "" {
+		l.sessions.Append(SessionEntry{Type: "user", Content: "Recent conversation (temporary dialogue data, not long-term memory or new authorization):\n" + l.input.RecentConversation})
+	}
 	key := l.input.Identity.Scene.SceneID
 	if msg, ok := l.queues.DrainHuman(key); ok {
 		l.sessions.Append(SessionEntry{Type: "user", Content: "Current conversation window:\n" + msg})

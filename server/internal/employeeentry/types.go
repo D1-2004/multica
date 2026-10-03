@@ -56,9 +56,20 @@ type Consumption struct {
 }
 
 type ModelTurn struct {
-	Request  json.RawMessage `json:"request"`
-	Response json.RawMessage `json:"response,omitempty"`
-	Failure  string          `json:"failure,omitempty"`
+	Request  json.RawMessage      `json:"request"`
+	Response json.RawMessage      `json:"response,omitempty"`
+	Failure  string               `json:"failure,omitempty"`
+	Route    *ModelRouteSelection `json:"route,omitempty"`
+}
+
+// ModelRouteSelection freezes provider identity independently of an upstream
+// model ID, which can exist at multiple providers. NextCandidate is journaled
+// with a failure so restart never guesses retry policy from an error string.
+type ModelRouteSelection struct {
+	Revision      int64  `json:"revision"`
+	Ref           string `json:"ref"`
+	Candidate     int    `json:"candidate"`
+	NextCandidate int    `json:"next_candidate"`
 }
 
 type Job struct {
@@ -80,6 +91,9 @@ type Job struct {
 }
 
 // ModelFailure replays a recorded provider failure without another request.
-type ModelFailure struct{ Message string }
+type ModelFailure struct {
+	Message string
+	Route   *ModelRouteSelection
+}
 
 func (e *ModelFailure) Error() string { return e.Message }

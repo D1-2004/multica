@@ -1486,8 +1486,8 @@
     "agent_models": "Agent model choices",
     "agent_help": "Selected models appear in Agent settings. Migrate existing agents before removing a model in use.",
     "default_model": "Default model",
-    "coordinator": "Coordinator models",
-    "chain_help": "Configure the primary and fallback models in order. Failed calls try the next model without repeating completed actions.",
+    "coordinator": "Coordinator / EmployeeLoop models",
+    "chain_help": "Coordinator and EmployeeLoop share this primary and fallback model chain. Configure models in order; failed calls try the next model without repeating completed actions.",
     "add_fallback": "Add fallback model",
     "last_diamond": "Use the Diamond default as the final fallback",
     "save": "Save global settings",
@@ -1519,8 +1519,8 @@
     "catalog_count": "Showing {{visible}} / {{total}} models",
     "discovering": "Discovering and checking…",
     "bailian_discovered": "Bailian: checked {{checked}} text/tool models, kept {{count}}; {{unavailable}} rejected, {{unverified}} unverified. Save to apply.",
-    "diamond_help": "Append the Diamond Coordinator model after this fallback chain, skipping duplicates. It is also used before global models are configured.",
-    "coordinator_choice": "Coordinator model {{index}}"
+    "diamond_help": "Append the Diamond Coordinator model to the shared Coordinator / EmployeeLoop fallback chain, skipping duplicates. Both also use this default when no global models are configured.",
+    "coordinator_choice": "Coordinator / EmployeeLoop model {{index}}"
   },
   "tag": {
     "title": "Tag",

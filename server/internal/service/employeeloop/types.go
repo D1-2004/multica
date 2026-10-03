@@ -51,11 +51,12 @@ type Identity struct {
 // Input contains a single foreground wake and existing context snapshots.
 // All text fields are untrusted data and are sent as user messages, not authority.
 type Input struct {
-	Identity      Identity
-	CurrentWindow string
-	Memory        string
-	TaskBrief     string
-	FollowUps     []string
+	Identity           Identity
+	CurrentWindow      string
+	Memory             string
+	TaskBrief          string
+	FollowUps          []string
+	RecentConversation string `json:"RecentConversation,omitempty"`
 }
 
 // Persona contains trusted employee configuration, separate from conversation data.

@@ -418,6 +418,9 @@ function SharedAccountSection({
         </p>
       ) : null}
       {app.installUrl ? <InstallLink url={app.installUrl} /> : null}
+      {app.slug === "github" && app.installUrl ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.internal_mcp.catalog.install_note)}</p>
+      ) : null}
       {patOpen ? (
         <TokenForm
           inputId={`connector-pat-${connectorId}`}
