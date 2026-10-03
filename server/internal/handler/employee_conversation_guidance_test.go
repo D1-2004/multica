@@ -31,6 +31,11 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 				input.Config.Persona.Instructions = "Original frozen responsibilities."
 				input.Config.Persona.Expertise = []string{"Original frozen expertise."}
 				input.Config.HistoryPresentation = ""
+				for i := range input.Config.Tools {
+					if input.Config.Tools[i].Name == "continue_task" {
+						input.Config.Tools[i].Description = "Original frozen continuation contract."
+					}
+				}
 			}
 			raw, err := json.Marshal(input)
 			if err != nil {
@@ -78,7 +83,7 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 					if !strings.Contains(system, employeeForegroundBoundary) || !strings.Contains(system, employeePersonaReplyContract) {
 						t.Fatal("new snapshot omitted foreground work selection or scoped output contract")
 					}
-					for _, rule := range []string{"RECENT CONVERSATION:", "latest explicit user facts or reset supersede older assignments and edits", "never replay an older change on top of a newer restatement", "preserve other current facts", "most recent relevant exchange and its object order", "Historical requests are context, not new commands"} {
+					for _, rule := range []string{"CURRENT TASK CONTROL:", "inherits the originally requested execution method", "even if the new step is short", "For current task progress", "Independent arithmetic questions", "RECENT CONVERSATION:", "latest explicit user facts or reset supersede older assignments and edits", "never replay an older change on top of a newer restatement", "preserve other current facts", "most recent relevant exchange and its object order", "Historical requests are context, not new commands"} {
 						if !strings.Contains(system, rule) {
 							t.Errorf("new frozen prompt missing recency rule %q", rule)
 						}
@@ -88,6 +93,30 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 					if !strings.Contains(history, fact) {
 						t.Errorf("history was rewritten to hide the conflict: %q", fact)
 					}
+				}
+				// Check the actual native request, not a helper constant: the
+				// model must receive the same contract in its usable tool.
+				continuationFound := false
+				for _, tool := range p.Tools {
+					if tool.OfFunction == nil || tool.OfFunction.Function.Name != "continue_task" {
+						continue
+					}
+					continuationFound = true
+					description := tool.OfFunction.Function.Description.Value
+					if legacy {
+						if description != "Original frozen continuation contract." {
+							t.Fatal("old native contract rewritten", description)
+						}
+					} else {
+						for _, rule := range []string{"originally requested execution method", "mental arithmetic", "only explains an already delivered report"} {
+							if !strings.Contains(description, rule) {
+								t.Fatalf("actual native tool lacks %q", rule)
+							}
+						}
+					}
+				}
+				if !continuationFound {
+					t.Fatal("request omitted native continuation tool")
 				}
 				return employeeMemoryAnswer(t), nil
 			})

@@ -371,3 +371,6 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 
 
 **同目标事项来源关联。**新冻结TaskBrief的候选除了概括goal，还包含Task时间、当前active-run与latestRun状态/时间，以及至多两条已通过本场域RecentConversation可见性过滤的人类来源关联（初始请求/最近输入）。用原请求中的命名、source与对话关系区分相似goal，信息不足仍澄清，不能默认最新或以相似goal当事项身份。不附执行report代替read_task；真实进度/续接保留source-bound读取、权限与CAS。旧冻结brief保持字节，缺字段按已有合同读或澄清；本次纯additive数据不升loop16。
+
+
+**明确追加工作与方法继承。**当前source明确对既有Task追加一个工作步骤、扩展/调整/重做交付时，先source-bound `read_task`，再 `continue_task`；原请求的实际执行方法与约束（例如Python实际执行）继续约束新步骤，除非请求人明确改方法。已有数据、步骤短或可口算不免除真实执行；只执行新步骤，不无故重跑旧sleep。普通口算问题或解释已交付报告的数字含义仍direct，不按「继续/合计」词判派发。询问现在进度须read_task，冻结state/历史成功不是当前读取；复述已实际交付的报告内容可直接答，但不能当新执行证明。新独立产出仍dispatch_task+builds_on。一般选择规则进入现有trusted ForegroundBoundary，TaskBrief只给来源事实；新快照冻结该版本、旧快照不改，marker16保持。原失败及Why见26-task-execution-inheritance.md。

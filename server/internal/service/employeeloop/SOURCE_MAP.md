@@ -367,3 +367,21 @@ The Persona reply contract applies format after that work selection. All changes
 freeze only with new inputs; existing snapshots/journals, shared BuildPrompt,
 Host authorization and native tool effects are unchanged. See
 `docs/plans/2026-10-04/employee-g5-deliverable.md` and the exact failing LF trace.
+
+
+### Actual execution inheritance for an explicitly requested next Task step
+
+The 2026-10-04 BASE-TASK counterexample (new Task e0e27613, next-step source
+6f9dc7f6, trace 1d375634) answered a same-task computation directly instead of
+starting its required next Run. The fixed GawkBot task addressing and ledger
+patterns remain: the current source identifies the work and preserved constraints
+travel with it. Multica's `employeeTaskExecutionInheritancePolicy` is frozen into
+the existing trusted `employeeForegroundBoundary` of new Persona.Expertise
+snapshots, alongside native `continue_task` and candidate data guidance. It does
+not promote raw task data into system authority or change BuildPrompt globally.
+An explicit next work step inherits the requested actual-execution method; short
+or mentally computable steps do not waive it. Explaining a delivered report or
+answering independent arithmetic remains direct. Current progress uses read_task;
+frozen state is not a current read. Host has no language matcher, hidden model,
+new tool, execution path, or expanded permission. Old snapshots and native tools
+keep their accepted strings. See Plan26 and original-scope actual-IM verification.
