@@ -2365,7 +2365,7 @@
     "install_reconnect": "GitHub の認可が期限切れか、取り消されています。もう一度接続してください。",
     "install_pat": "GitHub はこの App のインストール一覧を返しませんでした。Personal Access Token はこのように動作します。見えるリポジトリはトークン自身の権限で決まります。GitHub App の認可なら、もう一度接続してください。",
     "install_covers": "現在カバーしているアカウントと Organization：",
-    "install_empty": "まだインストールがありません。「アカウントまたは Organization を追加」を押し、インストールページでプライベートリポジトリや他の Organization のリポジトリを選んでください。",
+    "install_empty": "まだリポジトリを選択していません。「アカウントまたは Organization を追加」を押し、インストールページで個人アカウントまたは Organization を選んでから、すべてのリポジトリか指定したリポジトリを選んでください。",
     "install_org": "Organization",
     "install_user": "個人アカウント",
     "install_all": "すべてのリポジトリ",

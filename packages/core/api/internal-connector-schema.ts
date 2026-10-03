@@ -225,6 +225,10 @@ export interface ContextGitHubInstallations {
   /** "" | "reconnect" | "not_github_app_token", or another code the page treats as a failure. */
   error: string;
   truncated: boolean;
+  /** GitHub's installation total, or the number of objects read when GitHub omitted it. */
+  totalCount: number;
+  /** Objects dropped before display: suspended, id 0, or an unusable login. */
+  filteredCount: number;
 }
 
 export const EMPTY_CONTEXT_GITHUB_INSTALLATIONS: ContextGitHubInstallations = {
@@ -232,6 +236,8 @@ export const EMPTY_CONTEXT_GITHUB_INSTALLATIONS: ContextGitHubInstallations = {
   installations: [],
   error: "malformed",
   truncated: false,
+  totalCount: 0,
+  filteredCount: 0,
 };
 
 export const ContextGitHubInstallationsSchema = z
@@ -250,6 +256,8 @@ export const ContextGitHubInstallationsSchema = z
       .default([]),
     error: z.string().optional().default(""),
     truncated: z.boolean().optional().default(false),
+    total_count: z.number().int().nonnegative().optional().default(0),
+    filtered_count: z.number().int().nonnegative().optional().default(0),
   })
   .transform(
     (value): ContextGitHubInstallations => ({
@@ -263,6 +271,8 @@ export const ContextGitHubInstallationsSchema = z
       })),
       error: value.error,
       truncated: value.truncated,
+      totalCount: value.total_count,
+      filteredCount: value.filtered_count,
     }),
   );
 
