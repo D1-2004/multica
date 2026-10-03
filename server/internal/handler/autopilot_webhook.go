@@ -455,6 +455,9 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if bindingProblem == "" && !signatureFailed {
+		h.selectWebhookDispatch(r.Context(), autopilot, &binding)
+	}
 	bindingJSON, err := json.Marshal(binding)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -123,7 +123,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议及类型化 scene job（见下文“内部 Task wake”）使用 `[employee-loop:12]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议、类型化 scene job（见下文“内部 Task wake”）、跨场域收集（见下文“跨场域收集”）及工作计划（见下文“计划与执行后续”）使用 `[employee-loop:13]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
@@ -134,6 +134,30 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 Claim 只领取本二进制支持的 job kind、wake kind 与 schema 版本，其余保持 pending 等待支持它的副本，不解码、不重试；同一场域内未完成的人类消息窗口先于 wake 领取，wake 不越过更新的人类输入。worker 在解码 Dispatch envelope 前按 kind 分流，未知 kind 以明确原因 hold。旧消息 envelope 的范围不一致仍按原逻辑重试，但第三次领取后 hold，不再每秒空转。
 
 wake 运行复用同一 lease/generation、模型 journal 与最多三次模型请求，只提供 `reply`/`stay_quiet`。Task 快照以 Background follow-up (data) 呈现，不是人类指令，不插入人类窗口；原生工具调用与结果一一配对。运行前和完成事务内都从 PG 重建 Task、原主体当前调用权限、原场域与请求者；停止、目标版本变化、权限撤销或绑定不一致均以原因 hold，且不调用模型或不入队发送；来源读取或输入构建的其他错误按有界重试，第三次领取后 hold。完成时最多一条 scene notice（ID 为 wake job ID）送到 Task 原会话与请求者，不使用原消息的 Router callback；同一事务写入 `employee_host_notice` 事实，使该 Host 发出的消息在送达确认后作为同场域、同主体的 assistant 历史出现在后续轮次（原 Task 来源消息的记忆证据被撤回时保守隐藏）。邀请与 watchdog 通知后续写入同一张表。模型失败只记录、不代发道歉。producer 须先确认 `TaskWakeProducerReady`（所有在线副本具备 marker 12）；未就绪时 `AdmitTaskWake` 返回 `ErrTaskWakeNotReady`。回滚到 marker 12 之前的二进制前须排空 pending wake：旧 worker 不按 kind 过滤，会对 wake 每秒重试。
+
+## 计划与执行后续（marker 13）
+
+`dispatch_task` 可带 `follow_up_steps`（1–7 个后续步骤，可标 `review_first`）：dispatch 的 prompt 即第 1 步，Task 建为 lifecycle v2 `explicit_goal`，同时冻结计划 revision 1（步骤、复审标记、后续动作预算 8、第 1 步 Run），存于 `employee_task_plan`。只有来源消息明确要求“前一步完成后再单独执行下一步”时才用；一次执行能做完的工作不拆步。带计划时保持默认完成通知。
+
+每个计划 Run 的终态事实（`employee.execution` 回执，且属于当前目标版本）由 Host 对账器消费一次，`(plan revision, Run)` 在 `employee_task_follow_up` 中唯一：
+- 成功且下一步无需复审：确定性派发下一步，不调用前台模型；新 Run 绑定原请求、原 job 与原主体，自身来源为 `employee_plan/<plan>/<Run>/run`。
+- 成功且下一步标了 `review_first`：入场一个 `execution.follow_up` wake（≤3 次模型请求，工具 `continue_plan`/`reply`/`stay_quiet`）；`continue_plan` 只能按计划原文启动下一步，wake 不继续则计划暂停、目标开 human_input 等待。
+- 最后一步成功：按计划授权确定性 `CompleteGoal`；新输入越过边界、等待未满足或 writer 未确认时不完成，只暂停。
+- 步骤失败：在该 Run 的结果通知之后暂停，开 human_input 等待，并向原会话发确定性说明（`employee_host_notice` 记为 `task_plan`）。步骤被取消（停止或 steer）只暂停，不另发说明。
+- Task 已停止：计划 stopped；目标版本变化或目标已完成：计划 superseded。
+- 本 plan revision 的后续动作达到预算，或 Task 连续自动推进达到 12 轮：暂停、等人并发确定性说明。
+
+普通终态事实仍是零模型事实。计划步骤 Run 的 Execution Event 与结果通知经 `employee_plan` 的 run_started、follow-up 的 next_run_id、原请求 source 与冻结输入校验；proof_version 升为 5，旧副本写下的 version 4 skip 会被重新评估。
+
+**自动推进上限（governor）**：每个非人类 wake 按其回执计一轮（`NoteAutonomousRound`，同一 wake 只计一次），确定性计划派发也计一轮；人类输入清零。超过 12 轮的 wake 不调用模型：v2 目标开 human_input 等待，并向原会话发一句确定性说明。
+
+**依赖释放**：v1 Task 的 Run 终态事务内调用 `ReleaseUpstreamWaitTx` 释放 `blocked_by` 依赖（savepoint 隔离失败）；v2 由计划完成释放；全部副本具备 marker 13 后，对账器补齐旧副本或失败时未释放的依赖。被释放的目标只回到 ready，不会被唤醒（目前没有计划授权依赖释放后的 wake）。
+
+**工具参数与沉默保护**：Host 对 `source_ref`/`task_ref`/`read_ref` 只去掉首尾空白与引号，去掉后仍须完全相同，journal 记录规范形式。Host 在任何效果之前拒绝的调用以 `employeeloop.ErrToolRefused` 返回给模型（附有效 ref），模型可在同一三次预算内改正。工具出错后模型选择 Quiet 或预算用尽时：若模型已写出回复文本则发送该文本；若窗口是单聊或 @ 了该员工则发一句诚实说明；未被点名的群聊仍可安静。
+
+**wake 回复发送前复核**：wake 回复入队后，若 Task 被停止、目标被纠正、wake job 丢失或场域不再服务，发送前抑制。
+
+**滚动**：计划派发、decision wake 与释放对账只在全部在线副本具备 marker 13 时运行。回滚到 marker 13 之前须先停止新计划并排空进行中的计划步骤：旧副本没有计划步骤的来源证明，会 hold 这些 Run 的结果通知。
 
 源码入口：`internal/employeeentry`、`internal/eventrouter`、
 `handler/employee_scene_entry*`、`internal/employeetask`、
@@ -191,16 +215,26 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 - 本版只上线读取端，生产代码不会创建 v2 Task。
 - 第一个 v2 producer 必须在全部副本都具备对应的 `[employee-loop:N]` 后才能开启。原因：旧二进制会把 v2 Run 成功当成目标完成。
 
-## 跨场域收集账本（taskinput，读取端）
+## 跨场域收集（taskinput + Employee 接线，marker 13）
 
-`internal/taskinput` 保存四类领域事实：collection、invitation、input 和 ready intent。没有外键；按工作区删除。
+`internal/taskinput` 保存四类领域事实：collection、invitation、input 和 ready intent。没有外键；按工作区删除。答复绑定、收齐判定和外发检查的规则见包注释与测试。
 
-- **答复绑定**：沿回复链最多 8 跳，到达邀请消息才算强绑定。群里没有引用的消息不算答复；单聊里只有唯一一个待答邀请时才接受无引用答复；同一人有多个待答邀请时返回歧义，不猜。本 Agent 自己、任何 bot、卡片和系统消息一律不计入。
-- **未登记私聊场域的参与者**：对还没有私聊场域的人，邀请以 `pending_scene` 写入，送达回执拿到会话后按 dm 回填场域；不按人造场域。
-- **收齐判定**：最后一个必答槽位填满时，在同一事务里写入唯一的 ready intent。
-- **外发检查**：发送前按最不受信的读者对最终字节做检查。
+**发起（原场域）**
+- `create_collection` 只在当前来源明确要求向具体的人收集时使用。参与者只能从“在本租户与该员工说过话”的提供方实名发言人中解析：重名、未出现过或群不明确时返回原因，由 Loop 向发起人澄清，不猜人。
+- 每份邀请的最终文本（Host 模板 + 模型写的问题）先过外发检查，命中原场域近期对话原文、私人记忆、密钥或配置链接就拒绝，不创建任何记录。
+- 同一个工具日志事务内依次写入：v2 explicit_goal Task（来源 `employee_scene`，复用场域消息的 TaskOrigin reader）、collection wait、collection、每个邀请一条 outbox 发送（action id 等于邀请的 delivery action id）和 B 场域历史事实（`employee_host_notice`，source_kind=invitation，principal 为该 Agent 的 dispatch endpoint 主体）。任一步失败整体回滚，只留下失败的工具回执。
+- 对没有私聊场域的人按 open id 发 1:1，邀请为 `pending_scene`；送达状态给出会话后按 dm 解析回填场域并补写历史事实。
+- 发起人原话明确要求提醒时，提醒计划经 `CollectionReminders` 钩子在同一事务写入；钩子未接入时拒绝该请求，不静默丢弃。
 
-本版没有接入工具或 producer，线上行为不变。
+**作答（B 场域）**
+- 聊天快照为每条来源消息冻结 Host 绑定：回复链 8 跳内指向邀请才是强绑定；群里无引用一律不绑；单聊只有唯一待答邀请才绑；多于一个为 ambiguous。本员工自己的消息、卡片/系统占位文本永不绑定。模型只看到发言人自己的问题。
+- `accept_collection_input` 只记录被绑定的那条消息原文；ambiguous 时只有单聊发言人自己的原话点明是哪一题（`reference_quote`）才可记录，否则先澄清。工具结果不含人数或进度。
+- 发送前 `BeforeCollectionInviteSend` 再核邀请仍有效、场域目录/租户/身份未变，并对最终字节再做外发检查；不通过的动作被抑制，由对账器记为 held 或 failed。
+
+**收齐与汇总**
+- 对账器（scene worker 的 5 秒循环）先把 outbox 送达事实写回邀请，再把每个 pending ready intent 在同一事务里转成 `collection.ready` wake（来源 `employee.task_wake/employee.collection`，event id 为 `<collection>/<revision>`，occurred_at 沿用 intent 冻结值），并标记 admitted。所有副本都具备 marker 13 之前，intent 一直保持 pending。
+- 汇总 wake 的快照带上冻结 revision 下的获准答案，只提供 reply。完成事务内依次完成 collection、解决 wait、完成目标，再写入唯一一条原场域消息；revision 已变或 collection 已关闭则 hold，不发送。模型三次都没给出回复时，Host 按答案确定性渲染一条汇总，不再调用模型。
+- 停止该 Task 时，在同一事务内取消其所有进行中的 collection。
 
 ## Webhook 可信入口（2026-10-03）
 
@@ -223,7 +257,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 
 ## 场域例行任务改走 Employee Direct（marker 12）
 
-**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备 `[employee-loop:12]`。
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 13）。
 
 **新路径的行为**
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。

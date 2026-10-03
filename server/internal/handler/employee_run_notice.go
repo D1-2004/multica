@@ -527,6 +527,9 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 		if in.EmployeeRunNoticeID != "" {
 			return &dingtalkresponse.SuppressSendError{Reason: "notice_binding_removed"}
 		}
+		if handled, wakeErr := h.beforeEmployeeTaskWakeSend(ctx, in); handled {
+			return wakeErr
+		}
 		return nil
 	}
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -223,6 +224,16 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		}
 	}
 
+	// A delivery whose frozen binding selected the Employee path runs only
+	// there; it never switches producer across retries.
+	employee, err := w.h.frozenWebhookEmployeeDispatch(ctx, delivery.ID)
+	if err != nil {
+		return true, w.retryOrFail(ctx, delivery, err)
+	}
+	if employee {
+		return true, w.dispatchEmployeeWebhook(ctx, delivery, autopilot, trigger, admitted, hasAdmittedRun)
+	}
+
 	run, dispatchErr := w.h.AutopilotService.DispatchAutopilotForWebhookDelivery(
 		ctx,
 		autopilot,
@@ -252,6 +263,79 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		)
 	}
 	return true, w.complete(ctx, delivery, deliveryStatusDispatched, run.ID, "")
+}
+
+// employeeWebhookReadinessDelay is how long a delivery frozen for the
+// Employee path waits while not every replica reads it (a rollback window).
+const employeeWebhookReadinessDelay = 30 * time.Second
+
+// dispatchEmployeeWebhook runs a delivery whose binding froze the Employee
+// path: its digest-checked envelope, the frozen payload allowlist and route
+// go to service.DispatchEmployeeWebhookRoutine, which admits one EmployeeTask
+// Direct execution for the delivery (or replays the one it admitted).
+func (w *WebhookDeliveryWorker) dispatchEmployeeWebhook(ctx context.Context, delivery db.WebhookDelivery, autopilot db.Autopilot, trigger db.AutopilotTrigger, admitted db.AutopilotRun, hasAdmittedRun bool) error {
+	if err := w.h.EmployeeRoutineReady(ctx); err != nil {
+		slog.Warn("webhook worker: employee path not ready; delivery waits",
+			"delivery_id", uuidToString(delivery.ID), "reason", err.Error())
+		_, deferErr := w.h.Queries.DeferClaimedWebhookDelivery(ctx, db.DeferClaimedWebhookDeliveryParams{
+			ID: delivery.ID, LeaseToken: delivery.LeaseToken,
+			AvailableAt: pgtype.Timestamptz{Time: time.Now().Add(employeeWebhookReadinessDelay), Valid: true},
+		})
+		_, deferErr = handleWebhookLeaseMutation("defer", delivery, deferErr)
+		return deferErr
+	}
+	settleFailed := func(reason string) error {
+		if hasAdmittedRun && admitted.Status == "running" && !admitted.TaskID.Valid {
+			if _, err := w.h.Queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{ID: admitted.ID, FailureReason: pgtype.Text{String: "webhook " + reason, Valid: true}}); err != nil {
+				return w.retryOrFail(ctx, delivery, fmt.Errorf("settle run: %w", err))
+			}
+			return w.complete(ctx, delivery, deliveryStatusFailed, admitted.ID, reason)
+		}
+		return w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, reason)
+	}
+	source, err := w.h.loadWebhookFrozenSource(ctx, delivery)
+	switch {
+	case errors.Is(err, errWebhookSourceDrift):
+		slog.Warn("webhook worker: stored delivery no longer rebuilds its accepted input",
+			"delivery_id", uuidToString(delivery.ID), "trigger_id", uuidToString(delivery.TriggerID))
+		return settleFailed(webhookSourceDigestMismatch)
+	case errors.Is(err, errWebhookStoredBodyInvalid):
+		return settleFailed(err.Error())
+	case err != nil:
+		return w.retryOrFail(ctx, delivery, err)
+	}
+	selected, problem, err := selectWebhookPayload(source.Envelope, source.Binding.PayloadFields)
+	if err != nil {
+		return w.retryOrFail(ctx, delivery, err)
+	}
+	run, err := w.h.AutopilotService.DispatchEmployeeWebhookRoutine(ctx, autopilot, service.WebhookRoutineDelivery{
+		DeliveryID: delivery.ID, TriggerID: trigger.ID, IdentityPolicy: source.IdentityPolicy, ProviderEventID: source.EventID,
+		ReceivedAt: source.ReceivedAt, SourceDigest: source.Digest, Event: source.Envelope.Event, Envelope: source.Payload,
+		PayloadFields: source.Binding.PayloadFields, Payload: selected, SelectionError: problem,
+		RoutineID: source.Binding.RoutineID, SceneID: source.Binding.SceneID, TenantOrgID: source.Binding.TenantOrgID,
+	})
+	if errors.Is(err, service.ErrWebhookRoutineGone) {
+		slog.Warn("webhook worker: employee routine binding changed after acceptance",
+			"delivery_id", uuidToString(delivery.ID), "trigger_id", uuidToString(delivery.TriggerID), "routine_id", source.Binding.RoutineID)
+		if hasAdmittedRun && admitted.Status == "running" && !admitted.TaskID.Valid {
+			return w.refuseAdmittedRun(ctx, delivery, admitted, webhookBindingChanged)
+		}
+		return w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, webhookBindingChanged)
+	}
+	if err != nil {
+		return w.retryOrFail(ctx, delivery, err)
+	}
+	if run.Status == "failed" {
+		reason := "employee webhook occurrence failed"
+		if run.FailureReason.Valid {
+			reason = run.FailureReason.String
+		}
+		return w.complete(ctx, delivery, deliveryStatusFailed, run.ID, reason)
+	}
+	if err := w.h.Queries.TouchAutopilotTriggerFiredAt(ctx, trigger.ID); err != nil {
+		slog.Warn("webhook worker: touch last_fired_at", "delivery_id", uuidToString(delivery.ID), "error", err)
+	}
+	return w.complete(ctx, delivery, deliveryStatusDispatched, run.ID, "")
 }
 
 // refuseAdmittedRun settles an admitted run that can no longer run on the

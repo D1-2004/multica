@@ -74,6 +74,10 @@ type sceneRoutineTrigger struct {
 	Kind     string `json:"kind"`
 	Cron     string `json:"cron,omitempty"`
 	Timezone string `json:"timezone,omitempty"`
+	// PayloadFields is a webhook's allowlist of JSON pointers into the
+	// normalized envelope that an Employee run reads; empty means
+	// /event and /eventPayload. Not settable from a chat.
+	PayloadFields []string `json:"payload_fields,omitempty"`
 }
 
 // sceneRoutineInput creates a routine.
@@ -92,6 +96,9 @@ type sceneRoutinePatch struct {
 	Enabled      *bool   `json:"enabled"`
 	Cron         *string `json:"cron"`
 	Timezone     *string `json:"timezone"`
+	// PayloadFields replaces a webhook's payload allowlist ([] restores the
+	// default). Not settable from a chat.
+	PayloadFields *[]string `json:"payload_fields"`
 }
 
 // sceneRoutineActor is who writes a routine: a configure-page member, or the
@@ -133,6 +140,11 @@ type sceneRoutineTriggerView struct {
 	NextRunAt        *string  `json:"next_run_at"`
 	NextRuns         []string `json:"next_runs"`
 	WebhookURLMasked string   `json:"webhook_url_masked,omitempty"`
+	// HasSigningSecret tells whether webhook requests must carry an
+	// X-Hub-Signature-256 HMAC; the secret itself is never returned.
+	HasSigningSecret bool `json:"has_signing_secret,omitempty"`
+	// PayloadFields is a webhook's effective payload allowlist.
+	PayloadFields []string `json:"payload_fields,omitempty"`
 	// WebhookURL is the full URL, returned only when the token was just
 	// minted (create, rotate).
 	WebhookURL string `json:"webhook_url,omitempty"`
@@ -226,6 +238,9 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 	}
 	switch in.Trigger.Kind = strings.TrimSpace(in.Trigger.Kind); in.Trigger.Kind {
 	case sceneRoutineTriggerCron:
+		if len(in.Trigger.PayloadFields) > 0 {
+			return in, routineInvalid("payload_fields are only valid for a webhook")
+		}
 		in.Trigger.Cron, in.Trigger.Timezone, err = normalizeRoutineSchedule(in.Trigger.Cron, in.Trigger.Timezone)
 		if err != nil {
 			return in, err
@@ -235,6 +250,9 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 			return in, routineInvalid("cron and timezone are only valid for a schedule")
 		}
 		in.Trigger.Cron, in.Trigger.Timezone = "", ""
+		if in.Trigger.PayloadFields, err = normalizeWebhookPayloadFields(in.Trigger.PayloadFields); err != nil {
+			return in, routineInvalid(err.Error())
+		}
 	default:
 		return in, routineInvalid("trigger.kind must be schedule or webhook")
 	}
@@ -277,29 +295,90 @@ func (h *Handler) routineIdentity(ctx context.Context, q *db.Queries, workspaceI
 }
 
 // sceneRoutineDMCounterpart finds who a configure-page routine of a dm scene
-// sends to: the sender of the scene's newest trusted inbound Coordinator job
-// (the server-written dispatch sender). A task in the 1:1 chat passes its own
+// sends to, from server-written facts of that scene only: the sender of its
+// newest trusted inbound Coordinator job, and the senders of the newest
+// messages the EmployeeLoop admitted there (an agent in employee mode has no
+// Coordinator jobs). The two must name the same single person; anything else
+// is dm_target_ambiguous, never a guess. A task in the 1:1 chat passes its own
 // sender instead. Only delivery uses it: a routine never runs with anyone's
 // personal layer.
 func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAgent, sceneID string) (sceneRoutineCounterpart, error) {
 	var cp sceneRoutineCounterpart
+	var coordinator string
 	err := h.DB.QueryRow(ctx, `SELECT
 			BTRIM(COALESCE(NULLIF(command #>> '{event,data,sender,openDingTalkId}', ''), command #>> '{event,data,sender,senderOpenDingTalkId}', ''))
 		FROM inbound_coordinator_job
 		WHERE agent_id = $2::uuid AND workspace_id = $1::uuid AND command #>> '{agent_scene,scene_id}' = $3
 		ORDER BY created_at DESC, id DESC
-		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&cp.OpenDingTalkID)
+		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&coordinator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
 	if err != nil {
 		return cp, err
 	}
-	if cp.OpenDingTalkID == "" {
+	senders := map[string]struct{}{}
+	if coordinator != "" {
+		senders[coordinator] = struct{}{}
+	}
+	employee, err := h.employeeDMSenders(ctx, a, sceneID)
+	if err != nil {
+		return cp, err
+	}
+	for _, sender := range employee {
+		senders[sender] = struct{}{}
+	}
+	switch len(senders) {
+	case 0:
 		return cp, routineRefusal(http.StatusConflict, "dm_target_unknown",
 			"this 1:1 chat has no message from its counterpart yet; send the agent a message there first")
+	case 1:
+		for sender := range senders {
+			cp.OpenDingTalkID = sender
+		}
+		return cp, nil
+	default:
+		return cp, routineRefusal(http.StatusConflict, "dm_target_ambiguous",
+			"this 1:1 chat's recent messages do not name one counterpart; create the routine from the chat instead")
 	}
-	return cp, nil
+}
+
+// employeeDMSenderWindow bounds how many of a 1:1 chat's newest admitted
+// Employee messages must agree on the counterpart.
+const employeeDMSenderWindow = 20
+
+// employeeDMSenders returns the distinct per-message senders among the newest
+// user messages the EmployeeLoop admitted in the scene: unheld consumptions
+// whose ready receipt and envelope name this scene. A message without its own
+// sender (a multi-person window) names nobody.
+func (h *Handler) employeeDMSenders(ctx context.Context, a contextCapAgent, sceneID string) ([]string, error) {
+	rows, err := h.DB.Query(ctx, `SELECT DISTINCT sender FROM (
+		SELECT BTRIM(COALESCE(m.value->>'senderOpenDingTalkId', '')) AS sender
+		FROM employee_event_consumption c
+		JOIN scene_event_receipt r ON r.id = c.receipt_id AND r.workspace_id = c.workspace_id AND r.agent_id = c.agent_id
+			AND r.tenant_org_id = c.tenant_org_id AND r.scene_id = c.scene_id
+		CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload #> '{command,event,data,messages}') = 'array'
+			THEN c.payload #> '{command,event,data,messages}' ELSE '[]'::jsonb END) WITH ORDINALITY m(value, ordinal)
+		WHERE c.workspace_id = $1::uuid AND c.agent_id = $2::uuid AND c.scene_id = $3::uuid AND c.owner_loop = 'employee'
+			AND c.state IN ('queued', 'completed', 'delegated') AND c.reason = '' AND r.reason = ''
+			AND r.route = 'unified' AND r.state = 'ready' AND r.envelope ->> 'category' = 'user_message'
+			AND c.payload #>> '{command,agent_scene,scene_id}' = c.scene_id::text
+		ORDER BY c.created_at DESC, m.ordinal DESC
+		LIMIT $4) recent
+		WHERE sender <> ''`, a.WorkspaceID, a.ID, sceneID, employeeDMSenderWindow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sender string
+		if err := rows.Scan(&sender); err != nil {
+			return nil, err
+		}
+		out = append(out, sender)
+	}
+	return out, rows.Err()
 }
 
 // createSceneRoutine creates a routine in sc, or updates the routine of sc
@@ -366,6 +445,11 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	trigger, webhookURL, err := h.createRoutineTrigger(ctx, qtx, ap, actor, in.Trigger)
 	if err != nil {
 		return sceneRoutineResult{}, err
+	}
+	if len(in.Trigger.PayloadFields) > 0 {
+		if err := writeTriggerPayloadFields(ctx, tx, trigger.ID, in.Trigger.PayloadFields); err != nil {
+			return sceneRoutineResult{}, fmt.Errorf("store payload fields: %w", err)
+		}
 	}
 	routine, err := contextcap.InsertRoutine(ctx, tx, contextcap.Routine{
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, SceneID: sceneID, TenantOrgID: sc.TenantOrgID, SceneKind: sc.SceneKind,
@@ -481,6 +565,15 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		}
 		scheduleChanged = schedule.Cron != trigger.CronExpression.String || schedule.Timezone != trigger.Timezone.String
 	}
+	var payloadFields []string
+	if patch.PayloadFields != nil {
+		if trigger.Kind != sceneRoutineTriggerHook {
+			return sceneRoutineResult{}, routineInvalid("payload_fields are only valid for a webhook")
+		}
+		if payloadFields, err = normalizeWebhookPayloadFields(*patch.PayloadFields); err != nil {
+			return sceneRoutineResult{}, routineInvalid(err.Error())
+		}
+	}
 	status := ap.Status
 	if patch.Enabled != nil {
 		status = "paused"
@@ -525,6 +618,11 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			ID: trigger.ID, PublishedByType: pgtype.Text{String: actor.Type, Valid: true}, PublishedByID: actor.id(),
 		}); err != nil {
 			return sceneRoutineResult{}, fmt.Errorf("stamp trigger publisher: %w", err)
+		}
+	}
+	if patch.PayloadFields != nil {
+		if err := writeTriggerPayloadFields(ctx, tx, trigger.ID, payloadFields); err != nil {
+			return sceneRoutineResult{}, fmt.Errorf("store payload fields: %w", err)
 		}
 	}
 	if status != ap.Status || scheduleChanged || instructions != ap.Description.String {
@@ -636,6 +734,51 @@ func (h *Handler) rotateSceneRoutineWebhook(ctx context.Context, routine context
 	return view, nil
 }
 
+// Bounds of a routine webhook signing secret, matching the autopilot
+// trigger API's floor.
+const (
+	sceneRoutineSecretMin = 16
+	sceneRoutineSecretMax = 256
+)
+
+// setSceneRoutineWebhookSecret sets or, with an empty secret, clears the HMAC
+// signing secret of a webhook routine. Webhook requests then need a valid
+// X-Hub-Signature-256 over their raw body. The secret is never returned or
+// logged; accepted deliveries record only its revision fingerprint. The URL
+// token is unchanged.
+func (h *Handler) setSceneRoutineWebhookSecret(ctx context.Context, a contextCapAgent, routine contextcap.Routine, actor sceneRoutineActor, secret string) (sceneRoutineView, error) {
+	ap, trigger, err := h.loadRoutineAutopilot(ctx, routine)
+	if err != nil {
+		return sceneRoutineView{}, err
+	}
+	if trigger.Kind != sceneRoutineTriggerHook {
+		return sceneRoutineView{}, routineInvalid("only a webhook routine has a signing secret")
+	}
+	secret = strings.TrimSpace(secret)
+	if secret != "" {
+		if len(secret) < sceneRoutineSecretMin || len(secret) > sceneRoutineSecretMax {
+			return sceneRoutineView{}, routineInvalid(fmt.Sprintf("signing_secret must be %d to %d characters", sceneRoutineSecretMin, sceneRoutineSecretMax))
+		}
+		for _, r := range secret {
+			if r < 0x21 || r == 0x7f {
+				return sceneRoutineView{}, routineInvalid("signing_secret must be printable without spaces")
+			}
+		}
+	}
+	params := db.SetAutopilotTriggerSigningSecretParams{ID: trigger.ID}
+	if secret != "" {
+		params.SigningSecret = pgtype.Text{String: secret, Valid: true}
+	}
+	updated, err := h.Queries.SetAutopilotTriggerSigningSecret(ctx, params)
+	if err != nil {
+		return sceneRoutineView{}, fmt.Errorf("set webhook signing secret: %w", err)
+	}
+	slog.InfoContext(ctx, "scene routine webhook signing secret changed", "routine_id", routine.ID, "actor_type", actor.Type,
+		"has_signing_secret", secret != "")
+	h.publish(protocol.EventAutopilotUpdated, a.WorkspaceID, actor.Type, util.UUIDToString(actor.id()), map[string]any{"autopilot": autopilotToResponse(ap, nil)})
+	return h.sceneRoutineView(ctx, routine, &ap, &updated)
+}
+
 // listSceneRoutines lists the routines of one scene.
 func (h *Handler) listSceneRoutines(ctx context.Context, a contextCapAgent, sceneID string) ([]sceneRoutineView, error) {
 	routines, err := contextcap.ListSceneRoutines(ctx, h.DB, a.WorkspaceID, a.ID, sceneID)
@@ -721,6 +864,14 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 		}
 	} else {
 		view.Trigger.WebhookURLMasked = h.routineWebhookURLMasked(*trigger)
+		view.Trigger.HasSigningSecret = trigger.SigningSecret.Valid && trigger.SigningSecret.String != ""
+		if h.DB != nil {
+			fields, err := readTriggerPayloadFields(ctx, h.DB, util.UUIDToString(trigger.ID))
+			if err != nil {
+				return sceneRoutineView{}, err
+			}
+			view.Trigger.PayloadFields = fields
+		}
 	}
 	runs, err := h.Queries.ListAutopilotRuns(ctx, db.ListAutopilotRunsParams{AutopilotID: ap.ID, Limit: 1})
 	if err != nil {

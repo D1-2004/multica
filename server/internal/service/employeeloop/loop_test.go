@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -581,4 +582,67 @@ func TestNoEffectTerminalBatchRepairsBeforeAnyHostExecution(t *testing.T) {
 			}
 		})
 	}
+}
+
+// refusingHost refuses the first effect call before attempting it, then
+// accepts the corrected call with a receipt.
+type refusingHost struct{ calls []ToolCall }
+
+func (h *refusingHost) Execute(_ context.Context, _ Identity, call ToolCall) (ToolResult, error) {
+	h.calls = append(h.calls, call)
+	if call.Arguments["source_ref"] != "good" {
+		return ToolResult{}, fmt.Errorf("%w: source_ref names no frozen source", ErrToolRefused)
+	}
+	return ToolResult{Content: "accepted", Receipt: "run-1", Terminal: &Decision{Kind: Dispatched, Reply: "我来处理"}}, nil
+}
+
+func TestRefusedEffectCallLeavesBudgetForACorrectedCall(t *testing.T) {
+	model := &scriptedRefusalModel{}
+	host := &refusingHost{}
+	loop := New(Config{Tools: []Tool{{Name: "dispatch_task", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": map[string]any{"type": "string"}}, "required": []string{"source_ref"}}}}}, model, host)
+	out, err := loop.Run(context.Background(), Input{Identity: Identity{Scene: scene.Ref{SceneID: "scene"}}, CurrentWindow: "do it"})
+	if err != nil || out.Kind != Dispatched || out.ModelCalls != 2 || len(host.calls) != 2 || len(out.Receipts) != 1 {
+		t.Fatalf("refusal ended the wake: %+v calls=%d err=%v", out.Decision, len(host.calls), err)
+	}
+	if len(out.ToolOutcomes) != 2 || out.ToolOutcomes[0].Error == "" || out.ToolOutcomes[0].Result.Receipt != "" {
+		t.Fatalf("refused outcome not preserved: %+v", out.ToolOutcomes)
+	}
+	// The refusal reached the model as the paired result of its own call.
+	second := model.requests[1]
+	paired := false
+	for _, message := range second.Messages {
+		if message.OfTool != nil && message.OfTool.ToolCallID == "call-bad" {
+			paired = true
+		}
+	}
+	if !paired {
+		t.Fatal("refusal was not returned as the paired tool result")
+	}
+	// A refusal that also carries a receipt is still a committed effect error.
+	host2 := &receiptRefusalHost{}
+	_, err = New(Config{Tools: []Tool{{Name: "dispatch_task", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": map[string]any{"type": "string"}}}}}}, &scriptedRefusalModel{}, host2).Run(context.Background(), Input{Identity: Identity{Scene: scene.Ref{SceneID: "scene"}}, CurrentWindow: "do it"})
+	if err == nil {
+		t.Fatal("a refusal after a committed receipt was retried")
+	}
+}
+
+type receiptRefusalHost struct{}
+
+func (receiptRefusalHost) Execute(context.Context, Identity, ToolCall) (ToolResult, error) {
+	return ToolResult{Receipt: "run-committed"}, fmt.Errorf("%w: journal failed", ErrToolRefused)
+}
+
+type scriptedRefusalModel struct {
+	requests []openai.ChatCompletionNewParams
+}
+
+func (m *scriptedRefusalModel) Chat(_ context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	m.requests = append(m.requests, p)
+	ref, id := "bad", "call-bad"
+	if len(m.requests) > 1 {
+		ref, id = "good", "call-good"
+	}
+	raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": "dispatch_task", "arguments": `{"source_ref":"` + ref + `"}`}}}}}}})
+	var out openai.ChatCompletion
+	return &out, json.Unmarshal(raw, &out)
 }

@@ -87,7 +87,7 @@ Keep it concise: state the result or an actionable failure. Do not list internal
 
 func employeeAutomationPrompt(compiled string, origin service.AutomationOrigin) string {
 	switch origin.Kind() {
-	case service.AutomationOriginSceneRoutine:
+	case service.AutomationOriginSceneRoutine, service.AutomationOriginSceneRoutineWebhook:
 		return compiled + "\n\n" + employeeRoutineOutputInstruction
 	default:
 		return employeeDirectPrompt(compiled)

@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/scene"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	openai "github.com/openai/openai-go/v3"
 )
 
@@ -330,7 +331,7 @@ func TestEmployeeTaskWakeProducerGateAndUnknownKindsHold(t *testing.T) {
 	f := employeeWakeDatabase(t)
 	ctx := context.Background()
 	f.h.EmployeeSceneWorker.ReplicaReady = func(context.Context) error {
-		return errors.New("live server replicas do not all support employee-loop:12")
+		return errors.New("live server replicas do not all support employee-loop:13")
 	}
 	if ready, err := f.h.EmployeeSceneWorker.TaskWakeProducerReady(ctx); ready || err == nil {
 		t.Fatalf("mixed replicas reported ready: %v %v", ready, err)
@@ -521,5 +522,61 @@ func TestEmployeeTaskWakeEnterpriseOriginHasNoConversation(t *testing.T) {
 	request := string(f.wake.requests[0])
 	if !strings.Contains(request, `\"recent_conversation\":\"not_applicable\"`) || !strings.Contains(request, `\"return_target\":\"none\"`) || strings.Contains(request, "Recent conversation") || strings.Contains(request, `"name":"reply"`) {
 		t.Fatalf("enterprise wake rendering: %s", request)
+	}
+}
+
+func TestEmployeeTaskWakeReplySuppressedWhenTaskStopsBeforeSend(t *testing.T) {
+	for _, tc := range []struct {
+		name, change, want string
+	}{{"delivered", "", "delivered"}, {"stopped", "cancelled", "cancelled"}, {"corrected", "corrected", "cancelled"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := employeeWakeDatabase(t)
+			ctx := context.Background()
+			wake := f.admit(t, "run-follow-up-send-"+tc.name)
+			if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); err != nil || !worked {
+				t.Fatalf("wake worker: %v %v", worked, err)
+			}
+			var actionID string
+			if err := testPool.QueryRow(ctx, `SELECT id FROM response_action WHERE agent_id=$1::uuid AND input->>'scene_notice_id'=$2`, f.agentID, wake.JobID).Scan(&actionID); err != nil {
+				t.Fatal(err)
+			}
+			// The requester stops (or corrects) the Task after the reply was
+			// committed to the outbox and before the provider send.
+			switch tc.change {
+			case "cancelled":
+				if _, err := testPool.Exec(ctx, `UPDATE employee_task SET state='cancelled' WHERE id=$1::uuid`, f.task.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "corrected":
+				if _, err := testPool.Exec(ctx, `UPDATE employee_task SET goal_revision=goal_revision+1 WHERE id=$1::uuid`, f.task.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := testPool.Exec(ctx, `DELETE FROM response_action WHERE agent_id=$1::uuid AND id<>$2`, f.agentID, actionID); err != nil {
+				t.Fatal(err)
+			}
+			provider := &employeeNoticeProvider{}
+			svc := dingtalkresponse.NewService(testPool, provider, nil)
+			svc.BeforeSend = f.h.BeforeEmployeeRunNoticeSend
+			runCtx, cancel := context.WithCancel(context.Background())
+			go svc.Run(runCtx)
+			t.Cleanup(func() {
+				cancel()
+				svc.WaitWithTimeout(context.Background(), 5*time.Second)
+			})
+			svc.Notify()
+			waitEmployeeNoticeAction(t, actionID, tc.want)
+			if tc.want == "cancelled" {
+				var code string
+				if err := testPool.QueryRow(ctx, `SELECT error_code FROM response_action WHERE id=$1`, actionID).Scan(&code); err != nil || !strings.Contains(code, "task_") {
+					t.Fatalf("suppression reason: %q %v", code, err)
+				}
+				if provider.sends.Load() != 0 {
+					t.Fatal("stopped Task's wake reply reached the provider")
+				}
+			} else if provider.sends.Load() != 1 {
+				t.Fatalf("wake reply sends=%d", provider.sends.Load())
+			}
+		})
 	}
 }

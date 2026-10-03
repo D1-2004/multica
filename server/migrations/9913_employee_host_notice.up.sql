@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS employee_host_notice (
     source_id text NOT NULL,
     origin_receipt_id uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT employee_host_notice_source_kind_check CHECK (source_kind IN ('task_wake', 'invitation', 'watchdog'))
+    CONSTRAINT employee_host_notice_source_kind_check CHECK (source_kind IN ('task_wake', 'invitation', 'watchdog', 'task_plan'))
 );

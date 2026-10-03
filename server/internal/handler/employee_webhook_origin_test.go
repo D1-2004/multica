@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -1009,5 +1010,68 @@ func TestEmployeeWebhookRejectedAttemptsHoldNoIdentity(t *testing.T) {
 	}
 	if runs, _ := e.counts(t); runs != 1 {
 		t.Fatalf("runs = %d", runs)
+	}
+}
+
+// A routine webhook gets its signing secret on its own admin route: managers
+// only, at least 16 printable characters, never returned or logged; webhook
+// requests then need a valid signature, and clearing it reverts to the token.
+// The in-scene MCP has no tool for it.
+func TestEmployeeWebhookRoutineSigningSecretRoute(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	sink := &syncBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	router := chi.NewRouter()
+	router.Route("/api/agents/{id}/tenants", func(r chi.Router) {
+		r.Use(RequireHumanActor)
+		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/webhook-signing-secret", e.f.h.SetAgentContextRoutineWebhookSecret)
+	})
+	routine := mustRoutineByAutopilot(t, e)
+	path := ctxNodePath(e.a.ID, ctxcapOrg, contextcap.ScopeScene, ctxcapScene) + "/routines/" + routine.ID + "/webhook-signing-secret"
+	secret := "SECRET-SEAM-" + uuid.NewString()
+
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, path, map[string]any{"signing_secret": "short"}), http.StatusBadRequest, "short secret")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, path, map[string]any{"signing_secret": "has space inside the secret value"}), http.StatusBadRequest, "spaced secret")
+	member := createPermissionTestMember(t, "secret-member-"+uuid.NewString()[:8]+"@example.test")
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE user_id = $1`, member) })
+	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodPut, path, map[string]any{"signing_secret": secret}), http.StatusForbidden, "plain member")
+
+	w := scenesAs(t, router, "", http.MethodPut, path, map[string]any{"signing_secret": secret})
+	ctxcapExpectStatus(t, w, http.StatusOK, "set secret")
+	if strings.Contains(w.Body.String(), secret) {
+		t.Fatalf("response echoes the secret: %s", w.Body.String())
+	}
+	var set struct {
+		Routine sceneRoutineView `json:"routine"`
+	}
+	ctxcapDecode(t, w, &set)
+	if !set.Routine.Trigger.HasSigningSecret || set.Routine.Trigger.WebhookURL != "" {
+		t.Fatalf("trigger view = %+v", set.Routine.Trigger)
+	}
+
+	body := []byte(`{"event":"deploy.finished"}`)
+	requireWebhookStatus(t, e.post(t, body, nil), http.StatusUnauthorized, "rejected")
+	accepted := requireWebhookStatus(t, e.post(t, body, map[string]string{"X-Hub-Signature-256": signBody(secret, body)}), http.StatusOK, "accepted")
+	if frozenColumns(t, accepted["delivery_id"].(string)).SecretRevision != webhookSecretRevision(secret) {
+		t.Fatal("accepted delivery does not record the secret revision")
+	}
+
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, path, map[string]any{"signing_secret": ""}), http.StatusOK, "clear secret")
+	requireWebhookStatus(t, e.post(t, body, nil), http.StatusOK, "accepted")
+
+	if strings.Contains(sink.String(), secret) {
+		t.Fatalf("logs contain the secret:\n%s", sink.String())
+	}
+	for _, kind := range []string{"group", "dm"} {
+		for _, def := range sceneConfigToolDefinitions(kind) {
+			tool, _ := def.(map[string]any)
+			schema, _ := json.Marshal(tool["inputSchema"])
+			if name, _ := tool["name"].(string); strings.Contains(name, "secret") || strings.Contains(string(schema), "signing_secret") {
+				t.Fatalf("in-scene MCP (%s) exposes the signing secret: %v", kind, tool["name"])
+			}
+		}
 	}
 }

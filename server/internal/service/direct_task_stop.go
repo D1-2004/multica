@@ -120,6 +120,10 @@ func (s *TaskService) StopDirectTaskTx(ctx context.Context, outer pgx.Tx, req Di
 	if err != nil {
 		return out, err
 	}
+	// A stopped goal stops collecting: its collections close in this transaction.
+	if err = closeTaskCollectionsTx(ctx, tx, out.Task, req.Source); err != nil {
+		return out, err
+	}
 	out.Changed = !out.Replayed
 	if !out.Replayed && req.RunID != "" {
 		switch out.Queue.Status {

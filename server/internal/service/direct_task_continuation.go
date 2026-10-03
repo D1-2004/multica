@@ -16,6 +16,9 @@ type PreparedDirectTask struct {
 	overlay     runtimeMCPOverlayData
 }
 
+// TaskVersion is the aggregate version the prepared execution was built from.
+func (p PreparedDirectTask) TaskVersion() int64 { return p.request.Task.Version }
+
 // PrepareDirectTask resolves external dependencies before a Host transaction.
 func (s *TaskService) PrepareDirectTask(ctx context.Context, request DirectTaskRequest) (PreparedDirectTask, error) {
 	if s == nil || s.Queries == nil || !request.PrincipalID.Valid {
@@ -87,6 +90,35 @@ func (s *TaskService) ContinueDirectTaskTx(ctx context.Context, tx pgx.Tx, prepa
 		return out, err
 	}
 	prepared.request.Task = resumed
+	out, err = s.enqueuePreparedDirectTaskTx(ctx, tx, prepared)
+	if err != nil {
+		return DirectTaskResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return DirectTaskResult{}, err
+	}
+	return out, nil
+}
+
+// StartPreparedDirectTaskTx queues the next execution of an idle Employee
+// goal (a Host-authorized plan step) inside the caller's transaction. A
+// savepoint keeps a business refusal from aborting the outer transaction; an
+// exact source replay returns the same queue row. The caller notifies only
+// after its outer commit.
+func (s *TaskService) StartPreparedDirectTaskTx(ctx context.Context, tx pgx.Tx, prepared PreparedDirectTask) (DirectTaskResult, error) {
+	var out DirectTaskResult
+	if s == nil || s.Queries == nil || tx == nil || len(prepared.contextJSON) == 0 {
+		return out, employeetask.ErrInvalid
+	}
+	p := prepared.request
+	if p.Task.OwnerLoop != employeetask.LoopEmployee || p.Task.Scope.Kind != employeetask.ScopeScene {
+		return out, employeetask.ErrInvalid
+	}
+	tx, err := tx.Begin(ctx)
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback(ctx)
 	out, err = s.enqueuePreparedDirectTaskTx(ctx, tx, prepared)
 	if err != nil {
 		return DirectTaskResult{}, err

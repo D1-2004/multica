@@ -26,6 +26,7 @@ type employeeTestModel struct {
 	quiet            bool
 	definition       *employeetask.Definition
 	completionNotice map[string]any
+	buildsOn         []string
 }
 
 func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -36,6 +37,9 @@ func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNew
 		arguments := map[string]any{"goal": "Analyze feedback", "prompt": "Analyze feedback and report the evidence", "reply": "我来分析这些反馈。", "source_ref": m.sourceRef}
 		if m.completionNotice != nil {
 			arguments["completion_notice_policy"] = m.completionNotice
+		}
+		if m.buildsOn != nil {
+			arguments["builds_on"] = m.buildsOn
 		}
 		if m.definition != nil {
 			arguments["deliverables"] = m.definition.Deliverables

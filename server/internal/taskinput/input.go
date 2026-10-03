@@ -297,7 +297,7 @@ func (s *Store) ReadOriginInputs(ctx context.Context, scope Scope, collectionID 
 		if err != nil {
 			return OriginView{}, err
 		}
-		view.Slots = append(view.Slots, OriginSlot{InvitationID: inv.ID, Ordinal: inv.Ordinal, ParticipantRef: inv.ParticipantRef,
+		view.Slots = append(view.Slots, OriginSlot{InvitationID: inv.ID, Ordinal: inv.Ordinal, ParticipantRef: inv.ParticipantRef, ParticipantLabel: inv.ParticipantLabel,
 			TargetSceneID: inv.TargetSceneID, Question: inv.Question, State: effectiveState(inv, now), Answer: answer})
 	}
 	return view, nil

@@ -169,7 +169,7 @@ func scanCollection(row pgx.Row) (collectionRow, error) {
 }
 
 const invitationColumns = `id::text, workspace_id::text, agent_id::text, tenant_org_id, task_id::text,
- collection_id::text, ordinal, collection_revision, COALESCE(target_scene_id::text,''), target_scene_kind, participant_ref,
+ collection_id::text, ordinal, collection_revision, COALESCE(target_scene_id::text,''), target_scene_kind, participant_ref, participant_label,
  authorization_scope, question, expires_at, delivery_state, delivery_attempt, delivery_action_id,
  delivery_outcome, delivery_error, provider_message_id, rendered_hash, effective_version, end_reason,
  end_source_namespace, end_source_key, delivered_at, answered_at, created_at, updated_at`
@@ -182,7 +182,7 @@ type invitationRow struct {
 func scanInvitation(row pgx.Row) (invitationRow, error) {
 	var i invitationRow
 	err := row.Scan(&i.ID, &i.Scope.WorkspaceID, &i.Scope.AgentID, &i.Scope.TenantOrgID, &i.TaskID,
-		&i.CollectionID, &i.Ordinal, &i.CollectionRevision, &i.TargetSceneID, &i.TargetSceneKind, &i.ParticipantRef,
+		&i.CollectionID, &i.Ordinal, &i.CollectionRevision, &i.TargetSceneID, &i.TargetSceneKind, &i.ParticipantRef, &i.ParticipantLabel,
 		&i.AuthorizationScope, &i.Question, &i.ExpiresAt, &i.State, &i.DeliveryAttempt, &i.DeliveryActionID,
 		&i.DeliveryOutcome, &i.DeliveryError, &i.ProviderMessageID, &i.RenderedHash, &i.EffectiveVersion, &i.EndReason,
 		&i.endSource.Namespace, &i.endSource.Key, &i.DeliveredAt, &i.AnsweredAt, &i.CreatedAt, &i.UpdatedAt)

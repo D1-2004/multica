@@ -12,8 +12,11 @@ import (
 )
 
 // Artifact is Host metadata for one file produced by a Run. The binding
-// fields come from employee_task_artifact, never from the model.
+// fields come from employee_task_artifact, or from a provider-confirmed
+// sandbox delivery of this Run's queue execution; never from the model.
 type Artifact struct {
+	// Ref overrides the evidence reference ("artifact:<id>" when empty).
+	Ref          string
 	AttachmentID string
 	TaskID       string
 	RunID        string
@@ -45,6 +48,33 @@ type runEvidence struct {
 	// Bytes holds the stored plaintext per attachment ID, read outside locks.
 	Bytes      map[string][]byte
 	Deliveries []Delivery
+	// Delivered are files the provider confirmed this Run's execution sent
+	// into the origin conversation; their bytes were downloaded by the Host
+	// outside locks. DeliveredDigest binds the receipt set they came from.
+	Delivered       []Artifact
+	DeliveredDigest string
+	// Unreadable lists delivered messages whose files the Host could not
+	// read (identity changed, unverifiable record, size bound).
+	Unreadable []string
+}
+
+// absenceRef names an "absent" verdict. A verdict that also saw delivered
+// receipts gets its own reference, so it never collides with a Host-only
+// verdict written by a replica that could not read deliveries.
+func (e runEvidence) absenceRef() string {
+	if e.DeliveredDigest != "" {
+		return "run-artifacts:" + e.RunID + "/delivered"
+	}
+	return "run-artifacts:" + e.RunID
+}
+
+func isAbsenceRef(ref string) bool { return strings.HasPrefix(ref, "run-artifacts:") }
+
+func (a Artifact) evidenceRef() string {
+	if a.Ref != "" {
+		return a.Ref
+	}
+	return "artifact:" + a.AttachmentID
 }
 
 // observation is one checker result before it becomes a durable Record.
@@ -63,12 +93,26 @@ func (e runEvidence) manifestDigest() string {
 		lines = append(lines, a.AttachmentID+"|"+a.SHA256+"|"+a.State+"|"+a.Filename)
 	}
 	sort.Strings(lines)
-	return sha256Hex([]byte(e.RunID + "\n" + strings.Join(lines, "\n")))
+	body := e.RunID + "\n" + strings.Join(lines, "\n")
+	if e.DeliveredDigest != "" {
+		// Kept out of the v1 form when there is no delivery, so replicas of
+		// either version compute the same digest for Host-only evidence.
+		body += "\ndelivered:" + e.DeliveredDigest
+	}
+	return sha256Hex([]byte(body))
+}
+
+// hostManifestDigest covers only Host-held artifacts; the delivered receipt
+// set is re-validated separately because its bytes come from the provider.
+func (e runEvidence) hostManifestDigest() string {
+	host := e
+	host.DeliveredDigest = ""
+	return host.manifestDigest()
 }
 
 func (e runEvidence) artifactNames() string {
-	names := make([]string, 0, len(e.Artifacts))
-	for _, a := range e.Artifacts {
+	names := make([]string, 0, len(e.Artifacts)+len(e.Delivered))
+	for _, a := range append(append([]Artifact(nil), e.Artifacts...), e.Delivered...) {
 		names = append(names, a.Filename)
 	}
 	sort.Strings(names)
@@ -83,7 +127,7 @@ func (e runEvidence) artifactNames() string {
 // never evidence (the GawkBot "check in the task's real workdir" rule).
 func (e runEvidence) boundArtifacts(name string) []Artifact {
 	var out []Artifact
-	for _, a := range e.Artifacts {
+	for _, a := range append(append([]Artifact(nil), e.Artifacts...), e.Delivered...) {
 		if a.Filename == name && a.RunID == e.RunID && a.TaskID == e.TaskID && a.QueueTaskID == e.QueueTaskID && a.GoalRevision == e.GoalRevision {
 			out = append(out, a)
 		}
@@ -114,13 +158,19 @@ func evaluate(c Check, e runEvidence) []observation {
 
 func evaluateArtifacts(c Check, e runEvidence, judge func(Check, Artifact, []byte) (Outcome, string)) []observation {
 	matches := e.boundArtifacts(c.File)
+	if len(matches) == 0 && len(e.Unreadable) > 0 {
+		// A delivered file exists that the Host could not read: its name is
+		// unknown, so neither pass nor fail is justified.
+		return []observation{{Check: c, Outcome: OutcomeUnknown, EvidenceRef: e.absenceRef(), EvidenceSHA256: e.manifestDigest(),
+			Detail: fmt.Sprintf("no readable artifact named %s; %d delivered file(s) could not be read by the Host (%s)", c.File, len(e.Unreadable), clip(strings.Join(e.Unreadable, "; "), 300))}}
+	}
 	if len(matches) == 0 {
-		return []observation{{Check: c, Outcome: OutcomeFailed, EvidenceRef: "run-artifacts:" + e.RunID, EvidenceSHA256: e.manifestDigest(),
+		return []observation{{Check: c, Outcome: OutcomeFailed, EvidenceRef: e.absenceRef(), EvidenceSHA256: e.manifestDigest(),
 			Detail: fmt.Sprintf("this run produced no artifact named %s (run artifacts: %s)", c.File, e.artifactNames())}}
 	}
 	out := make([]observation, 0, len(matches))
 	for _, a := range matches {
-		o := observation{Check: c, EvidenceRef: "artifact:" + a.AttachmentID, EvidenceSHA256: a.SHA256}
+		o := observation{Check: c, EvidenceRef: a.evidenceRef(), EvidenceSHA256: a.SHA256}
 		data, ok := e.Bytes[a.AttachmentID]
 		switch {
 		case a.State != "ready":
@@ -297,12 +347,32 @@ func quoteList(values []string) string {
 	return clip(strings.Join(quoted, ", "), 300)
 }
 
+// countedRecords drops "absent" verdicts once any record over real evidence
+// exists for the check: absence is the weakest evidence, and a replica that
+// could not see an evidence source must not override one that read the bytes.
+func countedRecords(records []Record) []Record {
+	real := false
+	for _, r := range records {
+		real = real || !isAbsenceRef(r.EvidenceRef)
+	}
+	if !real {
+		return records
+	}
+	out := make([]Record, 0, len(records))
+	for _, r := range records {
+		if !isAbsenceRef(r.EvidenceRef) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // checkStatus folds the records of one check for one Run. For content checks
-// a failure dominates (any wrong copy fails); for delivery any confirmed
-// receipt suffices.
+// a failure over real evidence dominates (any wrong copy fails); for delivery
+// any confirmed receipt suffices.
 func checkStatus(kind CheckKind, records []Record) Outcome {
 	passed, failed := false, false
-	for _, r := range records {
+	for _, r := range countedRecords(records) {
 		passed = passed || r.Outcome == OutcomePassed
 		failed = failed || r.Outcome == OutcomeFailed
 	}
@@ -350,7 +420,7 @@ func gateFor(spec Spec, records []Record) Gate {
 			}
 		case OutcomeFailed:
 			anyFailed = true
-			for _, r := range byCheck[c.ID] {
+			for _, r := range countedRecords(byCheck[c.ID]) {
 				if r.Outcome == OutcomeFailed {
 					g.Failed = append(g.Failed, r)
 				}

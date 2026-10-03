@@ -108,3 +108,22 @@ func TestGateFoldsRequiredChecksOnly(t *testing.T) {
 		t.Fatalf("proposed spec gated: %+v", g)
 	}
 }
+
+func TestAbsenceVerdictOnlyYieldsToRealEvidence(t *testing.T) {
+	absent := Record{EvidenceRef: "run-artifacts:r", Outcome: OutcomeFailed}
+	pass := Record{EvidenceRef: "dws-message-file:m/f", Outcome: OutcomePassed}
+	wrong := Record{EvidenceRef: "artifact:a", Outcome: OutcomeFailed}
+	for _, tc := range []struct {
+		records []Record
+		want    Outcome
+	}{
+		{[]Record{absent}, OutcomeFailed},
+		{[]Record{absent, pass}, OutcomePassed},
+		{[]Record{absent, pass, wrong}, OutcomeFailed},
+		{[]Record{{EvidenceRef: "run-artifacts:r/delivered", Outcome: OutcomeUnknown}, absent}, OutcomeFailed},
+	} {
+		if got := checkStatus(KindArtifactContents, tc.records); got != tc.want {
+			t.Errorf("%+v -> %s, want %s", tc.records, got, tc.want)
+		}
+	}
+}

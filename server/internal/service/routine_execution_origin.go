@@ -41,6 +41,9 @@ const AutomationOriginSceneRoutine AutomationOriginKind = "scene_routine"
 const (
 	routineSourceSchedule = "scene.routine.schedule"
 	routineSourceManual   = "scene.routine.manual"
+	// routineSourceWebhook is an accepted webhook delivery of a routine
+	// (employee_webhook_task.go).
+	routineSourceWebhook = "scene.routine.webhook"
 )
 
 // AutomationPrincipalKind distinguishes the authority an automation runs
@@ -194,6 +197,10 @@ func (o *sceneRoutineOrigin) DeliveryOwner() string                { return Auto
 func (o *sceneRoutineOrigin) PromptSHA256() string                 { return o.promptSHA }
 func (o *sceneRoutineOrigin) validatedFromPostgres()               {}
 func (o *sceneRoutineOrigin) routineFacts() RoutineOccurrenceFacts { return o.facts }
+func (o *sceneRoutineOrigin) routineIdentity() string              { return o.facts.RoutineID }
+
+// routineBoundOrigin is an automation origin that belongs to a scene routine.
+type routineBoundOrigin interface{ routineIdentity() string }
 
 // SceneRoutineOccurrenceOf returns the routine facts of a scene routine origin.
 func SceneRoutineOccurrenceOf(origin AutomationOrigin) (RoutineOccurrenceFacts, bool) {
@@ -274,7 +281,12 @@ func automationOriginRefJSON(ref AutomationOriginRef) json.RawMessage {
 // AutomationTaskSourceNamespaces are the employee_task.source_namespace
 // values of Tasks created by an automation origin. A Task-origin registry
 // keyed by Task.Source.Namespace dispatches these to LoadAutomationTaskOrigin.
-var AutomationTaskSourceNamespaces = []string{routineSourceSchedule, routineSourceManual}
+var AutomationTaskSourceNamespaces = []string{routineSourceSchedule, routineSourceManual, routineSourceWebhook}
+
+// automationTaskReceiptTables are the receipt tables of the automation kinds
+// whose Tasks a later wake may load. They share the identity columns used by
+// LoadAutomationTaskOrigin; the table names are constants, never input.
+var automationTaskReceiptTables = []string{"employee_routine_occurrence", "employee_webhook_occurrence"}
 
 // AutomationHistoryPolicyKind selects how a later wake of an automation Task
 // may read conversation history.
@@ -331,16 +343,22 @@ func LoadAutomationTaskOrigin(ctx context.Context, q AutomationOriginQuerier, sc
 	if q == nil || scope.Kind != employeetask.ScopeScene {
 		return out, ErrAutomationOriginInvalid
 	}
-	var queueID, receiptID, runID string
-	err := q.QueryRow(ctx, `SELECT o.queue_task_id::text,o.id::text,o.autopilot_run_id::text FROM employee_routine_occurrence o
+	var queueID, receiptID, runID, table string
+	for _, candidate := range automationTaskReceiptTables {
+		err := q.QueryRow(ctx, `SELECT o.queue_task_id::text,o.id::text,o.autopilot_run_id::text FROM `+candidate+` o
  JOIN employee_task t ON t.id=o.employee_task_id AND t.source_namespace=o.source AND t.source_key=o.source_event_id||'/definition'
  WHERE o.employee_task_id=$1::uuid AND o.workspace_id=$2::uuid AND o.agent_id=$3::uuid AND o.tenant_org_id=$4 AND o.scene_id=$5::uuid AND o.state='accepted'`,
-		taskID, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID).Scan(&queueID, &receiptID, &runID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return out, ErrAutomationOriginInvalid
+			taskID, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID).Scan(&queueID, &receiptID, &runID)
+		if err == nil {
+			table = candidate
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return out, fmt.Errorf("load automation task origin: %w", err)
+		}
 	}
-	if err != nil {
-		return out, fmt.Errorf("load automation task origin: %w", err)
+	if table == "" {
+		return out, ErrAutomationOriginInvalid
 	}
 	var queue db.AgentTaskQueue
 	if err := q.QueryRow(ctx, `SELECT id,agent_id,autopilot_run_id,context FROM agent_task_queue WHERE id=$1::uuid`, queueID).Scan(&queue.ID, &queue.AgentID, &queue.AutopilotRunID, &queue.Context); errors.Is(err, pgx.ErrNoRows) {
@@ -355,23 +373,26 @@ func LoadAutomationTaskOrigin(ctx context.Context, q AutomationOriginQuerier, sc
 	if origin.ReceiptID() != receiptID || origin.EmployeeTaskID() != taskID || origin.Scope() != scope {
 		return out, ErrAutomationOriginInvalid
 	}
-	facts, _ := SceneRoutineOccurrenceOf(origin)
+	routineID := ""
+	if bound, ok := origin.(routineBoundOrigin); ok {
+		routineID = bound.routineIdentity()
+	}
 	var sceneKind, creatorKind, creatorID string
-	err = q.QueryRow(ctx, `SELECT s.scene_kind,o.creator_kind,o.creator_id::text FROM employee_routine_occurrence o
+	err = q.QueryRow(ctx, `SELECT s.scene_kind,o.creator_kind,o.creator_id::text FROM `+table+` o
  JOIN agent_scene s ON s.id=o.scene_id AND s.workspace_id=o.workspace_id AND s.agent_id=o.agent_id AND s.tenant_org_id=o.tenant_org_id
  WHERE o.id=$1::uuid`, receiptID).Scan(&sceneKind, &creatorKind, &creatorID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The scene left the directory: the Task keeps its identity but has
 		// no deliverable scene and no readable history.
 		sceneKind = ""
-		err = q.QueryRow(ctx, `SELECT creator_kind,creator_id::text FROM employee_routine_occurrence WHERE id=$1::uuid`, receiptID).Scan(&creatorKind, &creatorID)
+		err = q.QueryRow(ctx, `SELECT creator_kind,creator_id::text FROM `+table+` WHERE id=$1::uuid`, receiptID).Scan(&creatorKind, &creatorID)
 	}
 	if err != nil {
 		return out, fmt.Errorf("load automation task scene: %w", err)
 	}
 	out.Origin, out.Scope = origin, origin.Scope()
 	out.Creator = AutomationPrincipal{Kind: AutomationPrincipalKind(creatorKind), ID: creatorID}
-	out.DeliveryAnchor = AutomationDeliveryAnchor{Owner: origin.DeliveryOwner(), SceneID: scope.Scene.SceneID, SceneKind: sceneKind, RoutineID: facts.RoutineID, AutopilotRunID: runID}
+	out.DeliveryAnchor = AutomationDeliveryAnchor{Owner: origin.DeliveryOwner(), SceneID: scope.Scene.SceneID, SceneKind: sceneKind, RoutineID: routineID, AutopilotRunID: runID}
 	out.HistoryPolicy = AutomationHistoryPolicy{Kind: AutomationHistoryNotApplicable}
 	switch sceneKind {
 	case scene.KindGroup, scene.KindDM:

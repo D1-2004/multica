@@ -162,6 +162,9 @@ func (s *Store) Create(ctx context.Context, p CreateParams) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	if err = validateBuildsOn(p.BuildsOn); err != nil {
+		return Task{}, err
+	}
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return Task{}, err
@@ -207,6 +210,10 @@ func (s *Store) Create(ctx context.Context, p CreateParams) (Task, error) {
 	} else {
 		_, err = insertEntry(ctx, tx, task, Entry{TaskID: task.ID, Seq: 1, Kind: "request", Source: p.Source, ActorRef: p.RequesterRef, GoalRevision: 1, Body: p.Input}, payload)
 		if err != nil {
+			return Task{}, err
+		}
+		// The request entry records the builds_on links it created.
+		if err = insertBuildsOn(ctx, tx, task, p.BuildsOn); err != nil {
 			return Task{}, err
 		}
 	}

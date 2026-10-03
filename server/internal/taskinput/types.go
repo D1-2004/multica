@@ -245,6 +245,7 @@ type Invitation struct {
 	TargetSceneID      string          `json:"target_scene_id"`
 	TargetSceneKind    string          `json:"target_scene_kind"`
 	ParticipantRef     string          `json:"participant_ref"`
+	ParticipantLabel   string          `json:"participant_label,omitempty"`
 	AuthorizationScope string          `json:"authorization_scope"`
 	Question           string          `json:"question"`
 	ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
@@ -324,11 +325,14 @@ func (r ReadyIntent) EvidenceRef() string { return "collection:" + r.EventID }
 // needs its scene up front. ParticipantRef is the normalized identity from the
 // Host's trusted identity bridge.
 type InvitationSpec struct {
-	TargetSceneID  string     `json:"target_scene_id,omitempty"`
-	TargetKind     string     `json:"target_kind,omitempty"`
-	ParticipantRef string     `json:"participant_ref"`
-	Question       string     `json:"question"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	TargetSceneID  string `json:"target_scene_id,omitempty"`
+	TargetKind     string `json:"target_kind,omitempty"`
+	ParticipantRef string `json:"participant_ref"`
+	// ParticipantLabel is the provider display name, for views only; it is
+	// never an identity.
+	ParticipantLabel string     `json:"participant_label,omitempty"`
+	Question         string     `json:"question"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 }
 
 type CreateCollectionParams struct {
@@ -446,13 +450,14 @@ type OriginViewer struct {
 }
 
 type OriginSlot struct {
-	InvitationID   string          `json:"invitation_id"`
-	Ordinal        int             `json:"ordinal"`
-	ParticipantRef string          `json:"participant_ref"`
-	TargetSceneID  string          `json:"target_scene_id"`
-	Question       string          `json:"question"`
-	State          InvitationState `json:"state"`
-	Answer         *Answer         `json:"answer,omitempty"`
+	InvitationID     string          `json:"invitation_id"`
+	Ordinal          int             `json:"ordinal"`
+	ParticipantRef   string          `json:"participant_ref"`
+	ParticipantLabel string          `json:"participant_label,omitempty"`
+	TargetSceneID    string          `json:"target_scene_id"`
+	Question         string          `json:"question"`
+	State            InvitationState `json:"state"`
+	Answer           *Answer         `json:"answer,omitempty"`
 }
 
 type OriginView struct {

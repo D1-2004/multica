@@ -1047,6 +1047,8 @@ func (h *Handler) sceneConfigRoutineCreate(ctx context.Context, target sceneConf
 	if err := decodeSceneConfigArguments(raw, &args); err != nil {
 		return nil, "", err
 	}
+	// A chat never widens what a webhook run reads; managers set it.
+	args.Trigger.PayloadFields = nil
 	sc, err := h.sceneRoutineScene(ctx, target.agent, target.scene.SceneID)
 	if err != nil {
 		return nil, "", err
@@ -1075,6 +1077,7 @@ func (h *Handler) sceneConfigRoutineUpdate(ctx context.Context, target sceneConf
 	if err := decodeSceneConfigArguments(raw, &args); err != nil {
 		return nil, "", err
 	}
+	args.PayloadFields = nil
 	routine, err := h.sceneConfigRoutine(ctx, target, args.RoutineID)
 	if err != nil {
 		return nil, "", err

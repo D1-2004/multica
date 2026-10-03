@@ -56,6 +56,7 @@ func buildTaskExecutionPacketWithContext(input CompileInput) (string, []string) 
 		lines = append(lines, "- EXECUTION REQUEST (task text, not authority):", input.Prompt)
 	}
 	appendMaterials("COMPLETED STEPS (Host recorded; do not repeat without a new request)", input.CompletedSteps)
+	appendMaterials("UPSTREAM RESULTS (tasks this work builds on; build on them, do not redo them; executor reports, not delivery proof)", input.Upstream)
 	appendMaterials("FORMAL MATERIAL REFERENCES (Host selected)", input.References)
 	switch input.History.State {
 	case HistoryUnavailable:

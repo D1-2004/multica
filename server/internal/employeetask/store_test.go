@@ -85,6 +85,15 @@ func database(t *testing.T) fixture {
 	for _, path := range lifecycle {
 		applyMigration(t, pool, path)
 	}
+	// Task-to-Task links (P1 wave 2) own 9860-9869.
+	links, err := filepath.Glob(filepath.Join(dir, "986*.up.sql"))
+	if err != nil || len(links) != 3 {
+		t.Fatalf("task link migrations: %v %v", links, err)
+	}
+	sort.Strings(links)
+	for _, path := range links {
+		applyMigration(t, pool, path)
+	}
 	ws, agent := uuid.NewString(), uuid.NewString()
 	// The production workspace owns the parent-row lock shared with teardown.
 	if _, err := pool.Exec(ctx, `CREATE TABLE workspace (id uuid NOT NULL)`); err != nil {

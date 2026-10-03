@@ -29,6 +29,10 @@ var (
 	ErrBusy             = errors.New("employee loop: wake already running")
 	ErrMissingReceipt   = errors.New("employee loop: effect has no host receipt")
 	ErrTerminalConflict = errors.New("employee loop: conflicting terminal tool results")
+	// ErrToolRefused marks a Host refusal made before any effect was attempted,
+	// such as an argument that names no frozen source. The model may correct
+	// the call within the same three-call budget; it is not a batch failure.
+	ErrToolRefused = errors.New("employee loop: tool call refused before any effect")
 )
 
 // Model performs exactly one provider request per invocation. When using

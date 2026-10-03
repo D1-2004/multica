@@ -264,7 +264,10 @@ func (l *Loop) executeTools(ctx context.Context) error {
 
 		if callErr != nil {
 			l.appendToolError(call, callErr)
-			if tool.Effect || result.Receipt != "" {
+			// A refusal before any effect leaves nothing committed: report it as a
+			// paired tool result and let the next model call correct it.
+			refused := errors.Is(callErr, ErrToolRefused) && strings.TrimSpace(result.Receipt) == ""
+			if (tool.Effect || result.Receipt != "") && !refused {
 				batchErr = errors.Join(batchErr, fmt.Errorf("tool %s failed: %w", call.Name, callErr))
 			}
 		} else {

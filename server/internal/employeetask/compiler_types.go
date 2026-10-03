@@ -27,13 +27,17 @@ type PacketHistory struct {
 // task text, not a source of permissions. Capabilities and ReturnAddress are Host
 // facts, never values copied from model tool arguments or user claims.
 type CompileInput struct {
-	Scope            Scope
-	PrincipalID      string
-	Definition       Definition
-	Prompt           string
-	Source           PacketMaterial
-	Corrections      []PacketMaterial
-	CompletedSteps   []PacketMaterial
+	Scope          Scope
+	PrincipalID    string
+	Definition     Definition
+	Prompt         string
+	Source         PacketMaterial
+	Corrections    []PacketMaterial
+	CompletedSteps []PacketMaterial
+	// Upstream holds the Host-selected latest successful reports of Tasks this
+	// work builds on: at most MaxUpstreamReferences, each Ref "upstream:<task
+	// id>" and each Body at most MaxUpstreamReportBytes.
+	Upstream         []PacketMaterial
 	References       []PacketMaterial
 	History          PacketHistory
 	Capabilities     []string

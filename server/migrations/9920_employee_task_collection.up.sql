@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS employee_task_invitation (
     target_scene_id uuid,
     target_scene_kind text NOT NULL CHECK (target_scene_kind IN ('dm', 'group')),
     participant_ref text NOT NULL CHECK (char_length(participant_ref) BETWEEN 1 AND 256),
+    -- Added by 9800 on databases that applied this file before it existed.
+    participant_label text NOT NULL DEFAULT '',
     authorization_scope text NOT NULL DEFAULT 'answer_own_question'
         CHECK (authorization_scope IN ('answer_own_question')),
     question text NOT NULL CHECK (char_length(question) BETWEEN 1 AND 2000),
@@ -86,6 +88,7 @@ CREATE TABLE IF NOT EXISTS employee_task_invitation (
     answered_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT employee_task_invitation_label_check CHECK (char_length(participant_label) <= 128),
     CONSTRAINT employee_task_invitation_scene_check CHECK (
         (delivery_state = 'pending_scene' AND target_scene_id IS NULL AND target_scene_kind = 'dm') OR
         (delivery_state IN ('pending_delivery', 'delivered', 'answered') AND target_scene_id IS NOT NULL) OR

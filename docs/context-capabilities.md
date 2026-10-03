@@ -1303,7 +1303,13 @@ arrives. There are no org-level or person-level routines.
   `context_scope_routine` row (migrations 9520–9522) binding it to its
   `scene_id`, tenant org and kind, with the 1:1 counterpart's
   `openDingTalkId` frozen at creation for delivery (the `person_staff_id`
-  column is no longer written or read). The autopilot
+  column is no longer written or read). The configure pages read the
+  counterpart from server-written facts of that scene only: the sender of
+  its newest Coordinator job and the per-message senders of the newest 20
+  user messages the EmployeeLoop admitted there (an agent in employee mode
+  has no Coordinator jobs). They must name one person; otherwise creation
+  answers `dm_target_ambiguous` (none yet: `dm_target_unknown`). A routine
+  created from the chat itself uses that task's own sender. The autopilot
   keeps the trigger, schedule and run history; scene-managed autopilots
   answer 409 `managed_by_scene` on the autopilot routes.
 - **Runs carry the scene.** Every run (cron, webhook, run now) carries
@@ -1328,13 +1334,33 @@ arrives. There are no org-level or person-level routines.
   @ in a group, the frozen counterpart in a 1:1 chat. The run's prompt asks
   the agent not to post the result itself. Completion is not routed through
   the Coordinator; the EmployeeLoop will take it over as a completion event.
+- **Webhook runs of an employee-mode agent.** When the agent is in employee
+  mode and every live replica advertises the EmployeeLoop marker, the
+  webhook ingress freezes `dispatch=employee_direct` in the delivery's
+  binding and the delivery worker runs it as one EmployeeTask Direct
+  execution (`service.DispatchEmployeeWebhookRoutine`, receipt
+  `employee_webhook_occurrence`, source `scene.routine.webhook`, event id
+  `delivery/<id>`), through the same admission core as schedule and run-now
+  occurrences. The delivery's own AutopilotRun is used (no planned_at, no
+  overlap rule); a retry replays the receipt. The packet carries only the
+  webhook's payload allowlist (`trigger.payload_fields`: JSON pointers into
+  the envelope, default `/event` and `/eventPayload`, frozen at acceptance,
+  at most 32 KiB selected, else the occurrence fails) as untrusted data.
+  The routine's notices stay the only sender. A delivery frozen for this
+  path never switches producer; while the marker is missing it waits.
+  `payload_fields` is set on the routine create/PATCH body by managers,
+  never from a chat.
 - **Rules.** Title and instructions are required; a schedule is a
   five-field cron in an IANA timezone (default Asia/Shanghai) and runs at
   most every 15 minutes. A routine with the same purpose (word set of the
   title), trigger kind, cron and timezone as an existing routine of the
   scene is updated instead of duplicated, and keeps its paused or running
   state. A webhook URL is shown in full only in the create and rotate
-  responses.
+  responses. A webhook routine may also require an HMAC signature
+  (`X-Hub-Signature-256` over the raw body): agent managers set or clear
+  its signing secret (16–256 printable characters) on a route of its own;
+  the secret is never returned or logged, views show only
+  `trigger.has_signing_secret`, and a chat cannot set it (no MCP tool).
 - **Who may change them.** `rights.edit_routines` follows the scene rights:
   agent managers (configure page and admin Context Builder). From a
   conversation, the config-qwen-tag-scene tools (§10) act for the scene
@@ -1345,9 +1371,11 @@ arrives. There are no org-level or person-level routines.
   `GET …/routines/{id}/runs` (`{runs: [{id, status, source, failure_reason?,
   created_at, completed_at}]}`, newest 30; reading needs only access to the
   scene). Admin:
-  the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`.
+  the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`,
+  plus `PUT …/routines/{id}/webhook-signing-secret` (`{signing_secret}`,
+  `""` clears; admin only).
   Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
-  `dm_target_unknown`, `agent_runtime_required`, `routine_duplicate`,
+  `dm_target_unknown`, `dm_target_ambiguous`, `agent_runtime_required`, `routine_duplicate`,
   `routine_paused`, `scene_kind_without_routines`, `routine_gone` (the
   autopilot was archived or lost its trigger outside the scene API; delete
   the routine, or create it again, which replaces the stale row).

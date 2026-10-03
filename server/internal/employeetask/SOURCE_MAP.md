@@ -88,6 +88,9 @@ symbol carries the Sustainable Use License.
 | `broker_tasks_lifecycle.go` `BlockedOn` / `unblockDependentsLocked` | Wait kind `task` (`WaitUpstreamTask`) stores a Task-to-Task blocked_by dependency with the upstream Task UUID in `ref_id`. It blocks completion like any mandatory wait; releasing it only on the upstream's real terminal fact is a later wiring step. |
 | `governor.go` turns since the last human checkpoint | `autonomous_rounds` counts non-human wakes (`NoteAutonomousRound`, source-deduplicated) and resets on accepted human input. No cap is enforced here. |
 
+| `context_assembler.go::upstreamOutcomesContext` "UPSTREAM RESULTS" with `upstream:<id>` manifest entries | `CompileInput.Upstream` renders at most three Host-selected upstream reports (4 KiB each) in `packet.go` under UPSTREAM RESULTS; ContextUsed records `upstream:<task id>`. `packet.go` gained this one `appendMaterials` call; nothing else in the copied builder changed. |
+| `broker_types.go` `DependsOn`/`BlockedOn`, `broker_tasks_lifecycle.go::unblockDependentsLocked` | `employee_task_link` (`links.go`): `builds_on` links are written with the request entry; `BlockOnTask` opens a `task` wait plus a `blocked_by` link, refusing a completed upstream, an upstream that did not land, another requester's task and cycles; `ReleaseUpstreamWaitTx` satisfies dependents only when the upstream's persisted state succeeded, and a failed or stopped upstream leaves them waiting (GawkBot keeps dependents of rejected work blocked). |
+
 Deliberately not ported: in-memory indexes, the unknown-state migration shim
 (PostgreSQL CHECKs reject unknown states instead), review/approval states, and
 the per-process governor pause channel.

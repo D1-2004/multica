@@ -85,7 +85,10 @@ func (h *Handler) ReconcileEmployeeRoutineRuns(ctx context.Context, limit int) (
 		return 0, nil
 	}
 	rows, err := h.DB.Query(ctx, `SELECT o.queue_task_id FROM autopilot_run ar
- JOIN employee_routine_occurrence o ON o.autopilot_run_id=ar.id AND o.autopilot_id=ar.autopilot_id AND o.state='accepted'
+ JOIN (SELECT autopilot_run_id,autopilot_id,queue_task_id FROM employee_routine_occurrence WHERE state='accepted'
+       UNION ALL
+       SELECT autopilot_run_id,autopilot_id,queue_task_id FROM employee_webhook_occurrence WHERE state='accepted') o
+   ON o.autopilot_run_id=ar.id AND o.autopilot_id=ar.autopilot_id
  JOIN agent_task_queue q ON q.id=o.queue_task_id AND q.autopilot_run_id=ar.id
  WHERE ar.status='running' AND q.status IN ('completed','failed','cancelled')
  ORDER BY q.completed_at NULLS FIRST, q.id LIMIT $1`, limit)

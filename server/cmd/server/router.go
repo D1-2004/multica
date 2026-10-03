@@ -970,7 +970,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:12")
+			return errors.New("live server replicas do not all support " + handler.EmployeeLoopReplicaMarker)
 		}
 		return nil
 	}
@@ -1131,7 +1131,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			employeeWatchdog.Ready = h.EmployeeSceneWorker.ReplicaReady
 		}
 		h.EmployeeWatchdog = employeeWatchdog
-		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeResponseSend(employeeWatchdog)
+		// Collection invitations pass their own fence; every other action keeps
+		// the watchdog and Run notice chain.
+		h.DingTalkResponses.BeforeSend = h.BeforeCollectionInviteSend(h.BeforeEmployeeResponseSend(employeeWatchdog))
 		h.EmployeeRunNoticeArtifacts = h.ListEmployeeTaskArtifacts
 		// Native dispatches complete to their own target. The worker exists
 		// whenever managed responses do, so queued native callbacks drain
@@ -2869,6 +2871,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/tasks/{taskId}/events", h.ListTaskRunEventsByUser)
 			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
 			r.With(handler.RequireHumanActor).Post("/api/employee-tasks/{id}/steer", h.SteerEmployeeTask)
+			// Read-only EmployeeTask projection; each handler applies its own
+			// originator/manager/exact-execution visibility.
+			r.Get("/api/employee-tasks", h.ListEmployeeTasks)
+			r.Get("/api/employee-tasks/{id}", h.GetEmployeeTask)
+			r.Get("/api/employee-tasks/{id}/entries", h.ListEmployeeTaskEntries)
+			r.Get("/api/employee-tasks/{id}/runs", h.ListEmployeeTaskRuns)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
 			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
 			r.Get("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.GetDSHSchedule)
@@ -3134,6 +3142,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/runs", h.ListAgentContextRoutineRuns)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/run", h.RunAgentContextRoutine)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/rotate-webhook", h.RotateAgentContextRoutineWebhook)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/webhook-signing-secret", h.SetAgentContextRoutineWebhookSecret)
 					r.Get("/skills", h.ListAgentSkills)
 					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills", h.SetAgentSkills)
 					r.With(h.RefuseTagEmployeeConfigWrites).Post("/skills/add", h.AddAgentSkills)

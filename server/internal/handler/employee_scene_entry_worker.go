@@ -24,9 +24,19 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-// EmployeeLoopReplicaMarker 12 adds typed scene jobs: claim filters by kind,
+// EmployeeLoopReplicaMarker 12 added typed scene jobs: claim filters by kind,
 // human input precedes Task wakes, and only this worker executes task_wake.
-const EmployeeLoopReplicaMarker = "[employee-loop:12]"
+// Marker 13 adds the scene_routine_webhook automation origin (a replica
+// without it fails the claim of a webhook routine's Direct execution closed,
+// so the webhook ingress freezes the Employee path only when all replicas
+// have 13) and cross-scene collections: the create/read/accept collection
+// tools and invitation bindings in chat snapshots, invitation sends whose
+// action id is the invitation's, and collection.ready wakes that carry the
+// authorized answers and complete the collection with their summary; plus
+// work plans (dispatch_task follow_up_steps, continue_plan, Host-dispatched
+// plan steps and their execution proof), refused tool calls that the model may
+// correct, and the autonomous-round governor.
+const EmployeeLoopReplicaMarker = "[employee-loop:13]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -46,6 +56,9 @@ type EmployeeSceneWorker struct {
 	handler          *Handler
 	store            *employeeentry.Store
 	model            employeeloop.Model
+	// CollectionReminders persists a requester-authorized reminder plan in the
+	// collection's creation transaction; nil refuses reminder requests.
+	CollectionReminders CollectionReminderRecorder
 	// origins resolves Tasks for task wakes; producers register their readers.
 	origins *employeeentry.TaskOriginRegistry
 	wake    chan struct{}
@@ -125,6 +138,12 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				}
 				cancel()
 			}
+			// Cross-scene collections: invitation delivery facts and ready wakes.
+			collectionCtx, collectionCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.ReconcileEmployeeCollections(collectionCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee collection reconciliation failed", "error", err)
+			}
+			collectionCancel()
 			// Stall episodes; Scan itself requires every live replica to
 			// understand the watchdog's notices.
 			if w.handler.EmployeeWatchdog != nil && time.Since(lastWatchdogScan) >= 30*time.Second {
@@ -147,6 +166,17 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				slog.WarnContext(ctx, "employee execution event reconciliation failed", "error", err)
 			}
 			executionCancel()
+			// Planned Runs advance only from recorded terminal facts above.
+			followUpCtx, followUpCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.handler.ReconcileEmployeeTaskFollowUps(followUpCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee task follow-up reconciliation failed", "error", err)
+			}
+			followUpCancel()
+			releaseCtx, releaseCancel := context.WithTimeout(ctx, 5*time.Second)
+			if _, err := w.handler.ReconcileEmployeeUpstreamReleases(releaseCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee upstream release reconciliation failed", "error", err)
+			}
+			releaseCancel()
 			select {
 			case <-ctx.Done():
 				return
@@ -196,14 +226,19 @@ type employeeSavedInput struct {
 	Config       employeeloop.Config            `json:"config"`
 	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
 	CurrentTasks []employeeCurrentTaskBinding   `json:"current_tasks,omitempty"`
+	// Invitations freezes the Host's binding of each source message to its
+	// sender's own collection invitations (accept_collection_input).
+	Invitations []employeeInvitationBinding `json:"invitations,omitempty"`
 	// TaskWake is the typed return target of a task_wake job; nil for chat.
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
 }
 type employeeSavedOutcome struct {
-	Outcome        employeeloop.Outcome `json:"outcome"`
-	Failure        string               `json:"failure,omitempty"`
-	SourceReplies  map[string]string    `json:"source_replies,omitempty"`
-	ReplyReceiptID string               `json:"reply_receipt_id,omitempty"`
+	Outcome employeeloop.Outcome `json:"outcome"`
+	Failure string               `json:"failure,omitempty"`
+	// Rescue names a deterministic Host correction of the final outcome.
+	Rescue         string            `json:"rescue,omitempty"`
+	SourceReplies  map[string]string `json:"source_replies,omitempty"`
+	ReplyReceiptID string            `json:"reply_receipt_id,omitempty"`
 }
 
 func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, returnErr error) {
@@ -326,6 +361,13 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 					host.attachCapabilityReplies(&saved.Outcome)
 					host.repairCopiedConfigLinks(runCtx, &saved.Outcome)
 				}
+				generated, refused := employeeRefusedReplyText(saved.Outcome)
+				if err == nil && refused && saved.Outcome.Kind == employeeloop.Quiet && (generated != "" || employeeWindowAddressed(envelopes)) {
+					// A tool error must not silence an addressed source or drop a
+					// reply the model already wrote. Deterministic: no model call.
+					saved.Outcome.Kind, saved.Outcome.Reply = employeeloop.Reply, firstNonEmpty(generated, employeeRefusedToolFallbackReply)
+					saved.Rescue = "quiet_after_refused_tool"
+				}
 				if err != nil {
 					saved.Failure = err.Error()
 					replies, unresolved := employeeAcceptedReplies(saved.Outcome)
@@ -340,6 +382,10 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 						saved.Outcome.Reply = employeeContinuationFailureReply(saved.Outcome)
 						if saved.Outcome.Reply == "" {
 							saved.Outcome.Reply = employeeStopFailureReply(saved.Outcome)
+						}
+						if saved.Outcome.Reply == "" && generated != "" {
+							// The budget ended after refusals: send what was written.
+							saved.Outcome.Reply, saved.Rescue = generated, "budget_after_refused_tool"
 						}
 						if saved.Outcome.Reply == "" {
 							saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
@@ -365,6 +411,64 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 	}
 	committed = true
 	return true, nil
+}
+
+const employeeRefusedToolFallbackReply = "抱歉，这条消息我这次没能正常回复，麻烦再发一次。"
+
+// employeeRefusedReplyText reports whether any tool call of the turn failed
+// or was rejected, and the last reply text the model wrote in such a call.
+func employeeRefusedReplyText(outcome employeeloop.Outcome) (string, bool) {
+	executed, failed := map[string]bool{}, map[string]bool{}
+	for _, effect := range outcome.ToolOutcomes {
+		executed[effect.NativeToolCallID] = true
+		if effect.Error != "" {
+			failed[effect.NativeToolCallID] = true
+		}
+	}
+	refused, text := false, ""
+	for _, entry := range outcome.Entries {
+		if entry.Message == nil {
+			continue
+		}
+		for _, call := range entry.Message.ToolCalls {
+			// A call with no Host outcome was rejected before execution.
+			if executed[call.ID] && !failed[call.ID] {
+				continue
+			}
+			refused = true
+			if call.Function.Name != "reply" && call.Function.Name != "describe_capabilities" {
+				continue
+			}
+			var args struct {
+				Reply string `json:"reply"`
+			}
+			if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil && strings.TrimSpace(args.Reply) != "" {
+				text = strings.TrimSpace(args.Reply)
+			}
+		}
+	}
+	return text, refused
+}
+
+// employeeWindowAddressed is true when a source in the window is a 1:1
+// message or @-mentions this employee's DWS identity.
+func employeeWindowAddressed(envelopes []employeeDispatchEnvelope) bool {
+	for _, env := range envelopes {
+		if kind, ok := scene.KindFromConversationType(env.Command.Event.Data.Conversation.Type); ok && kind == scene.KindDM {
+			return true
+		}
+		if env.Command.ExternalIdentity.DWS == nil || env.Command.ExternalIdentity.DWS.UID == "" {
+			continue
+		}
+		for _, message := range env.Command.Event.Data.Messages {
+			for _, mention := range message.Mentions {
+				if mention.UID == env.Command.ExternalIdentity.DWS.UID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // retryPersisted keeps the original retry for a frozen-input defect, bounded
@@ -415,6 +519,13 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
 	if err != nil {
 		return employeeSavedInput{}, err
+	}
+	var invitations string
+	if input.Invitations, invitations, err = w.invitationContext(ctx, job, envelopes); err != nil {
+		return employeeSavedInput{}, err
+	}
+	if invitations != "" {
+		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
 	}
 	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
 	if err != nil {

@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// Upstream result bounds keep a dependent work packet small: GawkBot's
+// upstreamOutcomesContext clips each outcome; here the Host renders at most
+// three reports of at most 4 KiB each.
+const (
+	MaxUpstreamReferences  = 3
+	MaxUpstreamReportBytes = 4 << 10
+)
+
 // Compile canonicalizes intent and assembles an already-authorized work packet.
 // It performs no retrieval, model calls, persistence, cursor movement or resume.
 func Compile(input CompileInput) (WorkPacket, error) {
@@ -27,7 +35,16 @@ func Compile(input CompileInput) (WorkPacket, error) {
 	if err := validatePacketMaterial(input, input.Source); err != nil {
 		return WorkPacket{}, err
 	}
-	for _, materials := range [][]PacketMaterial{input.Corrections, input.CompletedSteps, input.References, input.History.Items} {
+	if len(input.Upstream) > MaxUpstreamReferences {
+		return WorkPacket{}, fmt.Errorf("%w: at most %d upstream results", ErrInvalid, MaxUpstreamReferences)
+	}
+	for _, material := range input.Upstream {
+		id, ok := strings.CutPrefix(material.Ref, "upstream:")
+		if !ok || !validUUID(id) || len(material.Body) > MaxUpstreamReportBytes {
+			return WorkPacket{}, fmt.Errorf("%w: upstream result needs an upstream:<task id> ref and at most %d bytes", ErrInvalid, MaxUpstreamReportBytes)
+		}
+	}
+	for _, materials := range [][]PacketMaterial{input.Corrections, input.CompletedSteps, input.Upstream, input.References, input.History.Items} {
 		for _, material := range materials {
 			if err := validatePacketMaterial(input, material); err != nil {
 				return WorkPacket{}, err
