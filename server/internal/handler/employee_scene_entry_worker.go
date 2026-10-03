@@ -42,7 +42,13 @@ import (
 // produced only when every live replica has 14.
 // It also covers invitation reminders and goal-wait stall notices: replicas
 // below 14 do not fence reminder sends in BeforeSend.
-const EmployeeLoopReplicaMarker = "[employee-loop:14]"
+// Marker 15 adds B3's routine.decision task wakes (employee_decide routine
+// occurrences: the routine TaskOriginReader, the decision wake extension and
+// its run_routine/wait tools); a replica below 15 cannot read them, so such
+// occurrences are admitted only when every live replica has 15. Memory
+// snapshot fields (brief manifest, transcript refs, memory tools v2) stay on
+// their own [employee-memory:N] markers and the shared v1 history validator.
+const EmployeeLoopReplicaMarker = "[employee-loop:15]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

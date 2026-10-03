@@ -127,7 +127,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议、类型化 scene job（见下文“内部 Task wake”）、跨场域收集（见下文“跨场域收集”）、工作计划（见下文“计划与执行后续”）使用 `[employee-loop:13]` 副本标记，引用定位的 `q` 候选使用 `[employee-loop:14]`；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议、类型化 scene job（见下文“内部 Task wake”）、跨场域收集（见下文“跨场域收集”）、工作计划（见下文“计划与执行后续”）使用 `[employee-loop:13]` 副本标记，引用定位的 `q` 候选使用 `[employee-loop:14]`，`employee_decide` 例行任务的 `routine.decision` task wake 使用 `[employee-loop:15]`；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
@@ -261,7 +261,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 
 ## 场域例行任务改走 Employee Direct（marker 12）
 
-**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 14）。
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 15）。
 
 **新路径的行为**
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
