@@ -202,6 +202,25 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 			)
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, webhookBindingChanged)
 		}
+	} else {
+		// An admitted run that has not reached its issue or task yet is
+		// dispatched with the autopilot snapshot loaded above. It may only run
+		// on the target it was accepted for: if the assignee, mode, routine
+		// scene or tenant changed since, or the routine's scene is no longer
+		// usable, the run is settled as skipped instead of being re-routed.
+		pending, err := w.h.admittedWebhookRunAwaitsDispatch(ctx, admitted)
+		if err != nil {
+			return true, w.retryOrFail(ctx, delivery, err)
+		}
+		if pending {
+			refusal, err := w.h.admittedWebhookRunRefusal(ctx, delivery, autopilot, trigger)
+			if err != nil {
+				return true, w.retryOrFail(ctx, delivery, err)
+			}
+			if refusal != "" {
+				return true, w.refuseAdmittedRun(ctx, delivery, admitted, refusal)
+			}
+		}
 	}
 
 	run, dispatchErr := w.h.AutopilotService.DispatchAutopilotForWebhookDelivery(
@@ -233,6 +252,25 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		)
 	}
 	return true, w.complete(ctx, delivery, deliveryStatusDispatched, run.ID, "")
+}
+
+// refuseAdmittedRun settles an admitted run that can no longer run on the
+// target it was accepted for: the run is skipped with the reason and the
+// delivery is ignored with the run linked, so nothing runs elsewhere.
+func (w *WebhookDeliveryWorker) refuseAdmittedRun(ctx context.Context, delivery db.WebhookDelivery, run db.AutopilotRun, reason string) error {
+	slog.Warn("webhook worker: admitted run refused, its accepted target changed",
+		"delivery_id", uuidToString(delivery.ID),
+		"trigger_id", uuidToString(delivery.TriggerID),
+		"run_id", uuidToString(run.ID),
+		"reason", reason,
+	)
+	if _, err := w.h.Queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
+		ID:            run.ID,
+		FailureReason: pgtype.Text{String: "webhook " + reason + ": the accepted target changed before dispatch", Valid: true},
+	}); err != nil {
+		return w.retryOrFail(ctx, delivery, fmt.Errorf("settle refused run: %w", err))
+	}
+	return w.complete(ctx, delivery, deliveryStatusIgnored, run.ID, reason)
 }
 
 func (w *WebhookDeliveryWorker) complete(

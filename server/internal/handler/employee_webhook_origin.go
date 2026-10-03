@@ -27,6 +27,10 @@ package handler
 //     returns the first receipt, a different effective payload is a 409
 //     conflict. Without an id every request is its own event (per_request);
 //     identical bodies are never collapsed by a content hash.
+//   - Target. An admitted run is dispatched only to the target frozen at
+//     acceptance; if the assignee, mode, routine scene or tenant changed, or
+//     the routine scene fails the tenant fence, the run is skipped and the
+//     delivery ignored (binding_changed / scene_unusable), never re-routed.
 //   - Frozen input. The envelope's receivedAt is the delivery row's
 //     received_at and the effective payload digest is stored with the row, so
 //     a worker retry rebuilds byte-identical input or fails closed
@@ -50,9 +54,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -390,6 +396,83 @@ func (h *Handler) loadWebhookFrozenSource(ctx context.Context, delivery db.Webho
 		}
 	}
 	return src, nil
+}
+
+// webhookSceneUnusable is the refusal of an admitted routine run whose scene
+// can no longer be used by the agent in the routine's tenant.
+const webhookSceneUnusable = "scene_unusable"
+
+// admittedWebhookRunAwaitsDispatch reports whether an admitted run has not
+// reached its downstream issue or task yet, so dispatching it would still
+// choose a target.
+func (h *Handler) admittedWebhookRunAwaitsDispatch(ctx context.Context, run db.AutopilotRun) (bool, error) {
+	switch run.Status {
+	case "completed", "failed", "skipped":
+		return false, nil
+	case "issue_created":
+		return !run.IssueID.Valid, nil
+	case "running":
+		if run.TaskID.Valid {
+			return false, nil
+		}
+		_, err := h.Queries.GetAutopilotTaskByRun(ctx, run.ID)
+		if err == nil {
+			return false, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("load admitted run task: %w", err)
+	}
+	return true, nil
+}
+
+// admittedWebhookRunRefusal decides whether an admitted, not yet dispatched
+// run may still run on the target frozen at acceptance. It returns
+// binding_changed when the current binding routes elsewhere (assignee, mode,
+// routine, scene, tenant) or became invalid, scene_unusable when the
+// routine's scene fails the use-time tenant fence, and "" when the current
+// target is the frozen one. A delivery accepted by an older binary has no
+// frozen binding and is dispatched as before.
+func (h *Handler) admittedWebhookRunRefusal(ctx context.Context, delivery db.WebhookDelivery, ap db.Autopilot, trigger db.AutopilotTrigger) (string, error) {
+	frozen, err := h.readWebhookFrozenColumns(ctx, delivery.ID)
+	if err != nil {
+		return "", fmt.Errorf("load frozen binding: %w", err)
+	}
+	if len(frozen.Binding) == 0 {
+		return "", nil
+	}
+	var accepted WebhookEndpointBinding
+	if err := json.Unmarshal(frozen.Binding, &accepted); err != nil {
+		return "", fmt.Errorf("decode frozen binding: %w", err)
+	}
+	if accepted.Version == 0 {
+		return "", nil
+	}
+	current, problem, err := h.resolveWebhookEndpointBinding(ctx, ap, trigger.ID, delivery.Provider, trigger.SigningSecret.String)
+	if err != nil {
+		return "", err
+	}
+	if problem != "" || current.routeKey() != accepted.routeKey() {
+		return webhookBindingChanged, nil
+	}
+	if accepted.RoutineID == "" {
+		return "", nil
+	}
+	routine, err := contextcap.GetRoutineByAutopilot(ctx, h.DB, accepted.AutopilotID)
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return webhookBindingChanged, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load scene routine: %w", err)
+	}
+	if err := h.routineSceneUsable(ctx, routine); err != nil {
+		if errors.Is(err, service.ErrSceneRoutineUnusable) {
+			return webhookSceneUnusable, nil
+		}
+		return "", err
+	}
+	return "", nil
 }
 
 // webhookConflictResponse is the 409 body of a reused event id with a

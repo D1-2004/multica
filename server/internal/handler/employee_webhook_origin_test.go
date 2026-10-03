@@ -883,3 +883,73 @@ func TestEmployeeWebhookInvalidBindingAcceptsNothing(t *testing.T) {
 		t.Fatalf("runs=%d tasks=%d", runs, tasks)
 	}
 }
+
+// An admitted run goes only to the target it was accepted for. Changing the
+// ordinary autopilot's assignee or mode between acceptance and dispatch
+// settles the run as skipped and ignores the delivery: nothing runs on agent
+// B, nothing runs in the other mode.
+func TestEmployeeWebhookAdmittedRunNeverReroutes(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(t *testing.T, apID, other string){
+		"assignee": func(t *testing.T, apID, other string) {
+			if _, err := testPool.Exec(ctx, `UPDATE autopilot SET assignee_id = $1 WHERE id = $2`, other, apID); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"execution mode": func(t *testing.T, apID, other string) {
+			if _, err := testPool.Exec(ctx, `UPDATE autopilot SET execution_mode = 'create_issue' WHERE id = $1`, apID); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			agentA := createWebhookTestAgent(t, "F1 frozen A "+uuid.NewString()[:8])
+			agentB := createWebhookTestAgent(t, "F1 frozen B "+uuid.NewString()[:8])
+			apID := createWebhookTestAutopilot(t, agentA, "active", "run_only")
+			trig := createWebhookTriggerViaHandler(t, apID)
+			t.Cleanup(func() {
+				testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE agent_id IN ($1, $2)`, agentA, agentB)
+				testPool.Exec(context.Background(), `DELETE FROM issue WHERE origin_type = 'autopilot' AND origin_id IN (SELECT id FROM autopilot_run WHERE autopilot_id = $1)`, apID)
+				testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
+			})
+
+			deliveryID := requireAcceptedWebhookResponse(t, postWebhook(t, *trig.WebhookToken, map[string]any{"event": "frozen.target"}, nil))
+			change(t, apID, agentB)
+			delivery := processQueuedWebhookDelivery(t, deliveryID)
+			if delivery.Status != deliveryStatusIgnored || delivery.Error.String != webhookBindingChanged || !delivery.AutopilotRunID.Valid {
+				t.Fatalf("delivery = %s %q run=%v", delivery.Status, delivery.Error.String, delivery.AutopilotRunID.Valid)
+			}
+			run, err := testHandler.Queries.GetAutopilotRun(ctx, delivery.AutopilotRunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != "skipped" || run.TaskID.Valid || run.IssueID.Valid || !strings.Contains(run.FailureReason.String, webhookBindingChanged) {
+				t.Fatalf("run = %s task=%v issue=%v reason=%q", run.Status, run.TaskID.Valid, run.IssueID.Valid, run.FailureReason.String)
+			}
+			var tasks int
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE agent_id IN ($1, $2) OR autopilot_run_id = $3`, agentA, agentB, run.ID).Scan(&tasks); err != nil {
+				t.Fatal(err)
+			}
+			if tasks != 0 {
+				t.Fatalf("tasks = %d", tasks)
+			}
+		})
+	}
+}
+
+// A routine run admitted before its agent left the routine's org fails the
+// use-time tenant fence: skipped, never dispatched with the old scene.
+func TestEmployeeWebhookAdmittedRoutineRunFencesTenant(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	accepted := requireWebhookStatus(t, e.post(t, []byte(`{"event":"deploy.finished"}`), nil), http.StatusOK, "accepted")
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_dingtalk_identity SET org_id = 'org-elsewhere' WHERE agent_id = $1`, e.a.ID); err != nil {
+		t.Fatal(err)
+	}
+	delivery := e.process(t, accepted["delivery_id"].(string))
+	if delivery.Status != deliveryStatusIgnored || delivery.Error.String != webhookSceneUnusable {
+		t.Fatalf("delivery = %s %q", delivery.Status, delivery.Error.String)
+	}
+	if runs, tasks := e.counts(t); runs != 1 || tasks != 0 {
+		t.Fatalf("runs=%d tasks=%d", runs, tasks)
+	}
+}
