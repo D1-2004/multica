@@ -1,5 +1,12 @@
 # working-on-issues source map
 
+Durable run progress: `server/cmd/multica/cmd_issue_run_events.go`
+(`runIssueRunEvents`), `server/internal/handler/task_run_events.go`
+(`persistTaskMessageBatch`, `ListTaskRunEventsByUser`, `listTaskRunEvents`),
+`server/pkg/db/queries/task_message.sql` (`ListTaskRunEvents`), and
+`docs/task-run-events.md`. Metadata is stored on the existing transcript rows;
+the read view omits diagnostic bodies and tool arguments/results.
+
 Task cancellation and steer: `docs/task-steer.md`;
 human API: `server/internal/handler/task_steer.go` (`SteerIssue`) and
 `server/cmd/server/router.go` (`POST /api/issues/{id}/steer`);

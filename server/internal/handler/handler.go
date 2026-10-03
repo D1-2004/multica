@@ -269,6 +269,7 @@ type Handler struct {
 	EmployeeMemory                  *employeememory.Store
 	EmployeeRunNoticeArtifacts      func(context.Context, employeetask.Scope, string, string) ([]EmployeeTaskArtifactRef, error)
 	EventReceiptVerificationEnabled bool
+	TaskRunEventsEnabled            bool
 	SceneMemoryStore                *scenememory.Store
 	SceneMemoryWorker               *scenememory.Worker
 	A2AService                      *service.A2AService

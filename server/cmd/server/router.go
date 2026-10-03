@@ -538,6 +538,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
 	h.RunnerRelay = opts.RunnerRelay
+	h.TaskRunEventsEnabled = os.Getenv("MULTICA_TASK_RUN_EVENTS_ENABLED") == "1"
 	if setter, ok := opts.RunnerRelay.(interface {
 		SetRunnerMachineDeliverer(realtime.RunnerMachineDeliverer)
 	}); ok {
@@ -2292,6 +2293,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/a2a-control", h.ControlA2ATask)
 		r.Get("/tasks/{taskId}/a2a-attachments/{attachmentId}", h.DownloadDaemonA2AAttachment)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Get("/tasks/{taskId}/events", h.ListDaemonTaskRunEvents)
 		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 
@@ -2834,6 +2836,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// User-readable task artifacts plus the task-token-only DSH upload.
 			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/events", h.ListTaskRunEventsByUser)
 			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
 			r.With(handler.RequireHumanActor).Post("/api/employee-tasks/{id}/steer", h.SteerEmployeeTask)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)

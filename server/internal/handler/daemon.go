@@ -36,7 +36,6 @@ import (
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
-	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
@@ -4042,6 +4041,11 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	messageSeq, err := h.Queries.GetTaskMessageCursor(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read transcript cursor")
+		return
+	}
 	started, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
 	if err != nil {
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
@@ -4050,7 +4054,9 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(started.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*started, workspaceID))
+	response := taskToResponse(*started, workspaceID)
+	response.MessageSeq = messageSeq
+	writeJSON(w, http.StatusOK, response)
 }
 
 // TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
@@ -4952,12 +4958,13 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 // ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq     int                       `json:"seq"`
+	Type    string                    `json:"type"`
+	Tool    string                    `json:"tool,omitempty"`
+	Content string                    `json:"content,omitempty"`
+	Input   map[string]any            `json:"input,omitempty"`
+	Output  string                    `json:"output,omitempty"`
+	Event   *protocol.TaskEventSource `json:"event,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -4969,7 +4976,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	var req TaskMessageBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -4979,52 +4986,29 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the caller owns this task's workspace.
-	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
 	if !ok {
 		return
 	}
 
-	workspaceID := ""
-	if task.IssueID.Valid {
-		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
-			workspaceID = uuidToString(issue.WorkspaceID)
-		}
-	}
-	if workspaceID == "" && task.ChatSessionID.Valid {
-		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
-			workspaceID = uuidToString(cs.WorkspaceID)
-		}
-	}
 	suppressHumanRealtime := service.IsEmployeeDirectTask(task) || h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task)
-
-	for _, msg := range req.Messages {
-		// Redact sensitive information before persisting or broadcasting.
-		msg.Content = redact.Text(msg.Content)
-		msg.Output = redact.Text(msg.Output)
-		msg.Input = redact.InputMap(msg.Input)
-
-		var inputJSON []byte
-		if msg.Input != nil {
-			inputJSON, _ = json.Marshal(msg.Input)
+	created, err := h.persistTaskMessageBatch(r.Context(), task, workspaceID, req.Messages)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errTaskEventInvalid) {
+			status = http.StatusBadRequest
 		}
-		created, createErr := h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
-			TaskID:  parseUUID(taskID),
-			Seq:     int32(msg.Seq),
-			Type:    msg.Type,
-			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
-			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
-			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
-		})
-		if createErr != nil {
-			slog.Error("failed to create task message", "task_id", taskID, "seq", msg.Seq, "error", createErr)
-			writeError(w, http.StatusInternalServerError, "failed to persist task message")
-			return
+		if errors.Is(err, errTaskEventConflict) {
+			status = http.StatusConflict
 		}
-
+		slog.Warn("task message batch rejected", "task_id", taskID, "error", err)
+		writeError(w, status, "task message batch rejected")
+		return
+	}
+	for _, message := range created {
 		if workspaceID != "" && !suppressHumanRealtime {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
-				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
+				taskMessageToPayload(message, taskID, uuidToString(task.IssueID)))
 		}
 	}
 	h.bindAssocOutboundFromTools(r.Context(), task, workspaceID, req.Messages)
@@ -5207,6 +5191,12 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 	var input map[string]any
 	if m.Input != nil {
 		json.Unmarshal(m.Input, &input)
+	}
+	if m.Type == "status" && !m.Content.Valid {
+		var meta protocol.TaskEventContext
+		if json.Unmarshal(m.Event, &meta) == nil {
+			m.Content = pgtype.Text{String: meta.Source.Status, Valid: meta.Source.Status != ""}
+		}
 	}
 	createdAt := ""
 	if m.CreatedAt.Valid {
@@ -5482,39 +5472,49 @@ func (h *Handler) hydrateTaskSandboxIDs(ctx context.Context, resp []AgentTaskRes
 // Verifies the task belongs to the caller's workspace and that the caller can
 // view the task's agent. DTA service members use the same native visibility rules.
 func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
+	task, ok := h.requireUserTaskMessageRead(w, r)
+	if !ok {
+		return
+	}
+	taskID := uuidToString(task.ID)
+	taskUUID := task.ID
+	h.listTaskMessagesByUser(w, r, task, taskID, taskUUID)
+}
+
+func (h *Handler) requireUserTaskMessageRead(w http.ResponseWriter, r *http.Request) (db.AgentTaskQueue, bool) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
 	if !ok {
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	if h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task) {
 		// A2A execution transcripts are external-principal data. They are
 		// intentionally absent from ordinary member APIs; owner audit belongs
 		// on the A2A management surface, not the human task-message endpoint.
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	// Verify the task belongs to the caller's workspace.
 	wsID := h.TaskService.ResolveTaskWorkspaceID(r.Context(), task)
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
 	if err != nil || uuidToString(agent.WorkspaceID) != wsID {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	member, ok := h.workspaceMember(w, r, wsID)
 	if !ok {
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
 	allowed := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, wsID)
@@ -5523,9 +5523,13 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	_ = member
+	return task, true
+}
+
+func (h *Handler) listTaskMessagesByUser(w http.ResponseWriter, r *http.Request, task db.AgentTaskQueue, taskID string, taskUUID pgtype.UUID) {
 	sinceSeq := 0
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
 		parsed, parseErr := strconv.Atoi(sinceStr)

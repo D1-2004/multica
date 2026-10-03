@@ -353,8 +353,20 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
-func (c *Client) StartTask(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+func (c *Client) StartTask(ctx context.Context, taskID string) (int32, error) {
+	var response struct {
+		MessageSeq int32 `json:"message_seq"`
+	}
+	err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, &response)
+	// Older servers may acknowledge start with an empty body. A malformed
+	// nonempty JSON response is still an error.
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	if response.MessageSeq < 0 {
+		return 0, errors.New("invalid transcript cursor")
+	}
+	return response.MessageSeq, err
 }
 
 // MarkTaskWaitingLocalDirectory parks a freshly-dispatched task in the
@@ -392,12 +404,13 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq     int                       `json:"seq"`
+	Type    string                    `json:"type"`
+	Tool    string                    `json:"tool,omitempty"`
+	Content string                    `json:"content,omitempty"`
+	Input   map[string]any            `json:"input,omitempty"`
+	Output  string                    `json:"output,omitempty"`
+	Event   *protocol.TaskEventSource `json:"event,omitempty"`
 }
 
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
