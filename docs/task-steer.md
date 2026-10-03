@@ -112,7 +112,7 @@ nothing.
 
 A Direct successor is rebuilt from the predecessor's frozen
 `employee_direct_input`, never from runtime-enriched top-level state. Its
-prompt is the original work packet with every recorded correction rendered as
+prompt is the original work packet with every accepted correction rendered as
 the compiler's `CURRENT CORRECTIONS` block, so a cold start still has the whole
 goal and a resumed session sees the correction first. Identity tokens never
 carry over; the correction's own dispatch context may supply new identity
@@ -125,6 +125,20 @@ the predecessor's pinned provider session and workdir when the runtime matches
 context compatibility gates still decide whether it resumes. A cancelled Run
 that was replaced by a successor never produces an Employee cancellation
 notice; the successor reports the outcome.
+
+Before canceling or merging, the service reads the complete accepted corrections
+and checks the new total: at most 100 entries and 64 KiB. Read errors and overflow
+abort the transaction without stopping the current writer. New queues record
+`direct_steer_corrections_version=1`; terminal proof reconstructs their complete
+accepted input boundary. Historical queues without that marker retain the old
+20-entry rendering proof, without rewriting their saved prompt.
+
+Delivery remains anchored to the original accepted request. Execution facts
+resolve a separate effect source from the steer ledger and completed tool
+checkpoint. The inherited file-only policy has a flat original-authorization
+locator; it never treats a prior Run's file receipt as this Run's delivery.
+Failures still report to the verified delivery target even when success-only
+quiet metadata is malformed.
 
 Entry points:
 
@@ -140,7 +154,7 @@ Entry points:
   and failed tasks never qualify); otherwise it returns the candidates and the
   model must name `task_id` or ask. The successor's result is delivered as the
   answer to the original request.
-  The tool requires replica marker `[employee-loop:7]`.
+  The tool was introduced at marker 7; the combined current-task protocol now requires `[employee-loop:9]`.
 
 FC sandboxes need no special handling: the post-commit terminal observer runs
 the task-owned stop collection, the acknowledgement launches the successor, and

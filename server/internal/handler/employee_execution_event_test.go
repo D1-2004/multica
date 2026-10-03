@@ -480,7 +480,7 @@ func TestEmployeeExecutionEventRechecksNewerProofAfterSceneWait(t *testing.T) {
 			t.Fatal(readCtx.Err())
 		}
 	}
-	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',3,'run_id',$2::text,'reason','newer_proof_rejected')) WHERE id=$1::uuid`, f.queueID, f.runID); err != nil {
+	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',$3::int,'run_id',$2::text,'reason','newer_proof_rejected')) WHERE id=$1::uuid`, f.queueID, f.runID, employeeExecutionProofVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := holder.Commit(ctx); err != nil {

@@ -228,6 +228,9 @@ func (h *employeeSceneHost) prepareContinuation(ctx context.Context, source empl
 	if task.State != employeetask.StateSucceeded || task.ActiveRunID != "" {
 		return nil, employeeContinuationRefusal(task.State)
 	}
+	if read.Snapshot.CorrectionsTruncated {
+		return nil, errors.New("complete task corrections exceed continuation bounds; continuation was not started")
+	}
 	evidence, _ := json.Marshal(source)
 	history := employeetask.PacketHistory{State: employeetask.HistoryAvailable}
 	material := func(ref, body string) employeetask.PacketMaterial {
@@ -246,11 +249,23 @@ func (h *employeeSceneHost) prepareContinuation(ctx context.Context, source empl
 	if len(history.Items) == 0 {
 		history.State = employeetask.HistoryEmpty
 	}
+	var corrections []employeetask.PacketMaterial
+	for _, entry := range read.Snapshot.Corrections {
+		corrections = append(corrections, material(fmt.Sprintf("employee_task_entry:%s/%d", task.ID, entry.Seq), entry.Body))
+	}
 	noticePolicy, err := employeeCompletionNoticePolicy(call.Arguments, source)
 	if err != nil {
 		return nil, err
 	}
-	packet, err := employeetask.Compile(employeetask.CompileInput{Scope: h.taskScope(), PrincipalID: env.PrincipalID, Definition: task.Definition, CompletionNotice: noticePolicy, Source: material(source.SourceRef, string(evidence)), Prompt: "CURRENT CONTINUATION: follow this current request before older execution reports. The existing goal is retained; prior reports do not establish completion of this continuation.\n" + prompt, History: history, ReturnAddress: "scene:" + h.job.Scope.SceneID + "; source_ref:" + source.SourceRef})
+	var noticeOrigin *service.DirectTaskNoticeOrigin
+	var noticeSource *employeetask.PacketMaterial
+	if noticePolicy.Mode == employeetask.CompletionNoticeAlways && read.Snapshot.LatestRun != nil {
+		noticePolicy, noticeOrigin, noticeSource, err = h.worker.handler.employeeContinuationNoticePolicy(ctx, task, read.Snapshot.LatestRun.QueueTaskID, env.PrincipalID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	packet, err := employeetask.Compile(employeetask.CompileInput{Scope: h.taskScope(), PrincipalID: env.PrincipalID, Definition: task.Definition, Corrections: corrections, CompletionNotice: noticePolicy, CompletionNoticeSource: noticeSource, Source: material(source.SourceRef, string(evidence)), Prompt: "CURRENT CONTINUATION: follow this current request before older execution reports. The existing goal is retained; prior reports do not establish completion of this continuation.\n" + prompt, History: history, ReturnAddress: "scene:" + h.job.Scope.SceneID + "; source_ref:" + source.SourceRef})
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +287,9 @@ func (h *employeeSceneHost) prepareContinuation(ctx context.Context, source empl
 	taskContext["employee_context_used"] = packet.ContextUsed
 	if packet.CompletionNotice.Mode != employeetask.CompletionNoticeAlways {
 		taskContext[employeeCompletionNoticeContextKey] = packet.CompletionNotice
+	}
+	if noticeOrigin != nil {
+		taskContext[service.DirectTaskNoticeOriginKey] = noticeOrigin
 	}
 	contextJSON, _ := json.Marshal(taskContext)
 	principal, err := util.ParseUUID(env.PrincipalID)

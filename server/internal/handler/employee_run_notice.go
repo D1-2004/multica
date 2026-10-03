@@ -27,7 +27,10 @@ type employeeNoticeBinding struct {
 	Queue                                                  db.AgentTaskQueue
 	TaskGoalRevision, RunGoalRevision                      int64
 	CompletionNotice                                       employeetask.CompletionNoticePolicy
+	CompletionNoticeOrigin                                 *service.DirectTaskNoticeOrigin
 }
+
+var errEmployeeNoticeSourcePending = errors.New("employee effect source is not committed")
 
 type employeeNoticeHold struct{ reason string }
 
@@ -120,13 +123,23 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	b.JobID, b.SourceRef = metadata.JobID, metadata.SourceRef
 	var policyEnvelope struct {
 		Policy employeetask.CompletionNoticePolicy `json:"employee_completion_notice_policy"`
+		Origin *service.DirectTaskNoticeOrigin     `json:"employee_completion_notice_origin"`
 	}
-	if json.Unmarshal(b.Queue.Context, &policyEnvelope) != nil {
+	if json.Unmarshal(b.Queue.Context, &policyEnvelope) != nil && b.ResultState == "succeeded" {
 		return b, holdEmployeeNotice("invalid_completion_notice_policy")
 	}
-	b.CompletionNotice, err = employeetask.NormalizeCompletionNoticePolicy(policyEnvelope.Policy, b.SourceRef)
-	if err != nil {
+	b.CompletionNoticeOrigin = policyEnvelope.Origin
+	noticeSourceRef := b.SourceRef
+	if policyEnvelope.Origin != nil {
+		noticeSourceRef = policyEnvelope.Origin.SourceRef
+	}
+	b.CompletionNotice, err = employeetask.NormalizeCompletionNoticePolicy(policyEnvelope.Policy, noticeSourceRef)
+	if err != nil && b.ResultState == "succeeded" {
 		return b, holdEmployeeNotice("invalid_completion_notice_policy")
+	}
+	if b.ResultState != "succeeded" {
+		b.CompletionNotice = employeetask.CompletionNoticePolicy{Mode: employeetask.CompletionNoticeAlways}
+		b.CompletionNoticeOrigin = nil
 	}
 
 	if _, err := util.ParseUUID(b.JobID); err != nil {
@@ -170,8 +183,14 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if err != nil {
 		return in, false, err
 	}
-	if job.State != "completed" || job.Scope.WorkspaceID != b.Scope.WorkspaceID || job.Scope.AgentID != b.Scope.AgentID || job.Scope.TenantOrgID != b.Scope.TenantOrgID || job.Scope.SceneID != b.Scope.Scene.SceneID {
+	if job.Scope.WorkspaceID != b.Scope.WorkspaceID || job.Scope.AgentID != b.Scope.AgentID || job.Scope.TenantOrgID != b.Scope.TenantOrgID || job.Scope.SceneID != b.Scope.Scene.SceneID {
 		return in, false, holdEmployeeNotice("source_job_scope_mismatch")
+	}
+	if job.State == "pending" || job.State == "running" {
+		return in, false, errEmployeeNoticeSourcePending
+	}
+	if job.State != "completed" {
+		return in, false, holdEmployeeNotice("source_job_not_completed")
 	}
 	var env employeeDispatchEnvelope
 	var source employeeSourceMessage
@@ -222,10 +241,13 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if err != nil {
 		return in, false, err
 	}
+	if reason == "source_job_pending" {
+		return in, false, errEmployeeNoticeSourcePending
+	}
 	if reason != "" {
 		return in, false, holdEmployeeNotice(reason)
 	}
-	if !proof.Continuation {
+	if !proof.Continuation && !proof.Steered {
 		var requestBody string
 		err = tx.QueryRow(ctx, `SELECT body FROM employee_task_entry WHERE task_id=$1::uuid AND kind='request' ORDER BY seq LIMIT 1`, b.TaskID).Scan(&requestBody)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -239,8 +261,8 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 			return in, false, holdEmployeeNotice("task_source_mismatch")
 		}
 	}
-	if _, err := validateEmployeeCompletionNoticePolicy(b.CompletionNotice, source); err != nil {
-		return in, false, holdEmployeeNotice("completion_notice_source_mismatch")
+	if err := h.employeeNoticePolicySource(ctx, tx, b, source, env.PrincipalID); err != nil {
+		return in, false, err
 	}
 	q := db.New(tx)
 	agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseUUID(b.Scope.AgentID), WorkspaceID: parseUUID(b.Scope.WorkspaceID)})
@@ -399,6 +421,9 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		callbackRoute := false
 		if held == nil {
 			in, callbackRoute, err = h.employeeNoticeTarget(ctx, tx, b)
+			if errors.Is(err, errEmployeeNoticeSourcePending) {
+				return false, nil
+			}
 			if err != nil && !errors.As(err, &held) {
 				return false, err
 			}

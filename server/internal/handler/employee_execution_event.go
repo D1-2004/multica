@@ -28,11 +28,12 @@ const employeeExecutionSource = "employee.execution"
 const employeeExecutionSchema = "employee.execution/1"
 
 // Keep the version-1 storage wrapper recognizable to old readers. Proof version
-// 3 also verifies explicit continuations using their committed resume input.
+// 4 also verifies steer successors and merged runs at their accepted input boundary.
+// Version 3 verifies explicit continuations using their committed resume input.
 // Version 2 accepts resolved legacy receipts as well as unified receipts. Old readers
 // skip either wrapper; new readers reassess only older proofs, never downgrade
 // a newer proof or require a foreground replica-marker change.
-const employeeExecutionProofVersion = 3
+const employeeExecutionProofVersion = 4
 
 // employeeExecutionTerminal is a fact, never a continuation or a user message.
 // The output remains on Run/queue; the envelope contains only durable references.
@@ -60,6 +61,7 @@ type employeeExecutionBinding struct {
 	Original            db.SceneEventReceipt
 	Source              employeeSourceMessage
 	Continuation        bool
+	Steered             bool
 }
 
 type employeeExecutionContext struct {
@@ -294,6 +296,14 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 	if json.Unmarshal(b.Queue.Context, &metadata) != nil || metadata.Owner != "employee" || metadata.Scene.SceneID != b.SceneID {
 		return "invalid_execution_context", nil
 	}
+	if e, steered, err := employeeExecutionSteerInput(ctx, tx, b); err != nil {
+		return "", err
+	} else if steered {
+		if reason, err := employeeExecutionSteerSource(ctx, tx, b, e); err != nil || reason != "" {
+			return reason, err
+		}
+		return employeeExecutionSteerProof(ctx, tx, b, e)
+	}
 	b.JobID, b.SourceRef = metadata.JobID, metadata.SourceRef
 	if _, err := util.ParseUUID(b.JobID); err != nil {
 		b.JobID = ""
@@ -314,7 +324,13 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 		return "source_job_pending", nil
 	}
 	if !employeeExecutionInputMatches(b.Queue, c, metadata) {
-		return "execution_input_mismatch", nil
+		_, steered, err := employeeExecutionSteerInput(ctx, tx, b)
+		if err != nil {
+			return "", err
+		}
+		if !steered {
+			return "execution_input_mismatch", nil
+		}
 	}
 	for _, item := range job.Items {
 		var env employeeDispatchEnvelope
@@ -382,6 +398,14 @@ func employeeExecutionInputMatches(queue db.AgentTaskQueue, direct service.Direc
 // run_started ledger key and the Host's committed dispatch tool checkpoint. A
 // continuation additionally proves the exact accepted resume input boundary.
 func employeeExecutionDispatchProof(ctx context.Context, tx pgx.Tx, b *employeeExecutionBinding) (string, error) {
+	if e, steered, err := employeeExecutionSteerInput(ctx, tx, b); err != nil {
+		return "", err
+	} else if steered {
+		if reason, err := employeeExecutionSteerSource(ctx, tx, b, e); err != nil || reason != "" {
+			return reason, err
+		}
+		return employeeExecutionSteerProof(ctx, tx, b, e)
+	}
 	var key, queue string
 	var revision int64
 	err := tx.QueryRow(ctx, `SELECT source_key,payload->>'queue_task_id',goal_revision FROM employee_task_entry WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND run_id=$5::uuid AND kind='run_started' AND source_namespace='employee_scene'`, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.TaskID, b.RunID).Scan(&key, &queue, &revision)

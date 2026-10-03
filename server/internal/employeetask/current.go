@@ -31,10 +31,12 @@ func (s *Store) ListCurrent(ctx context.Context, scope Scope, requester string, 
 }
 
 type CurrentSnapshot struct {
-	Task      Task    `json:"task"`
-	LatestRun *Run    `json:"latest_run,omitempty"`
-	Entries   []Entry `json:"entries"`
-	Truncated bool    `json:"truncated"`
+	Task                 Task    `json:"task"`
+	LatestRun            *Run    `json:"latest_run,omitempty"`
+	Entries              []Entry `json:"entries"`
+	Truncated            bool    `json:"truncated"`
+	Corrections          []Entry `json:"corrections,omitempty"`
+	CorrectionsTruncated bool    `json:"corrections_truncated,omitempty"`
 }
 
 // ReadCurrent freezes a consistent ledger boundary under the aggregate's lock.
@@ -70,5 +72,12 @@ func (s *Store) ReadCurrent(ctx context.Context, scope Scope, requester, id stri
 		return out, err
 	}
 	out.Truncated = out.Task.LastEntrySeq > 20
+	// Binding constraints have a separate complete, version-fenced snapshot.
+	out.Corrections, err = NewStore(tx).CorrectionsThrough(ctx, scope, id, out.Task.LastEntrySeq)
+	if errors.Is(err, ErrCorrectionBounds) {
+		out.CorrectionsTruncated = true
+	} else if err != nil {
+		return out, err
+	}
 	return out, tx.Commit(ctx)
 }

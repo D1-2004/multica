@@ -202,18 +202,18 @@ func TestEmployeeContinuationResultRejectsUnprovenSource(t *testing.T) {
 }
 
 func TestEmployeeContinuationResultReassessesOnlyOlderProof(t *testing.T) {
-	for _, proof := range []int{2, 3, 4} {
+	for _, proof := range []int{employeeExecutionProofVersion - 1, employeeExecutionProofVersion, employeeExecutionProofVersion + 1} {
 		t.Run(strconv.Itoa(proof), func(t *testing.T) {
 			f := employeeContinuationResultDatabase(t, false)
 			ctx := context.Background()
 			if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',$3::int,'run_id',$2::text,'reason','source_dispatch_missing')) WHERE id=$1::uuid`, f.queueID, f.runID, proof); err != nil {
 				t.Fatal(err)
 			}
-			if created, err := f.h.recordEmployeeExecutionEvent(ctx, testWorkspaceID, f.runID); err != nil || created != (proof == 2) {
+			if created, err := f.h.recordEmployeeExecutionEvent(ctx, testWorkspaceID, f.runID); err != nil || created != (proof < employeeExecutionProofVersion) {
 				t.Fatalf("proof %d: created=%v err=%v", proof, created, err)
 			}
 			var receipts, preserved int
-			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM scene_event_receipt WHERE source='employee.execution' AND source_event_id=$1`, f.runID).Scan(&receipts); err != nil || (receipts == 1) != (proof == 2) {
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM scene_event_receipt WHERE source='employee.execution' AND source_event_id=$1`, f.runID).Scan(&receipts); err != nil || (receipts == 1) != (proof < employeeExecutionProofVersion) {
 				t.Fatal("proof upgrade lost continuation or reopened settled rejection", proof, receipts, err)
 			}
 			if err := testPool.QueryRow(ctx, `SELECT (context->'employee_execution_event_skip'->>'proof_version')::int FROM agent_task_queue WHERE id=$1::uuid`, f.queueID).Scan(&preserved); err != nil || preserved != proof {

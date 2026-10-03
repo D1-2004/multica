@@ -247,6 +247,24 @@ assemble a new work packet from recorded actions, the current request and prior
 reports without a summary model. PostgreSQL retains the full ledger while only
 its injected projection is bounded; executor reports remain attributed reports.
 Resume, existing queue, Run and tool journal commit together. Existing dispatch,
-Redis wakeups and runtime claim remain the single execution path. Per-Run notice
-and terminal-fact proof follow the newly accepted source. Marker 8 gates these
+Redis wakeups and runtime claim remain the single execution path. A continuation notice follows its accepted source; steer keeps the original
+delivery anchor while its terminal fact identifies the actual correction source. Marker 9 gates these
 new tools and candidate snapshots; historical snapshots are replayed unchanged.
+
+
+The combined steer/continuation adapter preserves the existing Task Service
+steer backend and claim-exit barrier. Terminal provenance is checked at the
+Run's accepted input sequence: a committed `steer` or `resumed` ledger entry,
+its source-specific tool checkpoint, and the exact Task/Run/queue references.
+Steer rendering is verified with the existing `WithCorrections` builder; a
+mutable queue source override alone is insufficient. Subsequent successful
+continuations read all bounded corrections separately from recent ledger
+history, and reject overflow rather than omitting a binding condition. No
+additional model request, scheduler, or execution backend is introduced.
+
+The complete-correction reader is shared by steer and continuation, with a
+100-entry/64-KiB bound that rejects instead of trimming. Runtime delivery and
+execution provenance remain separate: the frozen original return address is
+not overwritten to identify a correction. Inherited completion constraints are
+proved from original accepted Task records, not dialogue or model self-report;
+current delivery still requires the current queue's provider-confirmed receipt.

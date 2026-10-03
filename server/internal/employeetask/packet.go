@@ -86,6 +86,9 @@ func buildTaskExecutionPacketWithContext(input CompileInput) (string, []string) 
 	lines = append(lines, "- ACTUAL CAPABILITIES (Host verified): "+capabilityText)
 	lines = append(lines, "- RETURN ADDRESS (Host verified): "+input.ReturnAddress)
 	if input.CompletionNotice.Mode == CompletionNoticeIfNotDelivered {
+		if input.CompletionNoticeSource != nil {
+			appendMaterials("COMPLETION NOTICE AUTHORIZATION (Host verified original source)", []PacketMaterial{*input.CompletionNoticeSource})
+		}
 		lines = append(lines, "- COMPLETION NOTICE POLICY (Host verified): "+string(input.CompletionNotice.Mode))
 
 		lines = append(lines, "  Explicit requester instruction ["+input.CompletionNotice.SourceRef+"]: "+input.CompletionNotice.InstructionQuote)
