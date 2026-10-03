@@ -311,13 +311,16 @@ describe("ContextConfigPage", () => {
     expect(onAuthRequired).not.toHaveBeenCalled();
   });
 
-  it("explains an expired link and still lists existing access", async () => {
+  it("shows only how to get a new link when the link is no longer valid", async () => {
     api.redeemContextConfigLink.mockRejectedValue(new ApiError("gone", 410));
-    api.listContextConfigAgents.mockResolvedValue([]);
     renderPage({ linkToken: "old" });
 
     expect(await screen.findByText(copy.link_expired)).toBeInTheDocument();
-    expect(await screen.findByText(copy.no_access_title)).toBeInTheDocument();
+    // No other page: no agents are listed, nothing else renders.
+    expect(api.listContextConfigAgents).not.toHaveBeenCalled();
+    expect(screen.queryByText(copy.no_access_title)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
   it("explains a personal link whose scope already belongs to another account", async () => {

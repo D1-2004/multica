@@ -316,8 +316,9 @@ export function ContextConfigPage({
 
   const agentsQuery = useQuery({
     ...contextConfigAgentsOptions(),
-    // A bound page never lists or switches agents.
-    enabled: redeemStatus !== "pending" && bound === null,
+    // A bound page never lists or switches agents, and a dead link shows
+    // nothing but its hint.
+    enabled: redeemStatus !== "pending" && redeemStatus !== "expired" && bound === null,
   });
 
   useEffect(() => {
@@ -337,6 +338,17 @@ export function ContextConfigPage({
     setTab(next);
     tabChangeRef.current?.(next);
   };
+
+  if (redeemStatus === "expired") {
+    // An expired, spent or unknown link: only the way to a new one, no page.
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-background px-4 text-foreground">
+        <p className="max-w-sm text-center text-body text-muted-foreground" role="status">
+          {t(($) => $.context_config.link_expired)}
+        </p>
+      </main>
+    );
+  }
 
   let body: React.ReactNode;
   if (redeemStatus === "pending" || (agentsQuery.isLoading && !effectiveAgentId)) {
@@ -382,9 +394,6 @@ export function ContextConfigPage({
   return (
     <main className="min-h-dvh bg-background px-4 py-4 text-foreground sm:px-6 sm:py-8">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4 sm:max-w-2xl">
-        {redeemStatus === "expired" && (
-          <Banner>{t(($) => $.context_config.link_expired)}</Banner>
-        )}
         {redeemStatus === "taken" && (
           <Banner>{t(($) => $.context_config.link_taken)}</Banner>
         )}
