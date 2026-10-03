@@ -415,7 +415,7 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 		case "text":
 			if block.Text != "" {
 				assistantText.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
+				trySend(ch, Message{Type: MessageText, Content: block.Text, SessionID: msg.SessionID, MessageID: content.ID, Phase: "message"})
 			}
 		case "thinking":
 			if block.Text != "" {
@@ -595,6 +595,7 @@ type claudeLogEntry struct {
 }
 
 type claudeMessageContent struct {
+	ID      string               `json:"id,omitempty"`
 	Role    string               `json:"role"`
 	Model   string               `json:"model"`
 	Content []claudeContentBlock `json:"content"`

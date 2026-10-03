@@ -661,6 +661,7 @@ type AgentTaskResponse struct {
 	Instruction          string                    `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string                    `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64                     `json:"trace_started_at_unix_ms,omitempty"`
+	MessageSeq           int32                     `json:"message_seq,omitempty"`
 	// DingTalkMessagePolicy is a trusted per-claim snapshot, independent of custom_env.
 	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace

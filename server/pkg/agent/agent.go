@@ -171,6 +171,9 @@ type Message struct {
 	Status    string         // agent status string (Status)
 	Level     string         // log level (Log)
 	SessionID string         // backend session id (Status), for early resume-pointer pinning
+	TurnID    string         // provider turn identity, when supplied
+	MessageID string         // provider assistant message identity, when supplied
+	Phase     string         // delta, message, commentary, or final
 }
 
 // TokenUsage tracks token consumption for a single model.

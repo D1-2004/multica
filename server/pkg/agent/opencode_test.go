@@ -607,9 +607,9 @@ func TestOpencodeProcessEventsHappyPath(t *testing.T) {
 		msgs = append(msgs, m)
 	}
 
-	// Expected: status(running), text, tool-use, tool-result, text, = 5 messages
-	if len(msgs) != 5 {
-		t.Fatalf("expected 5 messages, got %d: %+v", len(msgs), msgs)
+	// Running and step completion bracket the same text/tool transcript.
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages, got %d: %+v", len(msgs), msgs)
 	}
 	if msgs[0].Type != MessageStatus || msgs[0].Status != "running" {
 		t.Errorf("msg[0]: got %+v, want status=running", msgs[0])
@@ -625,6 +625,9 @@ func TestOpencodeProcessEventsHappyPath(t *testing.T) {
 	}
 	if msgs[4].Type != MessageText || msgs[4].Content != " Done." {
 		t.Errorf("msg[4]: got %+v", msgs[4])
+	}
+	if msgs[5].Type != MessageStatus || msgs[5].Status != "step_complete" || msgs[5].SessionID != "ses_happy" {
+		t.Errorf("step completion lost its session: %+v", msgs[5])
 	}
 }
 
@@ -650,8 +653,8 @@ func TestOpencodeProcessEventsEmitsReasoningAsThinking(t *testing.T) {
 	for message := range ch {
 		messages = append(messages, message)
 	}
-	if len(messages) != 3 {
-		t.Fatalf("expected status, thinking, and text messages; got %d: %+v", len(messages), messages)
+	if len(messages) != 4 {
+		t.Fatalf("expected status, thinking, text, and step completion; got %d: %+v", len(messages), messages)
 	}
 	if messages[1].Type != MessageThinking || messages[1].Content != "Checking the inputs." {
 		t.Fatalf("reasoning message = %+v, want thinking content", messages[1])
@@ -684,8 +687,8 @@ func TestOpencodeProcessEventsSupportsSplitManagedToolEvents(t *testing.T) {
 	for message := range ch {
 		messages = append(messages, message)
 	}
-	if len(messages) != 4 {
-		t.Fatalf("expected status, tool use, tool result, and text; got %d: %+v", len(messages), messages)
+	if len(messages) != 5 {
+		t.Fatalf("expected status, tool use, tool result, text, and step completion; got %d: %+v", len(messages), messages)
 	}
 	if messages[1].Type != MessageToolUse || messages[1].Tool != "bash" || messages[1].CallID != "call_split" {
 		t.Fatalf("tool start message = %+v", messages[1])

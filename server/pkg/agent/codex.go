@@ -3154,11 +3154,14 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 
 	case method == "item/completed" && itemType == "agentMessage":
 		text, _ := item["text"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
-		}
 		phase, _ := item["phase"].(string)
 		if phase == "final_answer" {
+			phase = "final"
+		}
+		if text != "" && c.onMessage != nil {
+			c.onMessage(Message{Type: MessageText, Content: text, SessionID: c.threadID, TurnID: c.turnID, MessageID: itemID, Phase: phase})
+		}
+		if phase == "final" {
 			// Deliberately NOT gated on turnStarted, unlike onTurnDone below:
 			// the gate exists so a subagent or a replayed history turn cannot
 			// end OUR turn early, and the thread guard at the top of this

@@ -360,7 +360,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 			switch evt.Type {
 			case "agent_start":
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionPath})
 
 			case "turn_start":
 				output.Reset()
@@ -374,7 +374,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 				case "text_delta":
 					if d := drainPiTextBuffer(&textBuffer, evt.AssistantMessageEvent.Delta); d != "" {
 						output.WriteString(d)
-						trySend(msgCh, Message{Type: MessageText, Content: d})
+						trySend(msgCh, Message{Type: MessageText, Content: d, Phase: "delta"})
 					}
 				case "thinking_delta":
 					if d := evt.AssistantMessageEvent.Delta; d != "" {
@@ -415,6 +415,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 				}
 
 			case "turn_end":
+				trySend(msgCh, Message{Type: MessageStatus, Status: "turn_complete", SessionID: sessionPath})
 				msg := decodePiMessage(evt.Message)
 				if msg != nil && msg.Role == "assistant" {
 					lastAssistant = msg
@@ -456,7 +457,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 		if d := flushPiTextBuffer(&textBuffer); d != "" {
 			output.WriteString(d)
-			trySend(msgCh, Message{Type: MessageText, Content: d})
+			trySend(msgCh, Message{Type: MessageText, Content: d, Phase: "delta"})
 		}
 
 		waitErr := cmd.Wait()

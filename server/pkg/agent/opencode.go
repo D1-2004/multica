@@ -526,8 +526,9 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 			stepHasContinuationTool = false
 			awaitingContinuation = false
 			stepProducedOutput = false
-			trySend(ch, Message{Type: MessageStatus, Status: "running"})
+			trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: event.SessionID, MessageID: event.Part.MessageID})
 		case "step_finish":
+			trySend(ch, Message{Type: MessageStatus, Status: "step_complete", SessionID: event.SessionID, MessageID: event.Part.MessageID})
 			openStep = false
 			sawStepFinish = true
 			steps++
@@ -640,7 +641,7 @@ func (b *opencodeBackend) handleTextEvent(event opencodeEvent, ch chan<- Message
 	text := event.Part.Text
 	if text != "" {
 		output.Append(event.Part.MessageID, text)
-		trySend(ch, Message{Type: MessageText, Content: text})
+		trySend(ch, Message{Type: MessageText, Content: text, SessionID: event.SessionID, MessageID: event.Part.MessageID, Phase: "message"})
 	}
 }
 
