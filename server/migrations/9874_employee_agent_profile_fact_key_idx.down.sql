@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_agent_profile_fact_key_idx;
