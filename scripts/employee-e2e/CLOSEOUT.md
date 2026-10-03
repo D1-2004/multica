@@ -33,3 +33,7 @@
 离线风险反例覆盖：读取失败/分页耗尽不算负证；错误会话不污染 negative_observe；连续发送不吞重复落地；REF-01a真人「停止这个」不把员工「已请求停止这个任务」误认成重复发送；空 LF 不算0调用；模型 proposed tool_calls 不替代 Host TOOL input，ERROR工具不算已接受effect；人工判定不覆写缺证与硬失败；25小时分段时间门。
 
 具体函数和生产只读接口映射见 `.agents/skills/tag-eval/references/harness-source-map.md`。真实准入按当前仓库 `docs/employee-delivery-workflow.md` 及当波 manifest；本表中的默认可运行名单不是验收通过名单。
+
+## 实际 wave 准备发现的门禁修复
+
+v1/v2 必须在 gate 明确 ok=true 后才进入发送、actor lease、续认证和清理；失败保存完整门禁结果并以 invalid_env / 非零退出结束。segment redo 在失败 gate 后不丢原 checkpoint。最新失败查询不沿用旧绿灯。新增7条离线门禁反例，整套75项通过；原始日志见同证据目录 offline-tests-gate.log。v2 无 idle_before_min 自动等待，DM召回的真实30分钟空闲/segment与具体时间名单由当波外层 manifest 提供。

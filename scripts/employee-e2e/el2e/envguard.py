@@ -30,6 +30,8 @@ def pipeline_snapshot() -> dict[str, Any]:
         body = extract_json(res["stdout"])
     except ValueError:
         return {"ok": False, "at": iso(now()), "rc": res["rc"], "error": (res["stderr"] or res["stdout"])[-300:]}
+    if res["rc"] != 0 or not isinstance(body, dict) or not body.get("runId") or not body.get("status"):
+        return {"ok": False, "at": iso(now()), "rc": res["rc"], "error": "pipeline response unavailable or incomplete"}
     stages = [{"name": s.get("name"), "status": s.get("status"), "started_at": s.get("started_at"),
                "completed_at": s.get("completed_at")} for s in body.get("stages") or []]
     deploy = next((s for s in stages if DEPLOY_STAGE.search(s["name"] or "") and "集成" not in (s["name"] or "")), None)
@@ -87,7 +89,7 @@ def watch(run_dir: Path, *, pipeline_every_s: int = 120, sls_every_s: int = 600,
 
 
 def latest(run_dir: Path, kind: str) -> dict[str, Any] | None:
-    rows = [r for r in read_jsonl(run_dir / "env_timeline.jsonl") if r.get("kind") == kind and r.get("ok")]
+    rows = [r for r in read_jsonl(run_dir / "env_timeline.jsonl") if r.get("kind") == kind]
     return rows[-1] if rows else None
 
 
@@ -118,7 +120,10 @@ def gate(run_dir: Path, *, settle_s: int = 150, max_wait_s: int = 1800, log=prin
         age = None
         if snap:
             age = (now() - parse_iso(snap["at"])).total_seconds()
-        ok = state["state"] in ("idle", "deployed")
+        ok = bool(snap and snap.get("ok") is True) and state["state"] in ("idle", "deployed")
+        if ok and state["state"] == "deployed" and not state.get("completed_at"):
+            ok = False
+            state["missing_completed_at"] = True
         if ok and state["state"] == "deployed" and state.get("completed_at"):
             since_deploy = (now() - parse_iso(state["completed_at"])).total_seconds()
             ok = since_deploy >= settle_s
@@ -132,6 +137,19 @@ def gate(run_dir: Path, *, settle_s: int = 150, max_wait_s: int = 1800, log=prin
             return {"ok": False, "waited_s": round(time.monotonic() - t0), "pipeline": snap, "state": state}
         log(f"[gate] waiting: {state} snapshot_age={age}")
         time.sleep(20)
+
+
+def case_gate(run_dir: Path, *, skip: bool = False, log=print) -> dict[str, Any] | None:
+    """Record lookup failures as closed gates so no case action runs after an exception."""
+    if skip:
+        return None
+    try:
+        result = gate(run_dir, log=log)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
+    if not isinstance(result, dict):
+        return {"ok": False, "error": "environment gate returned no readiness evidence"}
+    return result
 
 
 def restarts_in_window(starts: list[dict[str, Any]], start: str, end: str, *, pad_s: int = 20) -> list[dict[str, Any]]:

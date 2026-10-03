@@ -14,6 +14,7 @@
 | burst / negative_observe | `driver_v2.py`: burst / observe_v2；`im.py`: read_window；`grader_v2.py`: pending_result | 连续发完再按观察者senderId定位；重复落地不吞成一次。否定窗需分页完整、同一conversation，错误读取不能算静默 |
 | quote / forward / combine_forward / at_all / setup_group | `driver_v2.py`: speak / act_forward / act_setup；`im.py`: send / reply | 当地dws CLI help核对命令参数；driver实现不证明Provider摄入或模型效果。setup仅记录已创建cid/请求结果，成员事件与实际投递另验 |
 | 排除与缺口 | HARNESS_IMPLEMENTED / ACTIONS注册表；`api_facts.py`: API_GAPS | recall/react草稿保全但未注册；webhook/aitable_insert/config_snapshot未实现。T-07/T-10/T-11与M-10/M-13仍blocked_harness |
+| 环境准入 | `envguard.py`: case_gate / gate / latest；v1/v2 run_case | 失败/未知gate落invalid_env并在actor/action前退出；最新失败快照不回退旧绿灯。v2没有idle_before_min自动空闲等待，真实DM空闲由外层manifest或segment证明 |
 | 判定 | `grader_v2.py`: grade_case_v2 | pending_evidence→incomplete；partial/vacuous/pending_checks不能由judgement变完整pass；硬失败不可用语义分抵消。部署窗口缺证为partial scope |
 
 所有driver动作仍需当轮授权及场域独占；本次收尾只做离线验证，未发IM或修改共享预发。默认具体名单与计数见 `scripts/employee-e2e/CLOSEOUT.md`，重新 dry-run 后将实际开关写入当波 manifest。

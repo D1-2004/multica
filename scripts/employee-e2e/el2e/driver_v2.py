@@ -649,11 +649,7 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
         if now() < not_before:
             log(f"[{case['id']}] segment {segment} not before {iso(not_before)}")
             return {**rec, "status": f"waiting_segment:{segment}", "not_before": iso(not_before)}
-        if redo:
-            rec.setdefault("discarded_steps", []).extend(s for s in rec["steps"] if s.get("segment") == segment)
-            rec["steps"] = [s for s in rec["steps"] if s.get("segment") != segment]
         rec["status"] = "running"
-        rec["access_renewal"] = renew_access(case, reg)
     else:
         attempt = next_attempt(cases_dir, case["id"])
         out_path = cases_dir / f"{case['id']}.a{attempt}.driver.json"
@@ -676,6 +672,16 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
             rec.update(status="skipped_window", ended_at=iso(now()))
             write_json(out_path, rec)
         return {**rec, "status": "skipped_window"}
+    rec["gate"] = envguard.case_gate(rd, skip=skip_gate, log=log)
+    if not skip_gate and (rec["gate"] or {}).get("ok") is not True:
+        rec.update(status="invalid_env", ended_at=iso(now()), gate_error="environment gate did not prove readiness")
+        write_json(out_path, rec)
+        return rec
+    if resuming:
+        if redo:
+            rec.setdefault("discarded_steps", []).extend(s for s in rec["steps"] if s.get("segment") == segment)
+            rec["steps"] = [s for s in rec["steps"] if s.get("segment") != segment]
+        rec["access_renewal"] = renew_access(case, reg)
     deap = sorted({a for a in case["roles"].values() if reg["actors"][a].get("kind") == "deap_actor"})
     holder = f"el2e:{run_id}:{case['id']}"
     if deap and use_lease:
@@ -686,7 +692,6 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
                 rec.update(status="not_run:actor_leased", ended_at=iso(now()))
             write_json(out_path, rec)
             return {**rec, "status": "not_run:actor_leased"}
-    rec["gate"] = None if skip_gate else envguard.gate(rd, log=log)
     needs_reset = "memory_reset" in case["requires"].get("harness", [])
     final = not segs or segment == segs[-1]
     if needs_reset and not resuming:
@@ -739,6 +744,8 @@ def run_v2(paths: list[Path], run_id: str, *, only: list[str], caps: dict[str, d
     manifest.setdefault("started_at", iso(now()))
     manifest["registry_snapshot"] = registry()
     manifest["capabilities_v2"] = caps
+    manifest.setdefault("idle_contract_v2", {"automatic_idle_before_min": False,
+        "required_proof": "DM memory cases need external real idle >=30min or an explicit segment checkpoint; record per-conversation times in the wave manifest"})
     write_json(rd / "manifest.json", manifest)
     dwsgw.prepare()
     pairs = cases_v2.load_all(paths)
