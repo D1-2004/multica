@@ -2371,6 +2371,8 @@
     "install_all": "すべてのリポジトリ",
     "install_selected": "指定したリポジトリ",
     "install_settings": "リポジトリを変更",
+    "install_repo_private": "非公開",
+    "install_repos_truncated": "ほかにもリポジトリがあります。「リポジトリを変更」から GitHub で確認してください。",
     "install_truncated": "インストールが多く、ここには一部だけを表示しています。",
     "returned_connected": "{{name}} を認可しました。",
     "returned_denied": "認可をキャンセルしました。",

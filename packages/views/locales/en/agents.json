@@ -2406,6 +2406,8 @@
     "install_all": "All repositories",
     "install_selected": "Selected repositories",
     "install_settings": "Change repositories",
+    "install_repo_private": "Private",
+    "install_repos_truncated": "More repositories exist. Use “Change repositories” to see them on GitHub.",
     "install_truncated": "There are more installations than this list shows.",
     "returned_connected": "{{name}} is authorized.",
     "returned_denied": "Authorization was cancelled.",

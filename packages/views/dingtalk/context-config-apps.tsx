@@ -1241,6 +1241,17 @@ function GitHubAppInstallations({
                     <GitHubInstallLink url={item.settingsUrl} label={t(($) => $.context_config.install_settings)} />
                   </>
                 ) : null}
+                {(item.repositories ?? []).length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 pl-4">
+                    {(item.repositories ?? []).map((repo) => (
+                      <li key={repo.fullName}>
+                        {repo.fullName}
+                        {repo.private ? ` · ${t(($) => $.context_config.install_repo_private)}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {item.repositoriesTruncated ? <p>{t(($) => $.context_config.install_repos_truncated)}</p> : null}
               </li>
             ))}
             </ul>

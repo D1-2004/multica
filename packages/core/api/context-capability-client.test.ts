@@ -190,6 +190,9 @@ describe("context capability mobile client", () => {
         accountType: "Organization",
         repositorySelection: "selected",
         settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+        repositories: [],
+        repositoryCount: 0,
+        repositoriesTruncated: false,
       },
     ]);
     expect(result.totalCount).toBe(0);

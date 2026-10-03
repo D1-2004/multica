@@ -4591,6 +4591,16 @@ export class ApiClient {
     });
   }
 
+  /** Exchanges the signed token on a GitHub return for the configure-page cookie.
+   * A bad token is an error; the caller still opens the page. */
+  async openSceneConfigSession(token: string): Promise<void> {
+    await this.fetch<unknown>("/api/scene-config/session", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      headers: NO_WORKSPACE_HEADER,
+    });
+  }
+
   /** Replaces a configure-page scope's prompt components (the whole list).
    * Resolves to the stored list, or null when the echo is malformed (the
    * caller refetches). */

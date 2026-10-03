@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -970,6 +971,106 @@ func TestCatalogConnectorGitHubAppFlowUsesSharedCallbackAndHidesTokens(t *testin
 	if !connectorAcceptsBearer("oauth", f.gh.Slug) || connectorAcceptsBearer("oauth", f.dcr.Slug) || !connectorAcceptsBearer("bearer", "") || connectorAcceptsBearer("none", "") {
 		t.Fatal("PAT acceptance rules")
 	}
+}
+
+func TestGitHubSceneConnectFinishesWithoutTheStartingBrowser(t *testing.T) {
+	f := newCatalogFixture(t)
+	ctx := context.Background()
+	c := f.create(t, f.gh)
+	f.offer(t, c.ID)
+	f.grant(t, contextcap.ScopeScene, catalogTestScene)
+	scope := f.scope(c.ID, contextcap.ScopeScene, catalogTestScene)
+	key := contextcap.CredentialBinding{
+		WorkspaceID: testWorkspaceID, AgentID: f.agentID, ConnectorID: c.ID,
+		ScopeType: contextcap.ScopeScene, OrgID: catalogTestOrg, ScopeKey: catalogTestScene,
+	}
+
+	_, query, _ := f.start(t, scope, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/github/authorize?code=good-code&state="+url.QueryEscape(query.Get("state")), nil)
+	rec := httptest.NewRecorder()
+	f.h.completeConnectorOAuthCallback(rec, req, connectorOAuthViaGitHub)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("callback status %d body %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location.Query().Get("scope_key") != catalogTestScene || location.Query().Get("scope_type") != contextcap.ScopeScene ||
+		location.Query().Get("agent") != f.agentID || location.Query().Get("org") != catalogTestOrg ||
+		location.Query().Get("connected") != f.gh.Slug || !strings.HasSuffix(location.Path, "/dingtalk/configure") {
+		t.Fatalf("return %s", location.Redacted())
+	}
+	token := location.Query().Get("scene_session")
+	sess, err := auth.OpenSceneSession(token, time.Now())
+	if err != nil || sess.ScopeKey != catalogTestScene || sess.AgentID != f.agentID || sess.UserID != testUserID || sess.OrgID != catalogTestOrg {
+		t.Fatalf("scene session %+v %v", sess, err)
+	}
+	var pageCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == auth.SceneSessionCookie {
+			pageCookie = cookie
+		}
+	}
+	if pageCookie == nil || pageCookie.Value != token || !pageCookie.HttpOnly || pageCookie.Path != auth.SceneSessionCookiePath {
+		t.Fatalf("page cookie %+v", pageCookie)
+	}
+	if _, err := contextcap.GetCredential(ctx, testPool, key); err != nil {
+		t.Fatalf("scene credential: %v", err)
+	}
+
+	// A workspace install still refuses a browser that did not start it.
+	_, wsQuery, _ := f.start(t, f.scope(c.ID, connectorOAuthScopeWorkspace, ""), "")
+	missed := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{Via: connectorOAuthViaGitHub, State: wsQuery.Get("state"), Code: "good-code"})
+	if missed.ErrorCode != connectOAuthErrBrowserMismatch || missed.SceneSession != "" {
+		t.Fatalf("workspace without the starting browser = %+v", missed)
+	}
+
+	// No code yet: the same shareable state continues to user authorization
+	// instead of burning as a browser mismatch. Drop the credential first so
+	// this is the first-connect hop, not a refresh of the one above.
+	if _, err := testPool.Exec(ctx, `DELETE FROM context_connector_credential WHERE connector_id = $1 AND scope_key = $2`, c.ID, catalogTestScene); err != nil {
+		t.Fatal(err)
+	}
+	_, query, _ = f.start(t, scope, "")
+	continued := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{
+		Via: connectorOAuthViaGitHub, State: query.Get("state"), InstallationID: 42, SetupAction: "install",
+	})
+	if continued.ErrorCode != "" || !continued.Continue || !strings.Contains(continued.RedirectURL, "github.com") {
+		t.Fatalf("install without a code = %+v", continued)
+	}
+	f.provideAuthorizeURL(t, continued.RedirectURL)
+	finished := f.h.completeConnectorOAuth(ctx, connectorOAuthCallback{Via: connectorOAuthViaGitHub, State: query.Get("state"), Code: "good-code"})
+	if finished.ErrorCode != "" || finished.SceneSession == "" || !strings.Contains(finished.RedirectURL, "scope_key="+url.QueryEscape(catalogTestScene)) {
+		t.Fatalf("user hop = error %s session set %v", finished.ErrorCode, finished.SceneSession != "")
+	}
+	if _, err := contextcap.GetCredential(ctx, testPool, key); err != nil {
+		t.Fatalf("credential after the user hop: %v", err)
+	}
+
+	// The page exchange rejects a tampered token and accepts the real one.
+	h := &Handler{cfg: Config{AppURL: catalogAppOrigin}}
+	bad := httptest.NewRequest(http.MethodPost, "/api/scene-config/session", strings.NewReader(`{"token":"nope.nope"}`))
+	badRec := httptest.NewRecorder()
+	h.OpenSceneConfigSession(badRec, bad)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("tampered session status %d", badRec.Code)
+	}
+	good := httptest.NewRequest(http.MethodPost, "/api/scene-config/session", strings.NewReader(`{"token":`+strconvQuote(finished.SceneSession)+`}`))
+	goodRec := httptest.NewRecorder()
+	h.OpenSceneConfigSession(goodRec, good)
+	if goodRec.Code != http.StatusOK {
+		t.Fatalf("session exchange %d %s", goodRec.Code, goodRec.Body.String())
+	}
+	exchanged := goodRec.Result().Cookies()
+	if len(exchanged) != 1 || exchanged[0].Name != auth.SceneSessionCookie || exchanged[0].Value != finished.SceneSession {
+		t.Fatalf("exchanged cookie %+v", exchanged)
+	}
+}
+
+func strconvQuote(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 func TestCatalogConnectorConcurrentRefreshRequestsOneToken(t *testing.T) {

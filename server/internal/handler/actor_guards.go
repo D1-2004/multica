@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/middleware"
 )
 
@@ -127,5 +128,22 @@ func RequireDingTalkHumanActor(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireConfigPageActor admits the configure page. A DingTalk user JWT is
+// unchanged. A scene session (the signed cookie a GitHub connect sets, and
+// only when Auth found no other credential) may open the same routes, and
+// the handlers confine it to that one scene. It does not loosen
+// RequireDingTalkHumanActor.
+func RequireConfigPageActor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := auth.SceneSessionFromContext(r.Context()); ok &&
+			r.Header.Get("X-Auth-Method") == auth.SceneSessionAuthMethod &&
+			r.Header.Get("X-Actor-Source") == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		RequireDingTalkHumanActor(next).ServeHTTP(w, r)
 	})
 }

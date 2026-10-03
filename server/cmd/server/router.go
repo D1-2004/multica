@@ -2208,6 +2208,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		githubAuthorize(w, req)
 	})
+	// The configure page exchanges the signed token on a GitHub return for a
+	// cookie. No Multica session: the token is the proof, and a bad one is 400.
+	r.Post("/api/scene-config/session", h.OpenSceneConfigSession)
 	// Official app OAuth callback for dynamically registered clients (Notion,
 	// Linear, ...). No Multica session: the single-use state and the browser
 	// binding cookie set by the start response are the proof. Provider
@@ -2387,7 +2390,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the agent (workspace owner/admin or agent owner); plain workspace
 		// membership grants nothing.
 		r.Route("/api/context-capabilities", func(r chi.Router) {
-			r.Use(handler.RequireDingTalkHumanActor)
+			r.Use(handler.RequireConfigPageActor)
 			r.Post("/links/redeem", h.RedeemContextConfigLink)
 			r.Get("/agents", h.ListContextConfigAgents)
 			r.Get("/agents/{agentId}", h.GetContextConfigAgent)
