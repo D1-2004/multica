@@ -149,6 +149,20 @@ func containsInstructionLikeLearning(insight string) bool {
 		"do not mention",
 		"approve all",
 		"approve every",
+		// Chinese equivalents (Multica extension): role changes, overrides and
+		// blanket approvals that must never become stored "memory".
+		"忽略之前的指令",
+		"忽略之前所有指令",
+		"忽略之前的所有指令",
+		"忽略以上指令",
+		"忽略上述指令",
+		"你现在是",
+		"以系统身份",
+		"跳过审核",
+		"全部批准",
+		"无需审批",
+		"无需确认",
+		"系统提示",
 	}
 	for _, phrase := range bad {
 		if strings.Contains(lower, phrase) {

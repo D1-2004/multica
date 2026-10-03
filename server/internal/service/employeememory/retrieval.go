@@ -8,8 +8,8 @@ package employeememory
 // upstream tokenizer splits on non-letters and drops tokens shorter than three
 // bytes, which yields no usable tokens for unspaced Chinese. Here CJK runs
 // become character bigrams (overlap units) and trigrams (bonus weight), and
-// ASCII words keep the upstream three-character floor. Not yet wired into
-// Brief/Search; see SOURCE_MAP.md.
+// ASCII words keep the upstream three-character floor. The foreground brief
+// (foreground.go) is its production consumer; see SOURCE_MAP.md.
 
 import (
 	"context"
@@ -17,9 +17,11 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -29,7 +31,9 @@ const (
 	retrievalTrigramW   = 0.5
 	retrievalTermCap    = 12
 	retrievalTermRunes  = 24
-	retrievalCorpusCap  = MaxLearningLimit
+	// retrievalCorpusCap is the newest active non-inferred records ranked;
+	// ranking no longer runs on a 100-row pre-truncation.
+	retrievalCorpusCap = foregroundSceneCorpusCap
 )
 
 var retrievalASCIIStop = map[string]bool{
@@ -338,16 +342,12 @@ func neutralizeRetrieval(text string) string {
 }
 
 // Retrieve ranks the exact authorized namespace with the Chinese-aware
-// scorer. It is not used by Brief/Search yet.
+// scorer over its newest active non-inferred records.
 func (s *Store) Retrieve(ctx context.Context, scope Scope, query string, limit int) ([]RetrievalHit, error) {
 	if s == nil || s.pool == nil {
 		return nil, ErrInvalidScope
 	}
-	corpus, err := search(ctx, s.pool, scope, "", retrievalCorpusCap)
-	if err != nil {
-		return nil, err
-	}
-	return RankLearnings(query, corpus, limit), nil
+	return retrieve(ctx, s.pool, scope, query, limit)
 }
 
 // RetrieveTx is Retrieve inside the caller's transaction.
@@ -355,9 +355,20 @@ func (s *Store) RetrieveTx(ctx context.Context, tx pgx.Tx, scope Scope, query st
 	if tx == nil {
 		return nil, ErrInvalidScope
 	}
-	corpus, err := search(ctx, tx, scope, "", retrievalCorpusCap)
+	return retrieve(ctx, tx, scope, query, limit)
+}
+
+func retrieve(ctx context.Context, conn db.DBTX, scope Scope, query string, limit int) ([]RetrievalHit, error) {
+	if err := authorize(ctx, db.New(conn), scope); err != nil {
+		return nil, err
+	}
+	records, err := activeCorpus(ctx, conn, scope, retrievalCorpusCap, time.Now().UTC())
 	if err != nil {
 		return nil, err
+	}
+	corpus := make([]LearningSearchResult, len(records))
+	for i, r := range records {
+		corpus[i] = r.LearningSearchResult
 	}
 	return RankLearnings(query, corpus, limit), nil
 }
