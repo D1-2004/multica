@@ -140,6 +140,10 @@ type CreateParams struct {
 	// source replay across old and new binaries still matches.
 	Lifecycle      LifecycleVersion `json:"lifecycle_version,omitempty"`
 	CompletionMode CompletionMode   `json:"completion_mode,omitempty"`
+	// BuildsOn lists at most MaxBuildsOn upstream Tasks of the same scope and
+	// requester whose results this Task uses. They are linked in the creating
+	// transaction; omitted, the create payload keeps its earlier bytes.
+	BuildsOn []string `json:"builds_on,omitempty"`
 }
 
 type InputParams struct {
