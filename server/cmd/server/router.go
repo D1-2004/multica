@@ -2869,6 +2869,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/tasks/{taskId}/events", h.ListTaskRunEventsByUser)
 			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
 			r.With(handler.RequireHumanActor).Post("/api/employee-tasks/{id}/steer", h.SteerEmployeeTask)
+			// Read-only EmployeeTask projection; each handler applies its own
+			// originator/manager/exact-execution visibility.
+			r.Get("/api/employee-tasks", h.ListEmployeeTasks)
+			r.Get("/api/employee-tasks/{id}", h.GetEmployeeTask)
+			r.Get("/api/employee-tasks/{id}/entries", h.ListEmployeeTaskEntries)
+			r.Get("/api/employee-tasks/{id}/runs", h.ListEmployeeTaskRuns)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
 			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
 			r.Get("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.GetDSHSchedule)
