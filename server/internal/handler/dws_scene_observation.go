@@ -243,4 +243,3 @@ func employeeProactiveCandidate(content string, sentAt, now time.Time) bool {
 	}
 	return false
 }
-
