@@ -733,8 +733,69 @@ func employeeQuotedIDs(m DispatchMessage) []string {
 	return ids
 }
 
+// employeeClosedQuestion is read-only context, not an invitation binding or authority.
+type employeeClosedQuestion struct {
+	Question string    `json:"question"`
+	State    string    `json:"state"`
+	EndedAt  time.Time `json:"ended_at"`
+}
+
+// employeeClosedQuestions exposes only a participant's already-delivered questions
+// in this exact scene. It never selects answers, other participants or origin data.
+func employeeClosedQuestions(ctx context.Context, database employeeentry.DB, scope employeeentry.Scope, sender string) ([]employeeClosedQuestion, error) {
+	rows, err := database.Query(ctx, `SELECT i.question, c.state, t.state, i.delivery_state,
+ CASE WHEN c.state IN ('completed','cancelled','revoked','expired') THEN COALESCE(c.closed_at,c.completed_at,c.updated_at)
+      WHEN i.delivery_state IN ('revoked','expired') THEN i.updated_at ELSE t.updated_at END AS ended_at
+ FROM employee_task_invitation i
+ JOIN employee_task_collection c ON c.id=i.collection_id AND c.workspace_id=i.workspace_id
+  AND c.agent_id=i.agent_id AND c.tenant_org_id=i.tenant_org_id AND c.task_id=i.task_id
+ JOIN employee_task t ON t.id=i.task_id AND t.workspace_id=i.workspace_id
+  AND t.agent_id=i.agent_id AND t.tenant_org_id=i.tenant_org_id
+ WHERE i.workspace_id=$1::uuid AND i.agent_id=$2::uuid AND i.tenant_org_id=$3
+  AND i.target_scene_id=$4::uuid AND i.participant_ref=$5
+  AND i.delivery_outcome='sent' AND i.delivered_at IS NOT NULL
+  AND (c.state IN ('completed','cancelled','revoked','expired')
+       OR i.delivery_state IN ('revoked','expired') OR t.state IN ('succeeded','failed','cancelled'))
+  AND CASE WHEN c.state IN ('completed','cancelled','revoked','expired') THEN COALESCE(c.closed_at,c.completed_at,c.updated_at)
+      WHEN i.delivery_state IN ('revoked','expired') THEN i.updated_at ELSE t.updated_at END >=now()-interval '24 hours'
+ ORDER BY ended_at DESC,i.id DESC LIMIT 5`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.SceneID, sender)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []employeeClosedQuestion
+	for rows.Next() {
+		var question, collectionState, taskState, invitationState string
+		var endedAt time.Time
+		if err := rows.Scan(&question, &collectionState, &taskState, &invitationState, &endedAt); err != nil {
+			return nil, err
+		}
+		state := "closed"
+		switch {
+		case collectionState == "cancelled":
+			state = "cancelled"
+		case collectionState == "expired":
+			state = "expired"
+		case collectionState == "completed":
+			state = "completed"
+		case collectionState == "revoked":
+			state = "closed"
+		case invitationState == "expired":
+			state = "expired"
+		case invitationState == "revoked":
+			state = "closed"
+		case taskState == "cancelled":
+			state = "cancelled"
+		case taskState == "succeeded":
+			state = "completed"
+		}
+		out = append(out, employeeClosedQuestion{Question: employeeTaskData(question, 2000), State: state, EndedAt: endedAt})
+	}
+	return out, rows.Err()
+}
+
 // invitationContext binds each current source message to its sender's own
-// open invitations and renders only those questions for the model.
+// open invitations and renders bounded own closed-question facts for the model.
 func (w *EmployeeSceneWorker) invitationContext(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) ([]employeeInvitationBinding, string, error) {
 	database, ok := employeeEntryDB(w.handler)
 	if !ok {
@@ -748,10 +809,22 @@ func (w *EmployeeSceneWorker) invitationContext(ctx context.Context, job employe
 	scopeIn := employeeTaskinputScope(job.Scope)
 	var bindings []employeeInvitationBinding
 	views := []map[string]any{}
+	closedViews := []map[string]any{}
+	closedSenders := map[string]bool{}
 	for i, item := range job.Items {
 		for _, source := range employeeSourceMessages(item, envelopes[i]) {
 			if source.RequesterRef == "" || source.SourceRef == "" {
 				continue
+			}
+			if !closedSenders[source.RequesterRef] {
+				closed, err := employeeClosedQuestions(ctx, database, job.Scope, source.RequesterRef)
+				if err != nil {
+					return nil, "", err
+				}
+				if len(closed) > 0 {
+					closedViews = append(closedViews, map[string]any{"source_ref": source.SourceRef, "questions": closed})
+				}
+				closedSenders[source.RequesterRef] = true
 			}
 			candidates, err := store.BindingCandidates(ctx, scopeIn, source.RequesterRef)
 			if err != nil {
@@ -799,13 +872,22 @@ func (w *EmployeeSceneWorker) invitationContext(ctx context.Context, job employe
 			views = append(views, map[string]any{"source_ref": source.SourceRef, "binding": frozen.Outcome, "how": frozen.Kind, "invitations": invites})
 		}
 	}
-	if len(bindings) == 0 {
+	if len(bindings) == 0 && len(closedViews) == 0 {
 		return nil, "", nil
 	}
-	raw, err := json.Marshal(map[string]any{"invitation_context": views, "guidance": "You earlier asked this sender these questions on someone's behalf; only the sender's own questions are listed. " +
+	context := map[string]any{}
+	if len(views) > 0 {
+		context["invitation_context"] = views
+	}
+	if len(closedViews) > 0 {
+		context["closed_questions"] = closedViews
+	}
+	context["guidance"] = "You earlier asked this sender these questions on someone's behalf; only the sender's own questions are listed. " +
 		"bound means the Host matched this message to that question (a reply to it, or the only open question here). If the message actually answers it, call accept_collection_input with a short thanks. " +
 		"A question back, 'later', thanks or unrelated chat is not an answer. ambiguous means several of their questions fit: ask which one they are answering, unless the message itself clearly names it. " +
-		"Never mention who else was asked, anyone's answers, totals, or the requester's other context."})
+		"closed_questions are past questions already delivered to this sender that are now closed; they are not answer bindings or new requests. Do not collect, remind, forward, promise a summary or restart that closed work. Reply politely if useful, without pretending to record or relay an answer. A genuinely new independent request still follows the normal authorization contract. " +
+		"Never mention who else was asked, anyone's answers, totals, or the requester's other context."
+	raw, err := json.Marshal(context)
 	return bindings, string(raw), err
 }
 

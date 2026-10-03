@@ -586,9 +586,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	if invitations != "" {
 		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
-	} else {
-		// No current sender has an open invitation here: there is nothing to
-		// record, so the tool is not offered (a late answer gets a normal reply).
+	}
+	if len(input.Invitations) == 0 {
+		// Closed-question facts do not grant an open answer binding.
 		input.Config.Tools = employeeWithoutTool(input.Config.Tools, "accept_collection_input")
 	}
 	if note := employeeUnaddressedWindowNote(envelopes); note != "" {

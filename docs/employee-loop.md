@@ -243,6 +243,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 **作答（B 场域）**
 - 聊天快照为每条来源消息冻结 Host 绑定：回复链 8 跳内指向邀请才是强绑定；群里无引用一律不绑；单聊只有唯一待答邀请才绑；多于一个为 ambiguous。本员工自己的消息、卡片/系统占位文本永不绑定。模型只看到发言人自己的问题。
 - `accept_collection_input` 只记录被绑定的那条消息原文；ambiguous 时只有单聊发言人自己的原话点明是哪一题（`reference_quote`）才可记录，否则先澄清。工具结果不含人数或进度。
+- 迟到答复还可见本人同场域最近关闭的已送达问题，最多5条/24小时，只含问题、关闭状态和时间；不含其他参与者答案或origin私有上下文。关闭事实不产生accept binding，closed-only仍不提供收答工具，不授权转发/汇总/恢复承诺。见 `docs/employee-collection-late-context.md`。
 - 发送前 `BeforeCollectionInviteSend` 再核邀请仍有效、场域目录/租户/身份未变，并对最终字节再做外发检查；不通过的动作被抑制，由对账器记为 held 或 failed。
 
 **收齐与汇总**
