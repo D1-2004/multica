@@ -3140,6 +3140,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/runs", h.ListAgentContextRoutineRuns)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/run", h.RunAgentContextRoutine)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/rotate-webhook", h.RotateAgentContextRoutineWebhook)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/webhook-signing-secret", h.SetAgentContextRoutineWebhookSecret)
 					r.Get("/skills", h.ListAgentSkills)
 					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills", h.SetAgentSkills)
 					r.With(h.RefuseTagEmployeeConfigWrites).Post("/skills/add", h.AddAgentSkills)
