@@ -1,0 +1,202 @@
+{
+ "schema": "el2e.world.v1",
+ "note": "所有用例只从这里取背景事实；变量只用在被测的那一个事实上。跑前用 Director 与员工视角读群成员显示名，回填 display_name 字段。；2026-10-03 已读回：冬翔在 RealNiubility 的显示名是「冬翔」，Director 在三个测试群的群昵称是「D总」。",
+ "people": {
+  "D总": {
+   "actor": "director",
+   "display_name": "DingTalk-FDE Director",
+   "group_nickname": "D总（g_team / group_p_hx / group_t 已设置群昵称）",
+   "role": "交付经理，东翔的上级；管客户商务、日常对接、排期拍板",
+   "preferences": [
+    "汇报不要表格（手机上看全是竖线），分点、最多五条"
+   ]
+  },
+  "东翔": {
+   "actor": "zhujue",
+   "display_name": "冬翔",
+   "aliases": [
+    "东翔",
+    "冬翔",
+    "夏东翔"
+   ],
+   "role": "华信、睿博两条线的技术负责人；技术方案拍板",
+   "preferences": [
+    "进展喜欢表格，一行一个客户"
+   ]
+  },
+  "小Q": {
+   "actor": "employee",
+   "display_name": "Qwen-Real",
+   "role": "组里的数字员工（被测）；整理纪要、汇总、跑脚本、盯事项"
+  },
+  "许航": {
+   "actor": "dxxh",
+   "display_name": "dxxh（钉钉昵称 SixSix；g_team / group_p_hx / group_t 群昵称「许航」）",
+   "aliases": [
+    "许航",
+    "航哥",
+    "dxxh"
+   ],
+   "kind": "真人",
+   "role": "交付组实施工程师（真人，在群里）：华信、启明现场部署与联调，向 D总汇报；能 @ 人、能私聊。第二个真人同事：用在单聊、两人收集和需要真人 @ 的群用例"
+  },
+  "黛玉": {
+   "actor": "daiyu",
+   "display_name": "红楼·林黛玉",
+   "kind": "数字员工",
+   "role": "测试数字员工：跑回归、报缺陷"
+  },
+  "凤姐": {
+   "actor": "wangxifeng",
+   "display_name": "红楼·王熙凤",
+   "kind": "数字员工",
+   "role": "行政数字员工：会议室、差旅、报销、公章、订车、寄件、下午茶"
+  },
+  "宝钗": {
+   "actor": "baochai",
+   "display_name": "红楼·薛宝钗",
+   "kind": "数字员工",
+   "role": "新来的客户成功数字员工（只在 P-13 入群用例首次出场）"
+  },
+  "林晓": {
+   "actor": null,
+   "role": "实施（真人，不在群里）"
+  },
+  "周明": {
+   "actor": null,
+   "role": "实施（真人，不在群里）"
+  },
+  "小周": {
+   "actor": null,
+   "role": "前端（真人，不在群里）"
+  },
+  "王雪": {
+   "actor": null,
+   "role": "财务（真人，不在群里）"
+  }
+ },
+ "customers": {
+  "华信": {
+   "stage": "二期 UAT → 验收",
+   "contract_wan": 128,
+   "first_payment_wan": 38.4,
+   "contacts": {
+    "商务": "刘晨（P-01 每轮换成新人，刘晨转二期数据中台技术口）",
+    "技术": "孙浩"
+   }
+  },
+  "睿博": {
+   "stage": "POC 完成，报价 96 万在走审批",
+   "contacts": {
+    "商务": "陈总"
+   }
+  },
+  "启明": {
+   "stage": "一期验收卡在运单签收；二期预算 68 万已批，要求十一月底前上线",
+   "contacts": {
+    "验收": "王经理",
+    "预算": "刘总"
+   }
+  },
+  "客户池": [
+   "宏远",
+   "中拓",
+   "安澜",
+   "鼎拓",
+   "云帆",
+   "恒拓"
+  ]
+ },
+ "suppliers": [
+  "云图",
+  "数衡",
+  "北辰",
+  "天枢",
+  "青禾",
+  "远帆",
+  "星垣",
+  "铭川",
+  "拓界"
+ ],
+ "rules": [
+  "组内周报规矩只在 G-15 定义一套",
+  "核心客户的数值属性只用上表；其他金额属于各用例私有属性（回款计划、报销、报价明细）",
+  "数字员工不出差、不报工时、不交周报；这些事交给真人林晓、周明",
+  "许航（dxxh）是真人，可以 @ 人、私聊员工；数字员工演员（黛玉、凤姐、宝钗）只能靠引用回复点名员工"
+ ],
+ "groups": {
+  "g_team": {
+   "name": "交付二组",
+   "creator": "director",
+   "members": [
+    "director",
+    "zhujue",
+    "employee",
+    "daiyu",
+    "wangxifeng",
+    "dxxh"
+   ],
+   "used_by": "G 全部 + M 群用例",
+   "cid": "cidK9nArIWtuFzXEizIBHacIA==",
+   "created_at": "2026-10-03"
+  },
+  "group_p_hx": {
+   "name": "华信二期交付群",
+   "creator": "director",
+   "members": [
+    "director",
+    "zhujue",
+    "employee",
+    "daiyu",
+    "wangxifeng",
+    "dxxh"
+   ],
+   "used_by": "P 群用例 + C-13 群步骤 + G-15 跨群步骤",
+   "cid": "cid9pVqaL7ehXiznGozdw1ydQ==",
+   "created_at": "2026-10-03"
+  },
+  "group_t": {
+   "name": "交付二组·项目推进",
+   "creator": "director",
+   "members": [
+    "director",
+    "zhujue",
+    "employee",
+    "dxxh"
+   ],
+   "used_by": "T 群用例",
+   "note": "不要登记为 routine 会话（否则平台的例行任务消息会被 grader 当噪音丢弃）",
+   "cid": "cidLPuJyCMy6OKslUltqlIpug==",
+   "created_at": "2026-10-03"
+  },
+  "g_customer": {
+   "name": "华信对接群（测试）",
+   "creator": "director",
+   "members": [
+    "director",
+    "employee"
+   ],
+   "used_by": "G-12 外发哨兵"
+  },
+  "group_join": {
+   "name": "交付二组·周会",
+   "creator": "director",
+   "members": [
+    "director",
+    "employee",
+    "+baochai（用例内拉入）"
+   ],
+   "used_by": "P-13，每轮新建，不拉冬翔"
+  },
+  "group_de_probe": {
+   "name": "EL-E2E-1003-DE（已存在）",
+   "members": [
+    "director",
+    "employee",
+    "daiyu"
+   ],
+   "used_by": "T-12 黛玉分支",
+   "cid": "cid1aKA0Jmc1HO3/G3BrfyTHg=="
+  }
+ }
+}

@@ -442,14 +442,15 @@ def grade_run(run_id: str, *, baseline: str | None = None, refresh: bool = True,
     specs = {}
     for path in cases_files or sorted((HARNESS_DIR / "cases").rglob("*.json")):
         spec = load_json(path)
-        if not spec or "cases" not in spec:
-            continue
+        if not spec or "cases" not in spec or spec.get("schema") == "el2e.cases.v2":
+            continue  # cases-v2 has its own grader (grader_v2, `e2e.py v2 grade`)
         for case in spec["cases"]:
             specs[case["id"]] = case
     known_gaps = load_known_gaps()
     judgements = load_json(rd / "judgements.json") or {}
     transcripts = final_transcripts(rd, refresh=refresh)
-    drivers = [load_json(p) for p in sorted((rd / "cases").glob("*.driver.json"))]
+    drivers = [d for d in (load_json(p) for p in sorted((rd / "cases").glob("*.driver.json")))
+               if d.get("schema") != "el2e.driver.v2"]
     spans = case_spans(rd, drivers, transcripts, reg)
     results = []
     (rd / "graded").mkdir(exist_ok=True)

@@ -53,6 +53,49 @@ def read_messages(profile: str, cid: str, limit: int = 30) -> dict[str, Any]:
             "elapsed_s": res.get("elapsed_s")}
 
 
+def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100, max_pages: int = 10) -> dict[str, Any]:
+    """Every message from `since` to now: newest page first, then older pages
+    through the `--time` boundary (never `--start`, which drops messages).
+    `covered` is true only when the oldest message read is at or before `since`
+    or the conversation has no older messages."""
+    seen: dict[str, dict[str, Any]] = {}
+    boundary = None
+    covered = False
+    pages = 0
+    for _ in range(max_pages):
+        args = ["chat", "+chat-messages", "--chat-id", cid, "--limit", str(limit), "--no-reactions"]
+        if boundary:
+            args += ["--time", boundary]
+        res = dwsgw.dws(profile, args, timeout=60, retries=2)
+        pages += 1
+        body = res.get("json") or {}
+        batch = body.get("messages") or []
+        new = 0
+        for msg in batch:
+            if msg.get("messageId") and msg["messageId"] not in seen:
+                seen[msg["messageId"]] = msg
+                new += 1
+        if not batch:
+            covered = res["rc"] == 0
+            break
+        oldest = min(msg["createTime"] for msg in batch)
+        if parse_dws_time(oldest) <= since or not body.get("hasMore"):
+            covered = True
+            break
+        if new == 0 or oldest == boundary:
+            break
+        boundary = oldest
+    msgs = sorted(seen.values(), key=lambda m: (m.get("createTime") or "", m.get("messageId") or ""))
+    return {"messages": [m for m in msgs if parse_dws_time(m["createTime"]) >= since - CLOCK_TOLERANCE],
+            "covered": covered, "pages": pages, "since": since.isoformat(timespec="seconds")}
+
+
+def prefix_mentions(text: str) -> list[str]:
+    """Display names @-mentioned at the start of a rendered message."""
+    match = re.match(r"^((?:@\S+\s+)+)", text or "")
+    return re.findall(r"@(\S+)", match.group(1)) if match else []
+
+
 def render_text(text: str, at_ids: list[str]) -> str:
     """Group @: each mentioned id needs both the at-list entry and a <@id> placeholder."""
     prefix = " ".join(f"<@{oid}>" for oid in at_ids)
@@ -61,7 +104,9 @@ def render_text(text: str, at_ids: list[str]) -> str:
 
 def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | None = None,
          match_key: str | None = None, readback_timeout: int = 40,
-         exclude_sender_ids: set[str] | None = None, not_before: _dt.datetime | None = None) -> dict[str, Any]:
+         exclude_sender_ids: set[str] | None = None, not_before: _dt.datetime | None = None,
+         ai_tag: bool | None = None, reader_profile: str | None = None, sender_id: str | None = None,
+         claimed_ids: set[str] | None = None) -> dict[str, Any]:
     """Send once with an idempotency key, then confirm exactly one landing.
 
     `match_key` is a distinctive substring of the rendered message used to find
@@ -77,30 +122,39 @@ def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | 
     args = ["chat", "+messages-send", "--as", "user", "--chat-id", cid, "--text", body, "--uuid", key, "--yes"]
     if at_ids:
         args += ["--at-open-dingtalk-ids", ",".join(at_ids)]
+    if ai_tag is not None:
+        args.append(f"--ai-tag={'true' if ai_tag else 'false'}")
     return _deliver(profile=profile, cid=cid, args=args, body=body, text=text, marker=marker, key=key, at_ids=at_ids,
                     match_key=match_key, readback_timeout=readback_timeout,
-                    exclude_sender_ids=exclude_sender_ids, not_before=not_before)
+                    exclude_sender_ids=exclude_sender_ids, not_before=not_before,
+                    reader_profile=reader_profile, sender_id=sender_id, claimed_ids=claimed_ids)
 
 
 def reply(*, profile: str, cid: str, quoted_message_id: str, text: str, marker: str,
           at_ids: list[str] | None = None, match_key: str | None = None, readback_timeout: int = 40,
-          exclude_sender_ids: set[str] | None = None) -> dict[str, Any]:
+          exclude_sender_ids: set[str] | None = None, dm_open_id: str | None = None, ai_tag: bool | None = None,
+          reader_profile: str | None = None, sender_id: str | None = None,
+          claimed_ids: set[str] | None = None) -> dict[str, Any]:
     """Quote-reply to one exact message (how colleagues point at a line in DingTalk).
 
-    A quote reply to an employee message also addresses the employee: DingTalk
-    renders it as `@<employee> …` and delivers a native @ event (measured
-    2026-10-03 with a DEAP actor). The CLI verifies the source message and its
-    conversation before sending; the same idempotency and readback rules apply.
+    A quote reply always @-mentions the quoted author (DingTalk renders
+    `@<author> …`); quoting an employee message therefore addresses the
+    employee and is delivered as a native @ event (measured 2026-10-03 with a
+    DEAP actor). Explicit `at_ids` are passed to the CLI, which adds the
+    `<@id>` placeholders itself, so the body carries none (no double @).
+    In a 1:1 chat the target is the peer (`dm_open_id`), not the group.
     """
     at_ids = at_ids or []
     key = stable_uuid(marker)
-    body = render_text(text, at_ids)
-    args = ["chat", "+messages-reply", "--group", cid, "--message-id", quoted_message_id, "--content", body,
-            "--uuid", key, "--yes"]
+    args = ["chat", "+messages-reply", "--ref-msg-id", quoted_message_id, "--content", text, "--uuid", key, "--yes"]
+    args += ["--open-dingtalk-id", dm_open_id] if dm_open_id else ["--group", cid]
     if at_ids:
         args += ["--at-open-dingtalk-ids", ",".join(at_ids)]
-    rec = _deliver(profile=profile, cid=cid, args=args, body=body, text=text, marker=marker, key=key, at_ids=at_ids,
-                   match_key=match_key, readback_timeout=readback_timeout, exclude_sender_ids=exclude_sender_ids)
+    if ai_tag is not None:
+        args.append(f"--ai-tag={'true' if ai_tag else 'false'}")
+    rec = _deliver(profile=profile, cid=cid, args=args, body=text, text=text, marker=marker, key=key, at_ids=at_ids,
+                   match_key=match_key, readback_timeout=readback_timeout, exclude_sender_ids=exclude_sender_ids,
+                   reader_profile=reader_profile, sender_id=sender_id, claimed_ids=claimed_ids)
     rec["quoted_message_id"] = quoted_message_id
     rec["landed_quotes_source"] = [m.get("quotedMessageId") == quoted_message_id for m in rec["landed"]]
     return rec
@@ -108,7 +162,16 @@ def reply(*, profile: str, cid: str, quoted_message_id: str, text: str, marker: 
 
 def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, marker: str, key: str,
              at_ids: list[str], match_key: str | None, readback_timeout: int,
-             exclude_sender_ids: set[str] | None, not_before: _dt.datetime | None = None) -> dict[str, Any]:
+             exclude_sender_ids: set[str] | None, not_before: _dt.datetime | None = None,
+             reader_profile: str | None = None, sender_id: str | None = None,
+             claimed_ids: set[str] | None = None) -> dict[str, Any]:
+    """Send, then locate the landing as `reader_profile` (default: the sender).
+
+    With `sender_id` (the sender as the reader sees it) a landing must come
+    from exactly that sender; short lines like 「好嘞」 can no longer match an
+    employee message with the same words. `claimed_ids` are messages already
+    attributed to earlier steps of the case and never count as this landing.
+    """
     t0 = now()
     floor = min(t0, not_before) if not_before is not None else t0
     floor = floor.replace(microsecond=0) - _dt.timedelta(seconds=5)
@@ -127,24 +190,29 @@ def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, m
     key_text = (match_key or text).strip()
     excluded = exclude_sender_ids or set()
 
+    claimed = claimed_ids or set()
+    reader = reader_profile or profile
+
     def matches(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         return [m for m in snapshot["messages"]
                 if key_text in (m.get("text") or "")
                 and parse_dws_time(m["createTime"]) >= floor
-                and m.get("senderId") not in excluded]
+                and m.get("messageId") not in claimed
+                and (m.get("senderId") == sender_id if sender_id else m.get("senderId") not in excluded)]
 
     deadline = time.monotonic() + readback_timeout
     landed: list[dict[str, Any]] = []
     while time.monotonic() < deadline:
-        landed = matches(read_messages(profile, cid, limit=20))
+        landed = matches(read_messages(reader, cid, limit=20))
         if landed:
             # Give a possible duplicate one more read to show up before deciding.
             time.sleep(2)
-            landed = matches(read_messages(profile, cid, limit=20))
+            landed = matches(read_messages(reader, cid, limit=20))
             break
         time.sleep(2)
     record = {
-        "marker": marker, "uuid": key, "profile": profile, "cid": cid, "text": body, "match_key": key_text,
+        "marker": marker, "uuid": key, "profile": profile, "reader_profile": reader, "sender_id": sender_id,
+        "cid": cid, "text": body, "match_key": key_text, "args_flags": [a for a in args if a.startswith("--")],
         "at_ids": at_ids, "sent_at": iso(t0), "attempts": attempts, "landing_count": len(landed),
         "landed": [{"messageId": m.get("messageId"), "createTime": m.get("createTime"),
                     "senderId": m.get("senderId"), "sender": m.get("sender"), "text": m.get("text"),

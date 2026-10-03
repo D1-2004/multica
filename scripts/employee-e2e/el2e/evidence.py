@@ -347,6 +347,8 @@ def collect_run(run_id: str, *, only: list[str], with_sls: bool = True) -> int:
         rec = load_json(path)
         if only and rec["case_id"] not in only:
             continue
+        if not any((s.get("send") or {}).get("landed") for s in rec.get("steps", [])):
+            continue  # nothing was sent (not_run / skipped): no traces to attribute
         out_path = rd / "evidence" / path.name.replace(".driver.json", ".lf.json")
         ev = collect_case(rd, rec, scene_ids)
         write_json(out_path, ev)

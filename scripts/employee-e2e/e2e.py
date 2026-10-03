@@ -10,6 +10,10 @@
   e2e.py conv new-group <conversation> [--title T] [--dry-run]           fresh group for a clean scene
   e2e.py collect --run-id R [--only ID,...]                Langfuse / SLS evidence
   e2e.py grade --run-id R [--baseline R0]                  grader (separate step)
+  e2e.py v2 dry-run [--suite G,M,...] [--capabilities k=on,...] [--json OUT]   parse+validate, no send
+  e2e.py v2 run --run-id R [--suite G] [--only G-01,...] [--capabilities ...] [--no-lease]
+  e2e.py v2 grade --run-id R [--baseline R0] [--capabilities ...]   regrade after `collect`
+  e2e.py v2 sync-gaps                                       cases/v2/known_gaps.json from known_gap fields
 
 Evidence goes to $EL2E_EVIDENCE_ROOT/<run-id>/ (default ~/d1/employee-e2e-evidence).
 """
@@ -113,6 +117,40 @@ def cmd_grade(args: argparse.Namespace) -> int:
     return grader.grade_run(args.run_id, baseline=args.baseline)
 
 
+def _v2_paths(arg: str | None) -> list[Path] | None:
+    from el2e import cases_v2
+    if not arg:
+        return None
+    return [cases_v2.V2_DIR / f"{name.strip()}.json" for name in arg.split(",") if name.strip()]
+
+
+def cmd_v2(args: argparse.Namespace) -> int:
+    from el2e import cases_v2
+    caps = cases_v2.load_capabilities(args.capabilities)
+    if args.action == "dry-run":
+        res = cases_v2.dry_run(_v2_paths(args.suite), caps)
+        if args.json:
+            Path(args.json).write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        for row in res["cases"]:
+            print(f"{row['id']:6} {row['state']:18} {row['conversation']:12} {'; '.join(map(str, row['reasons']))[:110]}")
+        print(json.dumps({"total": res["total"], "counts": res["counts"], "suite_errors": res["suite_errors"]},
+                         ensure_ascii=False))
+        return 1 if res["suite_errors"] or res["counts"].get("blocked_validation") else 0
+    if args.action == "sync-gaps":
+        print(json.dumps(cases_v2.sync_known_gaps(), ensure_ascii=False, indent=1))
+        return 0
+    if not args.run_id:
+        raise SystemExit("--run-id is required")
+    if args.action == "run":
+        from el2e import driver_v2
+        return driver_v2.run_v2(_v2_paths(args.suite) or [cases_v2.V2_DIR / n for n in cases_v2.SUITE_FILES],
+                                args.run_id, only=[x for x in (args.only or "").split(",") if x], caps=caps,
+                                skip_gate=args.skip_gate, use_lease=not args.no_lease)
+    from el2e import grader_v2
+    return grader_v2.grade_run_v2(args.run_id, baseline=args.baseline,
+                                  caps=caps if args.capabilities else None)
+
+
 def main(argv: list[str] | None = None) -> int:
     common.scrub_process_proxies()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -163,6 +201,17 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--run-id", required=True)
     gr.add_argument("--baseline")
     gr.set_defaults(fn=cmd_grade)
+    v2 = sub.add_parser("v2")
+    v2.add_argument("action", choices=["dry-run", "run", "grade", "sync-gaps"])
+    v2.add_argument("--run-id")
+    v2.add_argument("--suite", help="comma list of G,M,C,P,T (default: all)")
+    v2.add_argument("--only")
+    v2.add_argument("--capabilities", help="platform/release/ops overrides, e.g. G_memory=on,routine_pause=on")
+    v2.add_argument("--baseline")
+    v2.add_argument("--json")
+    v2.add_argument("--skip-gate", action="store_true")
+    v2.add_argument("--no-lease", action="store_true")
+    v2.set_defaults(fn=cmd_v2)
     args = p.parse_args(argv)
     return args.fn(args)
 

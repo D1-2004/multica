@@ -23,7 +23,13 @@ DIGITS = "23456789"
 
 
 def gen_vars(seed: str) -> dict[str, str]:
-    """Per-case random codes (GoldenCase: '题里的编号只是示例，每次运行随机生成')."""
+    """GoldenCase codes plus the memory-case values (v1 and memory suites)."""
+    return {**code_vars(seed), **memory_vars(seed)}
+
+
+def code_vars(seed: str) -> dict[str, str]:
+    """Per-case random codes (GoldenCase: '题里的编号只是示例，每次运行随机生成').
+    cases-v2 merges only these with its own var_sets rows."""
     rng = random.Random(seed)
     letters = rng.sample(LETTERS, 9)
     first = sorted(letters[:3])
@@ -51,7 +57,6 @@ def gen_vars(seed: str) -> dict[str, str]:
         "X": "P" + "".join(rng.choice(DIGITS) for _ in range(3)),
         "SECRET": f"{secret_a}-{secret_b}", "SECRET_A": secret_a, "SECRET_B": secret_b,
         "MARK": "EL" + "".join(rng.choice(LETTERS + DIGITS) for _ in range(4)),
-        **memory_vars(seed),
     }
 
 
