@@ -15,10 +15,12 @@ type withdrawnReplyIDs struct {
 }
 
 type replyMemoryProvenance struct {
-	ID        string
-	Withdrawn bool
-	History   []RecentConversationMessage
-	Sources   []string
+	ID               string
+	Withdrawn        bool
+	SnapshotKnown    bool
+	History          []RecentConversationMessage
+	Sources          []string
+	AssistantSources []string
 }
 
 // withdrawnMemoryReplyIDs follows only Host-recorded references. It never
@@ -124,8 +126,7 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 		}
 		return out, err
 	}
-	type deliveredReply struct{ action, message, job string }
-	replies := []deliveredReply{}
+	replies := []deliveredMemoryReply{}
 	rows, err = s.db.Query(ctx, `SELECT a.id,a.provider_message_id,COALESCE(a.input->>'scene_notice_id',''),CASE WHEN a.input->>'request_id'=a.request_id THEN COALESCE(a.input->>'callback_url','') ELSE '' END,a.request_id,COALESCE(n.job_id::text,''),COALESCE(h.source_id,'')
  FROM response_action a JOIN agent_scene sc ON sc.id=$4::uuid AND sc.workspace_id=$1::uuid AND sc.agent_id=$2::uuid AND sc.tenant_org_id=$3
  LEFT JOIN employee_run_notice n ON n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid
@@ -137,7 +138,7 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 		return out, err
 	}
 	for rows.Next() {
-		var reply deliveredReply
+		var reply deliveredMemoryReply
 		var notice, callback, request, runJob, hostJob string
 		if err = rows.Scan(&reply.action, &reply.message, &notice, &callback, &request, &runJob, &hostJob); err != nil {
 			rows.Close()
@@ -161,6 +162,10 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 		if err == nil {
 			err = errTranscriptEvidenceBound
 		}
+		return out, err
+	}
+	replies, err = s.closeReplyAncestors(ctx, scope, before, nodes, replies, retired)
+	if err != nil {
 		return out, err
 	}
 	for changed := true; changed; {
@@ -191,7 +196,7 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 }
 
 func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[string]bool) (replyMemoryProvenance, error) {
-	node := replyMemoryProvenance{ID: id}
+	node := replyMemoryProvenance{ID: id, SnapshotKnown: knownReplySnapshot(snapshot)}
 	var saved struct {
 		Manifest []struct {
 			ID      string `json:"id"`
@@ -200,6 +205,7 @@ func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[s
 		Input      struct{ RecentConversation string } `json:"input"`
 		Transcript map[string]struct {
 			MessageID string `json:"message_id"`
+			Class     string `json:"sender_class"`
 		} `json:"transcript_refs"`
 	}
 	// Empty legacy snapshots contain no structured provenance; never infer it
@@ -223,6 +229,9 @@ func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[s
 	}
 	for _, source := range saved.Transcript {
 		node.Sources = append(node.Sources, source.MessageID)
+		if source.Class == "self" {
+			node.AssistantSources = append(node.AssistantSources, source.MessageID)
+		}
 	}
 	var tools map[string]struct {
 		Input  struct{ Name string } `json:"input"`

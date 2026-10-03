@@ -97,6 +97,8 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombstone 记录 ID 关联冻结的 `memory_manifest`、实际 memory tool 结果，再关联实际 delivered reply 的 action/provider message ID；沿新投影范围内旧快照的历史 ID 与 `transcript_refs` 有界传播，隐藏借旧 assistant 文本继续复述的整条回复。群转录对这些撤销回复的引用正文也省略，不能借 provider readback 重新注入。其他成员同值但不同来源的消息不删，原件与已冻结 job 不改，当前授权审计由独立权限路径读取。没有结构化引用的独立复述仍不按值推断；超限或失败显式 unavailable，部分集合不能作为完整撤销结果。来源与原反例见 [20 回复来源过滤](plans/2026-10-03/employee-loop-backend-delivery/20-withdrawn-reply-provenance.md)。
 
+当前投影窗口只限制候选回复，不能截断其来源证明。候选 B 引用窗外 A 时，按冻结的精确 action/message ID 向外读取祖先；每个祖先必须在同 workspace/agent/tenant/scene、同目标会话，有实际 delivered 事实及可核对的源 job。不得扩大日期全扫或按内容猜源；祖先集合、层数有界，缺失、外场域、未送达、关联冲突、未知来源或超限时整个相关历史返回 unavailable。原件及已冻结 job 不改。该跨窗闭合要求替代 Plan20 曾声明的跨窗局限，验证见 [21 跨窗来源闭合](plans/2026-10-03/employee-loop-backend-delivery/21-reply-ancestor-closure.md)。
+
 ## 纯停止当前事项
 
 `stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。reaction 与结构 continuation 不能停止任何事项，不推断其他场域的目标。

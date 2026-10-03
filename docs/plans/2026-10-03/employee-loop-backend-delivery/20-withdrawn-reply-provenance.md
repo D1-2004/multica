@@ -25,3 +25,5 @@ RecentConversation 与群 transcript 引文共用撤销回复 ID：不能从 pro
 独立本地 DB `multica_foreground_withdrawal_20261004`：19 项 RecentConversation/DMReset/Transcript 定向检查无 skip 通过；最终收口额外验证 Host notice 的 scene/principal 归属，并复查新过滤与证据上限（20 项独立 top-level 检查合计，重复运行不加分母）。读取的 record/job/source binding/delivered reply 集合分别最多 2000，超限返回不可用；拒绝的 memory tool 结果、正文里的 UUID、外 org tombstone 都不能制造来源关联。gofmt、受影响编译、diff check 通过。
 
 保守单位是整个依赖 job 的已送达回复，可能连带省略同条回复的其他内容；没有结构化依赖的独立复述不能按值猜测归因。跨出本次有界投影范围的旧 job 不扫描，不宣称全局擦除。Persona、在线模板、旧快照、journal、审计原件、schema 与 marker 未改，无外部 IM、部署或线上写入。本地原子提交供主代理集成；SHA 由提交输出记录。修后预发 M5 原场域与真实模型表现尚未验收，部署/e2e_verified 保持 pending。
+
+后续独立 review 识别到精确依赖跨窗仍会复活旧值；上述跨窗局限不能作为隐私边界免责。该项由 [21 跨窗来源闭合](21-reply-ancestor-closure.md) 补上，原 c7 反例与测试通过范围保持原记录，不冒称覆盖此新边界。

@@ -211,6 +211,17 @@ Each scoped record/job/reply set is bounded at 2000 with explicit unavailability
 on overflow or read failure; the kernel, prompt, model budget, schema and replica
 marker are unchanged. Quality after deployment remains a separate M5 IM verdict.
 
+The cross-window correction in `employeeentry/reply_ancestors.go` treats the
+presentation window as a candidate bound, never a provenance cutoff. Exact
+frozen assistant action/message references read older delivered actions in the
+same workspace/agent/tenant/scene and target conversation, then resolve their
+source jobs and structured dependencies. No wider date scan or value matching is
+used. Missing, foreign, undelivered, conflicting or unknown ancestors fail the
+history read explicitly; closure is limited to 2000 nodes/actions and 64 levels.
+The original frozen snapshots and audit actions remain unchanged. Real DB
+cross-window counterexamples and the previous projection suite are recorded in
+Plan21; they do not replace deployment/real-model M5 acceptance.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without
