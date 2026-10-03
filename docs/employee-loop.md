@@ -87,6 +87,16 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。
 
+## 纯停止当前事项
+
+`stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。本批不支持 reaction、引用消息或结构 continuation 的停止，不推断其他场域的目标。
+
+停止沿既有 PG Task/Run/queue 控制路径执行，不创建 Task、后继 Run 或 Issue。typed stop 意图复用 `input` 账本（payload.operation=stop），关闭 Task、取消确切目标和工具回执在同一事务提交；同源重放只引用原目标，变更载荷或失效版本拒绝。已完成/失败 Run 的历史不改写，人工停止后普通 steer/continue 不得复活它。
+
+已认领执行使用既有取消退出屏障；只有可信 daemon 的 process-group ACK、FC 真实 quiescence 或确知从未认领，才能作为退出证据。`completed` 只说明执行报告终态，不证明整个进程组退出；超时、数据库 cancelled 和 claim barrier 也不证明退出。`read_task` 分开呈现工作流状态、queue/execution_state 和 process_exit_confirmed。未退出的已取消前驱也计入 stopping；历史 completed/failed 服务不纳入本次停止范围。
+
+首轮接单仅说明已请求停止；已完成/失败时如实说明旧执行状态。提交后沿原 runtime observer/daemon 通知停止进程，已有五秒 worker 从持久停止意图重试未确认的目标及其取消前驱；Redis 仅作提示。结果通知入队与 BeforeSend 都重验停止账本，旧未提交结果不再发送；已经 provider-accepted/unknown 的动作只查询原提交，不重发，也不声称可撤回。新工具与状态投影由 marker 11 门禁保护，不加模型请求、执行器或新调度器。
+
 ## 当前事项与成功续接
 
 新 wake 为每条可信 source 单独提供最多五个同 workspace/agent/tenant/scene/requester 的 Employee Direct Task 候选。`t1` 等引用只在该源的冻结快照中定位事项，不是权限凭据；候选状态只是快照，询问进度须 `read_task` 实时读取 Task/version、Run 状态和执行报告。多个可能事项应澄清，不能把最近一个自动当作当前事项。普通致谢可首轮简答或 Quiet，Host 不用关键词替模型派发或停止工作。
@@ -109,7 +119,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划及原通知协议使用 `[employee-loop:10]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划及原通知协议使用 `[employee-loop:11]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 

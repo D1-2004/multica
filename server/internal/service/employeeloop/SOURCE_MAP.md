@@ -275,3 +275,19 @@ execution provenance remain separate: the frozen original return address is
 not overwritten to identify a correction. Inherited completion constraints are
 proved from original accepted Task records, not dialogue or model self-report;
 current delivery still requires the current queue's provider-confirmed receipt.
+
+
+## Pure stop as a Host control
+
+The fixed source's task addressing and append-only task ledger remain the
+boundary: current source-bound references locate authorized work, while the
+Host records control effects. `stop_task` reuses Multica's existing queue
+cancellation and process-exit evidence path; it never calls steer or creates a
+successor. Stop intent and its tool receipt commit atomically in PostgreSQL.
+The same cancelled-predecessor fences used by steer govern stop observation;
+logical completion/cancellation and elapsed time never stand in for exit proof.
+The existing periodic worker only rearms persisted pending stops. Notice
+admission and BeforeSend consult the stop ledger before new submissions, while
+already-submitted provider actions keep their original reconciliation path.
+Marker 11 gates the new tool and execution-state projection; no kernel executor,
+scheduler, message-text classifier or additional model pass is added.
