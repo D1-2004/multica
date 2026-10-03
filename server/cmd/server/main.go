@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
 	"log/slog"
 	"net/http"
 	"os"
@@ -455,7 +456,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker+" "+handler.EmployeeLoopReplicaMarker+" "+handler.EmployeeMemoryReplicaMarker+" "+handler.EmployeeMemoryObserveMarker)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker+" "+handler.EmployeeLoopReplicaMarker+" "+handler.EmployeeMemoryReplicaMarker+" "+handler.EmployeeMemoryObserveMarker+" "+digest.MemoryMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)

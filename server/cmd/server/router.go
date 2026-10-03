@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -986,6 +989,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryReplicaMarker)
 	}
+	// Scene digest (memory M11): each newly persisted human transcript line
+	// marks its scene dirty in the insert transaction; the budgeted writer
+	// claims scenes only once every live replica advertises the digest marker.
+	h.EmployeeSceneMessagesObserved = func(ctx context.Context, tx pgx.Tx, key employeeentry.Scope, humanRows int, lastHumanAt time.Time) error {
+		return digest.MarkSceneDirtyTx(ctx, tx, digest.SceneKey(key), humanRows, lastHumanAt)
+	}
+	h.EmployeeSceneWorker.MemoryDigest = handler.NewEmployeeMemoryDigest(h, h.Models, opts.Langfuse, handler.EmployeeSceneTranscript{}, handler.NewEmployeeSceneFacts(h.EmployeeMemory), func(ctx context.Context) error {
+		if opts.DeploymentFence == nil {
+			return errors.New("employee memory digest replica verification is unavailable")
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, digest.MemoryMarker)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return errors.New("live server replicas do not all support " + digest.MemoryMarker)
+		}
+		return nil
+	})
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
