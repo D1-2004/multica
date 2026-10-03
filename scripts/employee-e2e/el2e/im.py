@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from . import dwsgw
-from .common import iso, now, parse_dws_time, stable_uuid
+from .common import iso, now, parse_dws_time, registry, stable_uuid
 
 CLOCK_TOLERANCE = _dt.timedelta(seconds=2)
 
@@ -62,6 +62,7 @@ def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100
     boundary = None
     covered = False
     pages = 0
+    failures = []
     for _ in range(max_pages):
         args = ["chat", "+chat-messages", "--chat-id", cid, "--limit", str(limit), "--no-reactions"]
         if boundary:
@@ -69,6 +70,9 @@ def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100
         res = dwsgw.dws(profile, args, timeout=60, retries=2)
         pages += 1
         body = res.get("json") or {}
+        if res["rc"] != 0 or "messages" not in body or body.get("failures") or body.get("complete") is False:
+            failures.append({"rc": res["rc"], "failures": body.get("failures"), "complete": body.get("complete")})
+            break
         batch = body.get("messages") or []
         new = 0
         for msg in batch:
@@ -76,10 +80,10 @@ def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100
                 seen[msg["messageId"]] = msg
                 new += 1
         if not batch:
-            covered = res["rc"] == 0
+            covered = body.get("hasMore") is False
             break
         oldest = min(msg["createTime"] for msg in batch)
-        if parse_dws_time(oldest) <= since or not body.get("hasMore"):
+        if parse_dws_time(oldest) <= since or body.get("hasMore") is False:
             covered = True
             break
         if new == 0 or oldest == boundary:
@@ -87,7 +91,8 @@ def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100
         boundary = oldest
     msgs = sorted(seen.values(), key=lambda m: (m.get("createTime") or "", m.get("messageId") or ""))
     return {"messages": [m for m in msgs if parse_dws_time(m["createTime"]) >= since - CLOCK_TOLERANCE],
-            "covered": covered, "pages": pages, "since": since.isoformat(timespec="seconds")}
+            "covered": covered and not failures, "pages": pages, "failures": failures,
+            "since": since.isoformat(timespec="seconds")}
 
 
 def prefix_mentions(text: str) -> list[str]:
@@ -106,7 +111,7 @@ def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | 
          match_key: str | None = None, readback_timeout: int = 40,
          exclude_sender_ids: set[str] | None = None, not_before: _dt.datetime | None = None,
          ai_tag: bool | None = None, reader_profile: str | None = None, sender_id: str | None = None,
-         claimed_ids: set[str] | None = None) -> dict[str, Any]:
+         claimed_ids: set[str] | None = None, at_all: bool = False) -> dict[str, Any]:
     """Send once with an idempotency key, then confirm exactly one landing.
 
     `match_key` is a distinctive substring of the rendered message used to find
@@ -119,9 +124,14 @@ def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | 
     at_ids = at_ids or []
     key = stable_uuid(marker)
     body = render_text(text, at_ids)
+    if at_all:
+        # @all needs both the flag and the <@all> placeholder in the body.
+        body = f"<@all> {body}"
     args = ["chat", "+messages-send", "--as", "user", "--chat-id", cid, "--text", body, "--uuid", key, "--yes"]
     if at_ids:
         args += ["--at-open-dingtalk-ids", ",".join(at_ids)]
+    if at_all:
+        args.append("--at-all")
     if ai_tag is not None:
         args.append(f"--ai-tag={'true' if ai_tag else 'false'}")
     return _deliver(profile=profile, cid=cid, args=args, body=body, text=text, marker=marker, key=key, at_ids=at_ids,
@@ -172,6 +182,15 @@ def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, m
     employee message with the same words. `claimed_ids` are messages already
     attributed to earlier steps of the case and never count as this landing.
     """
+    # Legacy v1 callers also need observer-relative sender attribution.
+    reg = registry()
+    actors = reg.get("actors") or {}
+    sender_actor = next((key for key, value in actors.items() if profile in (key, value.get("profile"))), None)
+    reader = reader_profile or profile
+    reader_actor = next((key for key, value in actors.items() if reader in (key, value.get("profile"))), None)
+    if sender_id is None and sender_actor and reader_actor:
+        viewer = "self" if sender_actor == reader_actor else reader_actor
+        sender_id = (actors[sender_actor].get("open_ids") or {}).get(viewer)
     t0 = now()
     floor = min(t0, not_before) if not_before is not None else t0
     floor = floor.replace(microsecond=0) - _dt.timedelta(seconds=5)
@@ -188,7 +207,7 @@ def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, m
             break
         time.sleep(3)
     key_text = (match_key or text).strip()
-    excluded = exclude_sender_ids or set()
+    excluded = set(exclude_sender_ids or ()) | set((reg.get("employee") or {}).get("open_ids", {}).values())
 
     claimed = claimed_ids or set()
     reader = reader_profile or profile

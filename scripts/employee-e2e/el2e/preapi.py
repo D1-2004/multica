@@ -35,12 +35,17 @@ def quote(value: str) -> str:
 def scene_index() -> dict[str, str]:
     """cid -> scene_id for every group and DM scene of the employee in its tenant org."""
     out: dict[str, str] = {}
-    status, body = call("GET", f"/api/agents/{_agent()}/tenants/{_org()}/groups")
-    if status == 200:
-        for s in body.get("scenes") or []:
-            if s.get("conversation_id") and s.get("scene_id"):
-                out[s["conversation_id"]] = s["scene_id"]
-    return out
+    limit = 100
+    for offset in range(0, 1000, limit):
+        status, body = call("GET", f"/api/agents/{_agent()}/tenants/{_org()}/groups?limit={limit}&offset={offset}")
+        if status != 200 or not isinstance(body, dict) or "scenes" not in body:
+            raise RuntimeError(f"scene directory unavailable ({status})")
+        for scene in body["scenes"]:
+            if scene.get("conversation_id") and scene.get("scene_id"):
+                out[scene["conversation_id"]] = scene["scene_id"]
+        if body.get("has_more") is False:
+            return out
+    raise RuntimeError("scene directory pagination exhausted")
 
 
 def scene_id_for(conv_name: str) -> str | None:
@@ -72,13 +77,15 @@ def tasks_since(since: str, *, max_pages: int = 6) -> list[dict[str, Any]]:
     for _ in range(max_pages):
         path = f"/api/employee-tasks?agent_id={_agent()}&limit=50" + (f"&cursor={quote(cursor)}" if cursor else "")
         status, body = call("GET", path)
-        if status != 200:
-            break
+        if status != 200 or not isinstance(body, dict) or "tasks" not in body:
+            raise RuntimeError(f"task list unavailable ({status}); no negative conclusion allowed")
         page = body.get("tasks") or []
         out.extend(t for t in page if parse_iso(t["updated_at"]) >= floor)
         cursor = body.get("next_cursor")
         if not cursor or not page or parse_iso(page[-1]["updated_at"]) < floor:
             break
+    else:
+        raise RuntimeError("task list pagination exhausted; no negative conclusion allowed")
     return out
 
 
@@ -119,5 +126,5 @@ def set_routine_enabled(scene_id: str, routine_id: str, enabled: bool) -> dict[s
 def routine_runs(scene_id: str, routine_id: str) -> list[dict[str, Any]]:
     status, body = call("GET", f"{_routine_base(scene_id)}/{routine_id}/runs")
     if status != 200:
-        return []
+        raise RuntimeError(f"routine runs unavailable ({status})")
     return body.get("runs") if isinstance(body, dict) else body

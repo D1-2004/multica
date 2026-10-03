@@ -93,15 +93,22 @@ def resolve_reply_to(step: dict[str, Any], rec: dict[str, Any], reg: dict[str, A
 
 
 def observe_v2(reg: dict[str, Any], conv: dict[str, Any], since: str, pattern: str, timeout_s: int,
-               include_placeholders: bool) -> dict[str, Any]:
+               include_placeholders: bool, negative: bool = False) -> dict[str, Any]:
+    """Wait until an employee message matches; with `negative`, watch the whole window and
+    record any match (a negative observe passes only when nothing matched)."""
     rx = re.compile(pattern)
     emp = set(reg["employee"]["open_ids"].values())
     reader = conv["readers"][0]
     floor = parse_dws_time(since) - im.CLOCK_TOLERANCE
     start = time.monotonic()
     matched, seen = None, {}
-    while time.monotonic() - start < timeout_s:
-        for m in im.read_messages(reg["actors"][reader]["profile"], conv["cid"], limit=30)["messages"]:
+    covered = False
+    reads = []
+    while True:
+        snap = im.read_window(reg["actors"][reader]["profile"], conv["cid"], floor)
+        covered = bool(snap["covered"])
+        reads.append({"covered": covered, "pages": snap["pages"], "failures": snap.get("failures")})
+        for m in snap["messages"]:
             kind = im.classify(m, emp, reg["employee"]["name"])
             if parse_dws_time(m["createTime"]) < floor:
                 continue
@@ -109,11 +116,13 @@ def observe_v2(reg: dict[str, Any], conv: dict[str, Any], since: str, pattern: s
                 seen.setdefault(m["messageId"], m)
                 if matched is None and rx.search(m.get("text") or ""):
                     matched = m
-        if matched:
+        remaining = timeout_s - (time.monotonic() - start)
+        if (matched and not negative) or remaining <= 0:
             break
-        time.sleep(8)
-    return {"mode": "observe", "pattern": pattern, "matched": bool(matched), "reader": reader,
+        time.sleep(min(8, remaining))
+    return {"mode": "observe", "pattern": pattern, "matched": bool(matched), "reader": reader, "negative": negative,
             "matched_message": {k: matched.get(k) for k in ("messageId", "createTime", "text")} if matched else None,
+            "matched_raw": matched, "covered": covered, "reads": reads,
             "waited_s": round(time.monotonic() - start, 1),
             "replies": [{"messageId": m["messageId"], "createTime": m["createTime"], "text": m.get("text")}
                         for m in sorted(seen.values(), key=lambda x: x["createTime"])]}
@@ -156,8 +165,8 @@ def speak(step: dict[str, Any], case: dict[str, Any], spec: dict[str, Any], rec:
         sent = im.reply(quoted_message_id=quoted["messageId"], dm_open_id=dm_peer, **common_kw)
         sent["reply_to_resolved"] = quoted
     else:
-        sent = im.send(**common_kw)
-    expected = len(at_ids) + (1 if quoted else 0)
+        sent = im.send(at_all=bool(step.get("at_all")), **common_kw)
+    expected = len(at_ids) + (1 if quoted else 0) + (1 if step.get("at_all") else 0)
     found = im.prefix_mentions(sent["landed"][0]["text"]) if sent["landed"] else []
     sent["at_render"] = {"expected": expected, "found": found, "ok": len(found) >= expected}
     sent["actor"], sent["reader"], sent["deap"] = actor, reader, deap
@@ -203,7 +212,22 @@ class CaseRun:
 
     # -- steps
     def run_steps(self, steps: list[dict[str, Any]]) -> None:
-        for step in steps:
+        i = 0
+        while i < len(steps):
+            if steps[i].get("burst"):
+                j = i
+                while j < len(steps) and steps[j].get("burst"):
+                    j += 1
+                self.burst(steps[i:j])
+                i = j
+            else:
+                self.run_one(steps[i])
+                i += 1
+            if self.rec["status"] != "running":
+                return
+
+    def run_one(self, step: dict[str, Any]) -> None:
+        for step in [step]:
             reg = self.reg()
             conv_name = step.get("conversation", self.case["conversation"])
             if "observe" in step:
@@ -220,7 +244,11 @@ class CaseRun:
         conv = reg["conversations"][conv_name]
         ref = self.landed_by_step[obs["since_step"]] if obs.get("since_step") else list(self.landed_by_step.values())[-1]
         poll_rec = observe_v2(reg, conv, ref["createTime"], self.render(obs["until_regex"]),
-                              obs.get("timeout_s", 300), bool(obs.get("include_placeholders")))
+                              obs.get("timeout_s", 300), bool(obs.get("include_placeholders")),
+                              negative=bool(obs.get("negative")))
+        if poll_rec.get("matched") and not obs.get("negative") and \
+                "file_download" in self.case["requires"].get("harness", []):
+            poll_rec["download"] = download_resource(self, reg, conv, poll_rec, step["id"])
         self.rec["steps"].append({"id": step["id"], "observe": obs, "conversation": conv_name, "cid": conv["cid"],
                                   "segment": step.get("segment"), "poll": poll_rec, "actor": None, "role": None})
         self.save()
@@ -258,8 +286,67 @@ class CaseRun:
             return
         landed = sent["landed"][0]
         self.landed_by_step[step["id"]] = landed
-        self.claimed.add(landed["messageId"])
+        if not sent.get("synthetic"):
+            self.claimed.add(landed["messageId"])
         self.wait(step, step_rec, landed, sent["reader"], conv)
+
+    def burst(self, steps: list[dict[str, Any]]) -> None:
+        """Send consecutive burst lines at a human rhythm (pause_s), then locate them all at once."""
+        reg = self.reg()
+        conv_name = steps[0].get("conversation", self.case["conversation"])
+        conv = reg["conversations"][conv_name]
+        actor = self.case["roles"][steps[0]["actor"]]
+        if any(self.case["roles"][st["actor"]] != actor or st.get("conversation", self.case["conversation"]) != conv_name
+               for st in steps) or any(st.get("reply_to") or st.get("at") or st.get("at_all") for st in steps):
+            raise StepError("a burst is plain lines by one sender in one conversation")
+        reader = human_reader(reg, conv, actor)
+        sender_id = view_id(reg, actor, reader)
+        t0 = now()
+        fired = []
+        for st in steps:
+            text = self.render(st["text"])
+            marker = f"{self.rec['run_id']}:{self.case['id']}:a{self.rec['attempt']}:{st['id']}"
+            sent = im.send(profile=reg["actors"][actor]["profile"], cid=conv["cid"], text=text, marker=marker,
+                           ai_tag=bool(self.spec["defaults"].get("human_send", {}).get("ai_tag", True)),
+                           readback_timeout=0, sender_id=sender_id, reader_profile=reg["actors"][reader]["profile"])
+            fired.append((st, text, sent))
+            time.sleep(float((st.get("wait") or {}).get("pause_s", 2)))
+        floor = t0.replace(microsecond=0) - _dt.timedelta(seconds=5)
+        deadline = time.monotonic() + 40
+        msgs: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            msgs = [m for m in im.read_messages(reg["actors"][reader]["profile"], conv["cid"], limit=30)["messages"]
+                    if m.get("senderId") == sender_id and parse_dws_time(m["createTime"]) >= floor
+                    and m["messageId"] not in self.claimed]
+            if len(msgs) >= len(steps):
+                break
+            time.sleep(3)
+        for st, text, sent in fired:
+            key = self.render(st.get("match_key") or "") or text
+            hits = [m for m in msgs if key in (m.get("text") or "") and m["messageId"] not in self.claimed]
+            sent.update(actor=actor, reader=reader, deap=False, burst=True, landing_count=len(hits),
+                        ok=len(hits) == 1, landed=[{k: hits[0].get(k) for k in ("messageId", "createTime", "senderId",
+                                                                             "sender", "text")}] if hits else [])
+            if hits:
+                self.claimed.add(hits[0]["messageId"])
+            st_quiet = dict(st, wait={"mode": "none", "pause_s": 0})
+            self.record_send(st_quiet if st is not steps[-1] else st, conv_name, conv, sent)
+            if self.rec["status"] != "running":
+                self.rec["status"] = "harness_error"
+                self.rec["harness_error"] = f"burst readback failed at {st['id']}"
+                return
+
+    def anchor(self, step: dict[str, Any], conv_name: str, conv: dict[str, Any], actor: str | None,
+               detail: dict[str, Any], label: str) -> None:
+        """Record a non-message action with a synthetic time anchor, so replies after it are attributed to it."""
+        reg = self.reg()
+        reader = human_reader(reg, conv, actor) if actor else conv["readers"][0]
+        stamp = now().strftime("%Y-%m-%d %H:%M:%S")
+        sent = {"ok": True, "synthetic": True, "landing_count": 1, "actor": actor, "reader": reader, "text": label,
+                "match_key": label, "sent_at": iso(now()),
+                "landed": [{"messageId": f"{step['kind']}:{self.case['id']}:{step['id']}", "createTime": stamp,
+                            "senderId": None, "text": label}], **detail}
+        self.record_send(step, conv_name, conv, sent)
 
     def wait(self, step: dict[str, Any], step_rec: dict[str, Any], landed: dict[str, Any], reader: str,
              conv: dict[str, Any]) -> None:
@@ -347,6 +434,175 @@ def act_file(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_nam
 
 
 ACTIONS["file"] = act_file
+
+
+def resolve_target(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str,
+                   conv: dict[str, Any]) -> dict[str, Any]:
+    """A react / recall target uses the same keys as reply_to."""
+    return resolve_reply_to({"reply_to": step["target"]}, run.rec, reg, conv_name, conv, run.landed_by_step)
+
+
+def act_recall(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+    conv = reg["conversations"][conv_name]
+    actor = run.case["roles"][step["actor"]]
+    target = run.landed_by_step.get(step["target"]["step"])
+    if not target:
+        raise StepError(f"recall target {step['target']} has no landed message")
+    res = dwsgw.dws(reg["actors"][actor]["profile"], ["chat", "+messages-recall", "--msg-id", target["messageId"],
+                                                      "--conversation-id", conv["cid"], "--yes"], timeout=60)
+    if res["rc"] != 0:
+        raise StepError(f"recall failed: {(res.get('stderr') or '')[-200:]}")
+    run.rec.setdefault("recalled", []).append(target["messageId"])
+    run.anchor(step, conv_name, conv, actor, {"recalled_message_id": target["messageId"]}, "[recall]")
+
+
+def act_react(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+    conv = reg["conversations"][conv_name]
+    actor = run.case["roles"][step["actor"]]
+    profile = reg["actors"][actor]["profile"]
+    target = resolve_target(run, step, reg, conv_name, conv)
+    if step.get("emoji"):
+        res = dwsgw.dws(profile, ["chat", "+messages-add-emoji", "--conversation-id", conv["cid"],
+                                  "--msg-id", target["messageId"], "--emoji", step["emoji"], "--yes"], timeout=60)
+        detail = {"emoji": step["emoji"]}
+    else:
+        name = step["text_emotion"]
+        made = dwsgw.dws(profile, ["chat", "+messages-create-text-emotion", "--emotion-name", name, "--text", name,
+                                   "--yes"], timeout=60)
+        body = made.get("json") or {}
+        result = body.get("result") if isinstance(body.get("result"), dict) else body
+        emotion_id = result.get("emotionId") or result.get("emotion_id")
+        background_id = result.get("backgroundId") or result.get("background_id")
+        if made["rc"] != 0 or not emotion_id or not background_id:
+            raise StepError(f"text emotion create failed: {(made.get('stderr') or str(body))[-200:]}")
+        res = dwsgw.dws(profile, ["chat", "+messages-add-text-emotion", "--conversation-id", conv["cid"],
+                                  "--msg-id", target["messageId"], "--emotion-id", str(emotion_id),
+                                  "--emotion-name", name, "--background-id", str(background_id), "--text", name,
+                                  "--yes"], timeout=60)
+        detail = {"text_emotion": name}
+    if res["rc"] != 0:
+        raise StepError(f"react failed: {(res.get('stderr') or '')[-200:]}")
+    run.anchor(step, conv_name, conv, actor, {"target": target, **detail}, f"[react {detail}]")
+
+
+def act_forward(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+    """Forward (one message) or combine-forward (several) from a source conversation into this one."""
+    conv = reg["conversations"][conv_name]
+    actor = run.case["roles"][step["actor"]]
+    src = reg["conversations"][step["source"]["conversation"]]
+    source_steps = step["source"].get("steps") or [step["source"]["step"]]
+    if any(x not in run.landed_by_step for x in source_steps):
+        raise StepError(f"forward source {step['source']} has missing landed message(s)")
+    ids = [run.landed_by_step[x]["messageId"] for x in source_steps]
+    key = im.stable_uuid(f"{run.rec['run_id']}:{run.case['id']}:a{run.rec['attempt']}:{step['id']}")
+    if step["kind"] == "forward":
+        args = ["chat", "+messages-forward", "--src-conversation-id", src["cid"], "--msg-id", ids[0]]
+    else:
+        args = ["chat", "+messages-combine-forward", "--src-conversation-id", src["cid"], "--msg-ids", ",".join(ids)]
+    args += ["--dest-conversation-id", conv["cid"], "--uuid", key, "--yes"]
+    t0 = now()
+    res = dwsgw.dws(reg["actors"][actor]["profile"], args, timeout=90)
+    if res["rc"] != 0:
+        raise StepError(f"{step['kind']} failed: {(res.get('stderr') or '')[-200:]}")
+    reader = human_reader(reg, conv, actor)
+    landed = im.locate_new(reader_profile=reg["actors"][reader]["profile"], cid=conv["cid"],
+                           sender_id=view_id(reg, actor, reader), floor=t0.replace(microsecond=0) - _dt.timedelta(seconds=5),
+                           claimed=run.claimed, hint=None, timeout_s=60)
+    sent = {"ok": len(landed) == 1, "landing_count": len(landed), "actor": actor, "reader": reader, "deap": False,
+            "text": f"[{step['kind']}] {len(ids)} message(s)", "match_key": "", "sent_at": iso(t0), "uuid": key,
+            "source_message_ids": ids,
+            "landed": [{k: m.get(k) for k in ("messageId", "createTime", "senderId", "sender", "text")} for m in landed]}
+    run.record_send(step, conv_name, conv, sent)
+
+
+def act_setup(run: "CaseRun", step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+    """Create the case's per-round group, or add members to it (P-13)."""
+    actor = run.case["roles"][step["actor"]]
+    profile = reg["actors"][actor]["profile"]
+    from .conv import member_user_id
+    if step.get("create_group"):
+        spec = step["create_group"]
+        users = [member_user_id(reg, run.case["roles"].get(m, m)) for m in spec["members"]]
+        res = dwsgw.dws(profile, ["chat", "+chat-create", "--name", run.render(spec["name"]), "--users",
+                                  ",".join(users), "--yes"], timeout=90)
+        from .conv import find_cid
+        cid = find_cid(res.get("json"))
+        if res["rc"] != 0 or not cid:
+            raise StepError(f"group create failed: {(res.get('stderr') or '')[-200:]}")
+        base = dict(reg["conversations"].get(conv_name) or {})
+        base.update({"kind": "group", "cid": cid, "scene_id": None, "readers": [actor],
+                     "members": [actor] + [run.case["roles"].get(m, m) for m in spec["members"]],
+                     "created_at": iso(now()), "per_round": True})
+        base.pop("fresh", None)
+        run.rec.setdefault("conversations_overlay", {})[conv_name] = base
+        run.save()
+        conv = run.reg()["conversations"][conv_name]
+        run.anchor(step, conv_name, conv, actor, {"created_cid": cid}, f"[create group {spec['name']}]")
+        return
+    conv = reg["conversations"][conv_name]
+    names = [run.case["roles"][m] for m in step["add_members"]]
+    users = [member_user_id(reg, a) for a in names]
+    res = dwsgw.dws(profile, ["chat", "group", "members", "add", "--id", conv["cid"], "--users", ",".join(users), "--yes"],
+                    timeout=90)
+    if res["rc"] != 0:
+        raise StepError(f"add members failed: {(res.get('stderr') or '')[-200:]}")
+    overlay = run.rec.setdefault("conversations_overlay", {}).get(conv_name)
+    if overlay:
+        overlay["members"] = sorted(set(overlay.get("members", [])) | set(names))
+    run.anchor(step, conv_name, conv, actor, {"added": names}, f"[add {names}]")
+
+
+def _resource_refs(msg: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    def walk(x: Any) -> None:
+        if isinstance(x, dict):
+            ident = x.get("fileId") or x.get("mediaId") or x.get("resourceId")
+            if ident:
+                out.append({"id": ident, "type": "fileId" if x.get("fileId") else ("mediaId" if x.get("mediaId") else None),
+                            "name": x.get("fileName") or x.get("name")})
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(msg)
+    return out
+
+
+def download_resource(run: "CaseRun", reg: dict[str, Any], conv: dict[str, Any], poll_rec: dict[str, Any],
+                      step_id: str) -> dict[str, Any]:
+    """file_download: fetch the employee's file and record encoding, lines and hash (T-06)."""
+    import hashlib
+    msg = poll_rec.get("matched_raw") or {}
+    refs = _resource_refs(msg)
+    if not refs:
+        return {"ok": False, "error": "no resource reference on the matched message", "keys": sorted(msg)}
+    reader = conv["readers"][0]
+    import tempfile
+    parent = run.rd / "downloads"
+    parent.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix=f"{run.case['id']}.a{run.rec['attempt']}.{step_id}.", dir=parent))
+    args = ["chat", "+messages-resource-download", "--message-id", msg["messageId"], "--open-conversation-id", conv["cid"],
+            "--resource-id", refs[0]["id"], "--output", ".", "--overwrite"]
+    if refs[0]["type"]:
+        args += ["--type", refs[0]["type"]]
+    res = dwsgw.dws(reg["actors"][reader]["profile"], args, timeout=120, cwd=str(workdir))
+    files = [f for f in workdir.iterdir() if f.is_file()]
+    if res["rc"] != 0 or len(files) != 1:
+        return {"ok": False, "error": (res.get("stderr") or f"expected one downloaded file, found {len(files)}")[-200:], "refs": refs}
+    data = files[0].read_bytes()
+    try:
+        text = data.decode("utf-8-sig")
+        utf8 = True
+    except UnicodeDecodeError:
+        text, utf8 = "", False
+    lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    return {"ok": True, "file": files[0].name, "path": str(files[0].relative_to(run.rd)), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+            "utf8": utf8, "bom": data.startswith(b"\xef\xbb\xbf"), "line_count": len(lines), "lines": lines[:200]}
+
+
+ACTIONS.update({"forward": act_forward, "combine_forward": act_forward,
+                "setup": act_setup})
 
 
 def segment_ids(case: dict[str, Any]) -> list[str]:

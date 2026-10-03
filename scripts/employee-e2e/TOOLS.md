@@ -109,3 +109,7 @@ multica --profile pre-fde --workspace-id 5f8b5b73-f912-4879-9a29-b763d103fedf ag
 - **Tenants and scenes:** `GET /api/agents/33af235e-…/tenants[/44675729/groups|persons]`.
 - **Always pass `--profile pre-fde`.** The global multica config points at prod.
 - **Snapshot before a round.** Record `model`, `coordination_mode`, `event_trigger_enabled` and instructions sha before each round (`evidence.agent_config_snapshot`).
+
+## 第五批收尾合同
+
+见 [CLOSEOUT.md](CLOSEOUT.md) 和 [source map](../../.agents/skills/tag-eval/references/harness-source-map.md)。平台/发布/运维默认关闭，driver支持不等于真实效果。`incomplete` / `partial` 不计完整通过；语义判定不得覆写硬失败。缺证先 collect 并读取原始trace，不用零列表代替零调用。

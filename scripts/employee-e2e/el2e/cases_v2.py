@@ -55,7 +55,9 @@ EVIDENCE_IMPLEMENTED = set(EVIDENCE_KINDS)
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2", "file_send"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2", "file_send",
+                       "file_download", "forward", "combine_forward", "at_all", "setup_group",
+                       "burst", "negative_observe"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")
@@ -401,11 +403,12 @@ def classify(case: dict[str, Any], spec: dict[str, Any], caps: dict[str, dict[st
         return {"state": "blocked_harness", "reasons": missing_harness}
     resources = []
     convs = {case["conversation"]} | {s["conversation"] for s in case["steps"] if s.get("conversation")}
+    created = {s.get("conversation", case["conversation"]) for s in case["steps"] if s.get("create_group")}
     for name in sorted(convs):
         conv = reg["conversations"].get(name)
         if conv is None:
             resources.append(f"conversation {name} not registered")
-        elif not conv.get("cid"):
+        elif not conv.get("cid") and name not in created:
             resources.append(f"conversation {name} has no cid")
     for role, actor in case["roles"].items():
         info = reg["actors"].get(actor or "")
@@ -450,7 +453,7 @@ def dry_run(paths: list[Path] | None, caps: dict[str, dict[str, bool]], reg: dic
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
     return {"checked_at": now().isoformat(timespec="seconds"), "total": len(rows), "counts": counts,
-            "suite_errors": suite_errors, "cases": rows}
+            "suite_errors": suite_errors, "capabilities": caps, "cases": rows}
 
 
 def in_run_window(window: dict[str, str] | None, at: _dt.datetime | None = None) -> bool:

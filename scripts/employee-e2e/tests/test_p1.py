@@ -80,6 +80,28 @@ class PgReadTests(unittest.TestCase):
         self.assertEqual(res["status"], "pending_evidence")
 
 
+    def test_task_list_and_scene_directory_fail_closed_on_api_errors_or_page_caps(self) -> None:
+        from el2e import preapi
+        with mock.patch.object(preapi, "call", return_value=(503, {"tasks": []})):
+            with self.assertRaises(RuntimeError):
+                preapi.tasks_since("2026-10-03T20:00:00+08:00")
+        page = {"tasks": [{"updated_at": "2026-10-03T22:00:00+08:00"}], "next_cursor": "more"}
+        with mock.patch.object(preapi, "call", return_value=(200, page)):
+            with self.assertRaisesRegex(RuntimeError, "pagination exhausted"):
+                preapi.tasks_since("2026-10-03T20:00:00+08:00", max_pages=1)
+        with mock.patch.object(preapi, "call", return_value=(200, {"scenes": [], "has_more": True})):
+            with self.assertRaisesRegex(RuntimeError, "pagination exhausted"):
+                preapi.scene_index()
+
+    def test_scene_directory_pages_by_offset_and_keeps_server_ids(self) -> None:
+        from el2e import preapi
+        pages = [(200, {"scenes": [{"conversation_id": "c1", "scene_id": "s1"}], "has_more": True}),
+                 (200, {"scenes": [{"conversation_id": "c2", "scene_id": "s2"}], "has_more": False})]
+        with mock.patch.object(preapi, "call", side_effect=pages) as call:
+            self.assertEqual(preapi.scene_index(), {"c1": "s1", "c2": "s2"})
+        self.assertIn("offset=100", call.call_args_list[1].args[1])
+
+
 class SegmentTests(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
@@ -161,7 +183,7 @@ class EvidenceV2Tests(unittest.TestCase):
 
     def check(self, **c) -> str:
         from el2e import grader_v2
-        return grader_v2.evidence_check_v2(c, self.ev(), {"tasks": [{"summary": {"task_id": "T2"}}]})["status"]
+        return grader_v2.evidence_check_v2(c, self.ev(), {"scenes": {"group_t": "S1"}, "tasks": [{"summary": {"task_id": "T2"}}]})["status"]
 
     def test_tool_called_counts_executed_tools_only(self) -> None:
         self.assertEqual(self.check(evidence="tool_called", steps=["m2"], tool="memory_capture", count=[1, 1]), "pass")
@@ -205,6 +227,119 @@ class FileSendTests(unittest.TestCase):
         run, _ = self.run_for("M-08", 2)
         name, data = driver_v2.fixture_bytes(run, "shot")
         self.assertTrue(data.startswith(b"\x89PNG"))
+
+
+class SinglesTests(unittest.TestCase):
+    def make_run(self, case: dict):
+        from el2e import driver_v2
+        spec = {"suite": "S", "defaults": {"wait": {"none": {"pause_s": 0}}, "human_send": {"ai_tag": False}}}
+        rec = {"vars": {}, "var_row": None, "steps": [], "run_id": "R", "attempt": 1, "status": "running"}
+        return driver_v2.CaseRun(case, spec, rec, Path("/dev/null"), Path("."), log=lambda *_: None)
+
+    def test_legacy_reply_readback_does_not_count_employee_substring_as_duplicate(self) -> None:
+        from el2e import im
+        stamp = im.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [{"messageId": "human-stop", "senderId": REG["actors"]["director"]["open_ids"]["self"],
+                 "createTime": stamp, "text": "停止这个", "quotedMessage": {"messageId": "original"}},
+                {"messageId": "employee-stop", "senderId": REG["employee"]["open_ids"]["director"],
+                 "createTime": stamp, "text": "已请求停止这个任务", "quotedMessage": {"messageId": "human-stop"}}]
+        with mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": {}}), \
+                mock.patch.object(im, "read_messages", return_value={"messages": rows}), mock.patch.object(im.time, "sleep"):
+            out = im.reply(profile=REG["actors"]["director"]["profile"], cid="test-cid", text="停止这个",
+                           marker="REF-01a-stop", quoted_message_id="original")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["landing_count"], 1)
+        self.assertEqual(out["landed"][0]["messageId"], "human-stop")
+        self.assertEqual(out["sender_id"], REG["actors"]["director"]["open_ids"]["self"])
+
+    def test_at_all_body_and_flag(self) -> None:
+        from el2e import im
+        calls = []
+        with mock.patch.object(im.dwsgw, "dws", side_effect=lambda p, a, **k: calls.append(a) or {"rc": 0, "json": {}}), \
+                mock.patch.object(im, "read_messages", return_value={"messages": []}):
+            im.send(profile="p", cid="c", text="明早评审改线上", marker="m", at_all=True, readback_timeout=0)
+        self.assertIn("--at-all", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--text") + 1], "<@all> 明早评审改线上")
+
+    def test_burst_sends_first_then_locates_all(self) -> None:
+        from el2e import driver_v2
+        me = REG["actors"]["director"]["open_ids"]["self"]
+        case = {"id": "M-09", "conversation": "dm_director", "roles": {"D总": "director"},
+                "steps": [{"id": f"b{i}", "actor": "D总", "text": t, "burst": True, "wait": {"mode": "none", "pause_s": 0}}
+                          for i, t in enumerate(["诶 刚来电话", "说要改", "下周再说"], 1)]}
+        run = self.make_run(case)
+        order = []
+        msgs = [{"messageId": f"x{i}", "createTime": "2099-01-01 00:00:0" + str(i), "senderId": me, "text": t}
+                for i, t in enumerate(["诶 刚来电话", "说要改", "下周再说"], 1)]
+        with mock.patch.object(driver_v2.im, "send", side_effect=lambda **kw: order.append(("send", kw["readback_timeout"])) or
+                               {"ok": False, "landed": [], "landing_count": 0}), \
+                mock.patch.object(driver_v2.im, "read_messages", side_effect=lambda *a, **k: order.append(("read",)) or {"messages": msgs}), \
+                mock.patch.object(driver_v2.time, "sleep"), mock.patch.object(run, "save"):
+            run.run_steps(case["steps"])
+        self.assertEqual(order[:3], [("send", 0)] * 3)
+        self.assertEqual([s["send"]["landed"][0]["messageId"] for s in run.rec["steps"]], ["x1", "x2", "x3"])
+        self.assertEqual(run.rec["status"], "running")
+
+    def test_burst_does_not_hide_duplicate_landings(self) -> None:
+        from el2e import driver_v2
+        step = {"id": "b1", "actor": "D总", "text": "下周再说", "burst": True, "wait": {"mode": "none", "pause_s": 0}}
+        run = self.make_run({"id": "M-09", "conversation": "dm_director", "roles": {"D总": "director"}, "steps": [step]})
+        rows = [{"messageId": mid, "createTime": "2099-01-01 00:00:00", "text": "下周再说",
+                 "senderId": REG["actors"]["director"]["open_ids"]["self"]} for mid in ("first", "duplicate")]
+        with mock.patch.object(driver_v2.im, "send", return_value={"ok": False, "landed": [], "landing_count": 0}), \
+                mock.patch.object(driver_v2.im, "read_messages", return_value={"messages": rows}), \
+                mock.patch.object(driver_v2.time, "sleep"), mock.patch.object(run, "save"):
+            run.run_steps([step])
+        self.assertEqual(run.rec["status"], "harness_error")
+        self.assertEqual(run.rec["steps"][0]["send"]["landing_count"], 2)
+
+    def test_negative_observe_grades_inverted(self) -> None:
+        from el2e import grader_v2
+        ctx = {"step_times": {"pause": "2026-10-03 13:00:00", "resume": "2026-10-03 13:20:00"},
+               "step_conversations": {"pause": "group_t", "resume": "group_t"},
+               "covered_conversations": {"group_t"},
+               "employee_messages": [{"conversation": "group_t", "messageId": "e", "createTime": "2026-10-03 13:15:00", "text": "开始执行例行任务「灰度」"}]}
+        res = grader_v2.pending_result({"evidence": "negative_observe", "between": ["pause", "resume"],
+                                        "regex": "开始执行例行任务", "count": 0}, {}, None, ctx)
+        self.assertEqual(res["status"], "fail")
+
+    def test_download_records_real_bytes_and_isolates_each_attempt(self) -> None:
+        import tempfile, hashlib
+        from el2e import driver_v2
+        data = b"\xef\xbb\xbfname,total\r\nAlice,12\r\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            run = self.make_run({"id": "T-06"})
+            run.rd = Path(tmp)
+            poll = {"matched_raw": {"messageId": "m", "resourceRefs": [{"fileId": "f", "fileName": "out.csv"}]}}
+            def download(profile, args, **kw):
+                (Path(kw["cwd"]) / "out.csv").write_bytes(data)
+                return {"rc": 0}
+            with mock.patch.object(driver_v2.dwsgw, "dws", side_effect=download):
+                a = driver_v2.download_resource(run, REG, REG["conversations"]["dm_director"], poll, "o1")
+                b = driver_v2.download_resource(run, REG, REG["conversations"]["dm_director"], poll, "o1")
+            self.assertTrue(a["ok"] and a["bom"] and a["utf8"])
+            self.assertEqual(a["sha256"], hashlib.sha256(data).hexdigest())
+            self.assertEqual(a["line_count"], 2)
+            self.assertNotEqual(a["path"], b["path"])
+            with mock.patch.object(driver_v2.dwsgw, "dws", return_value={"rc": 0}):
+                c = driver_v2.download_resource(run, REG, REG["conversations"]["dm_director"], poll, "o1")
+            self.assertFalse(c["ok"])
+
+    def test_negative_observe_excludes_another_conversation(self) -> None:
+        from el2e import grader_v2
+        ctx = {"step_times": {"pause": "2026-10-03 13:00:00", "resume": "2026-10-03 13:20:00"},
+               "step_conversations": {"pause": "group_t", "resume": "group_t"},
+               "covered_conversations": {"group_t"},
+               "employee_messages": [{"conversation": "g_team", "messageId": "e", "createTime": "2026-10-03 13:15:00", "text": "开始执行例行任务"}]}
+        check = {"evidence": "negative_observe", "between": ["pause", "resume"], "regex": "开始执行例行任务", "count": 0}
+        self.assertEqual(grader_v2.pending_result(check, {}, None, ctx)["status"], "pass")
+        ctx["covered_conversations"] = set()
+        self.assertEqual(grader_v2.pending_result(check, {}, None, ctx)["status"], "pending_evidence")
+
+    def test_resource_refs_found_anywhere(self) -> None:
+        from el2e import driver_v2
+        refs = driver_v2._resource_refs({"messageId": "m", "resourceRefs": [{"fileId": "F1", "fileName": "a.csv"}]})
+        self.assertEqual(refs, [{"id": "F1", "type": "fileId", "name": "a.csv"}])
 
 
 if __name__ == "__main__":

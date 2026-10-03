@@ -39,6 +39,10 @@ def case_scenes(rec: dict[str, Any]) -> dict[str, str]:
 
 def collect(rec: dict[str, Any], *, tail_minutes: int = 15) -> dict[str, Any]:
     scenes = case_scenes(rec)
+    expected = {s["conversation"] for s in rec.get("steps", []) if s.get("conversation")}
+    missing = expected - set(scenes)
+    if missing:
+        raise RuntimeError(f"scene directory incomplete for {sorted(missing)}")
     start = parse_iso(rec["started_at"]) - _dt.timedelta(seconds=30)
     end = parse_iso(rec.get("ended_at") or rec["started_at"]) + _dt.timedelta(minutes=tail_minutes)
     tasks = []
