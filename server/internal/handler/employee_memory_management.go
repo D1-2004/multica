@@ -37,10 +37,27 @@ type managedMemoryMutation struct {
 	MemoryText       string `json:"memory_text"`
 }
 
+// employeeMemoryResponse shows each shared record with its attribution: who
+// said it and when, who recorded it, and whether another author's record with
+// the same subject conflicts with it. Private records are never listed here.
 func employeeMemoryResponse(snapshot employeememory.SceneSnapshot) managedMemoryResponse {
 	lines := make([]string, 0, len(snapshot.Learnings))
+	conflicts := employeememory.ConflictPeers(snapshot.Learnings)
 	for _, record := range snapshot.Learnings {
-		lines = append(lines, fmt.Sprintf("%s (%s; evidence %s):\n%s", record.Key, record.Source, record.EvidenceID, record.Insight))
+		title, details := record.Key, []string{string(record.Source), "evidence " + record.EvidenceID}
+		if record.Subject != "" {
+			title = record.Subject
+		}
+		if said := employeememory.SceneAttribution(record); said != "" {
+			details = append(details, said)
+		}
+		if record.CreatedBy != "" && record.CreatedBy != record.SpeakerRef && record.SpeakerRef != "" {
+			details = append(details, "recorded by "+record.CreatedBy)
+		}
+		if len(conflicts[record.ID]) > 0 {
+			details = append(details, "说法不一")
+		}
+		lines = append(lines, fmt.Sprintf("%s (%s):\n%s", title, strings.Join(details, "; "), record.Insight))
 	}
 	return managedMemoryResponse{Loop: "employee", ScopeKind: "scene", Learnings: snapshot.Learnings, Truncated: snapshot.Truncated, sceneMemoryResponse: sceneMemoryResponse{
 		ID: snapshot.Scope.Scene.SceneID, SceneID: snapshot.Scope.Scene.SceneID, SceneKey: snapshot.Scope.Scene.SceneID, WorkspaceID: uuidToString(snapshot.Scope.WorkspaceID), AgentID: uuidToString(snapshot.Scope.AgentID), OrgID: snapshot.Scope.TenantOrgID,

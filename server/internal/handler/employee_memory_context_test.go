@@ -20,7 +20,7 @@ func TestEmployeeMemoryGroupSnapshotOmitsPrivateButLookupStillWorks(t *testing.T
 	ctx := context.Background()
 	privateScope := employeeMemoryScope(host, source)
 	for key, value := range map[string]string{"project-code": "PRIVATE_MATCH", "other-record": "PRIVATE_UNRELATED"} {
-		if _, err := f.h.EmployeeMemory.Record(ctx, privateScope, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: key, Insight: value, Confidence: 4}, employeememory.TrustedEvidence{SourceID: key, EvidenceID: key, ActorID: source.RequesterRef}); err != nil {
+		if _, err := f.h.EmployeeMemory.Record(ctx, privateScope, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: key, Insight: value, Source: employeememory.LearningSourceObserved, Confidence: 4}, employeememory.TrustedEvidence{SourceID: key, EvidenceID: key, ActorID: source.RequesterRef}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -44,7 +44,7 @@ func TestEmployeeSceneResetChecksCurrentWorkspaceMembership(t *testing.T) {
 			name = "departed_owner_on_shared_runtime"
 		}
 		t.Run(name, func(t *testing.T) {
-			f, _ := employeeResetFixture(t)
+			f, _ := employeeResetFixtureIn(t, "single")
 			ctx := context.Background()
 			user := uuid.NewString()
 			if _, err := testPool.Exec(ctx, `INSERT INTO "user"(id,name,email) VALUES($1,'Reset operator',$2)`, user, user+"@memory.test"); err != nil {
