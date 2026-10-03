@@ -123,7 +123,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议及类型化 scene job（见下文“内部 Task wake”）使用 `[employee-loop:12]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划、原通知协议、类型化 scene job（见下文“内部 Task wake”）及跨场域收集（见下文“跨场域收集”）使用 `[employee-loop:13]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
@@ -191,16 +191,26 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 - 本版只上线读取端，生产代码不会创建 v2 Task。
 - 第一个 v2 producer 必须在全部副本都具备对应的 `[employee-loop:N]` 后才能开启。原因：旧二进制会把 v2 Run 成功当成目标完成。
 
-## 跨场域收集账本（taskinput，读取端）
+## 跨场域收集（taskinput + Employee 接线，marker 13）
 
-`internal/taskinput` 保存四类领域事实：collection、invitation、input 和 ready intent。没有外键；按工作区删除。
+`internal/taskinput` 保存四类领域事实：collection、invitation、input 和 ready intent。没有外键；按工作区删除。答复绑定、收齐判定和外发检查的规则见包注释与测试。
 
-- **答复绑定**：沿回复链最多 8 跳，到达邀请消息才算强绑定。群里没有引用的消息不算答复；单聊里只有唯一一个待答邀请时才接受无引用答复；同一人有多个待答邀请时返回歧义，不猜。本 Agent 自己、任何 bot、卡片和系统消息一律不计入。
-- **未登记私聊场域的参与者**：对还没有私聊场域的人，邀请以 `pending_scene` 写入，送达回执拿到会话后按 dm 回填场域；不按人造场域。
-- **收齐判定**：最后一个必答槽位填满时，在同一事务里写入唯一的 ready intent。
-- **外发检查**：发送前按最不受信的读者对最终字节做检查。
+**发起（原场域）**
+- `create_collection` 只在当前来源明确要求向具体的人收集时使用。参与者只能从“在本租户与该员工说过话”的提供方实名发言人中解析：重名、未出现过或群不明确时返回原因，由 Loop 向发起人澄清，不猜人。
+- 每份邀请的最终文本（Host 模板 + 模型写的问题）先过外发检查，命中原场域近期对话原文、私人记忆、密钥或配置链接就拒绝，不创建任何记录。
+- 同一个工具日志事务内依次写入：v2 explicit_goal Task（来源 `employee_scene`，复用场域消息的 TaskOrigin reader）、collection wait、collection、每个邀请一条 outbox 发送（action id 等于邀请的 delivery action id）和 B 场域历史事实（`employee_host_notice`，source_kind=invitation，principal 为该 Agent 的 dispatch endpoint 主体）。任一步失败整体回滚，只留下失败的工具回执。
+- 对没有私聊场域的人按 open id 发 1:1，邀请为 `pending_scene`；送达状态给出会话后按 dm 解析回填场域并补写历史事实。
+- 发起人原话明确要求提醒时，提醒计划经 `CollectionReminders` 钩子在同一事务写入；钩子未接入时拒绝该请求，不静默丢弃。
 
-本版没有接入工具或 producer，线上行为不变。
+**作答（B 场域）**
+- 聊天快照为每条来源消息冻结 Host 绑定：回复链 8 跳内指向邀请才是强绑定；群里无引用一律不绑；单聊只有唯一待答邀请才绑；多于一个为 ambiguous。本员工自己的消息、卡片/系统占位文本永不绑定。模型只看到发言人自己的问题。
+- `accept_collection_input` 只记录被绑定的那条消息原文；ambiguous 时只有单聊发言人自己的原话点明是哪一题（`reference_quote`）才可记录，否则先澄清。工具结果不含人数或进度。
+- 发送前 `BeforeCollectionInviteSend` 再核邀请仍有效、场域目录/租户/身份未变，并对最终字节再做外发检查；不通过的动作被抑制，由对账器记为 held 或 failed。
+
+**收齐与汇总**
+- 对账器（scene worker 的 5 秒循环）先把 outbox 送达事实写回邀请，再把每个 pending ready intent 在同一事务里转成 `collection.ready` wake（来源 `employee.task_wake/employee.collection`，event id 为 `<collection>/<revision>`，occurred_at 沿用 intent 冻结值），并标记 admitted。所有副本都具备 marker 13 之前，intent 一直保持 pending。
+- 汇总 wake 的快照带上冻结 revision 下的获准答案，只提供 reply。完成事务内依次完成 collection、解决 wait、完成目标，再写入唯一一条原场域消息；revision 已变或 collection 已关闭则 hold，不发送。模型三次都没给出回复时，Host 按答案确定性渲染一条汇总，不再调用模型。
+- 停止该 Task 时，在同一事务内取消其所有进行中的 collection。
 
 ## Webhook 可信入口（2026-10-03）
 
