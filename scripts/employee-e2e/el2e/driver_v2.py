@@ -199,6 +199,10 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
             write_json(out_path, rec)
             return rec
     rec["gate"] = None if skip_gate else envguard.gate(rd, log=log)
+    needs_reset = "memory_reset" in case["requires"].get("harness", [])
+    if needs_reset:
+        from . import memory
+        rec["memory_before"] = memory.snapshot(case)
     rec["started_at"] = iso(now())
     write_json(out_path, rec)
     defaults = spec["defaults"].get("wait", {})
@@ -292,6 +296,13 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
         rec["transcripts"][f"{conv_name}@{reader}"] = {"covered": snap["covered"], "pages": snap["pages"],
                                                        "messages": snap["messages"]}
     write_json(out_path, rec)
+    if needs_reset and any((s.get("send") or {}).get("landed") for s in rec["steps"]):
+        # Cleanup after the window snapshot, so the reset lines are never graded as case content.
+        from . import memory
+        rec["memory_after"] = memory.snapshot(case)
+        rec["memory_reset"] = memory.reset(case, f"{run_id}:{case['id']}:a{attempt}")
+        write_json(out_path, rec)
+        log(f"[{case['id']}] memory reset ok={rec['memory_reset']['ok']}")
     grader_v2.grade_and_write(rd, rec, case, spec, caps)
     return rec
 

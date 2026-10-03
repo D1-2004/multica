@@ -249,6 +249,8 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
                    "replies": by_step.get(s["id"], [])} for s in rec["steps"]],
         "checks": results, "leaks": leaks, "ignored_messages": attributed["ignored"], "validity": valid,
         "uncovered": uncovered, "evidence": ev, "graded_at": iso(now()),
+        "memory_reset": {"ok": (rec.get("memory_reset") or {}).get("ok"),
+                         "commands": (rec.get("memory_reset") or {}).get("commands")} if rec.get("memory_reset") else None,
     }
 
 
