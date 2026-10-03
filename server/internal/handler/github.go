@@ -519,6 +519,11 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 // GitHub-tab split would land users on the default profile tab instead of
 // the place that shows the connection they just completed.
 func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
+	// A pre-release install returns here with no state. The shared-domain
+	// cookie is the only signal; without it this stays the workspace callback.
+	if h.forwardGitHubPreEnvCookie(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	installationIDStr := q.Get("installation_id")
 	state := q.Get("state")
