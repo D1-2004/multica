@@ -457,6 +457,25 @@ func TestRecallMinOverlapTwo(t *testing.T) {
 	if got := employeeRecallQuery([]employeeSourceMessage{{Message: DispatchMessage{Text: "@员工 发版哪天？ https://x.example/a"}}}); got != "发版哪天？" {
 		t.Fatalf("query = %q", got)
 	}
+	// Frozen into a new group snapshot's memory, never for lines already in
+	// front of the model.
+	registered, err := scene.Get(ctx, o.h.Queries, scene.Owner{WorkspaceID: parseUUID(key.WorkspaceID), AgentID: parseUUID(key.AgentID)}, parseUUID(key.SceneID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := []employeeSourceMessage{{Message: DispatchMessage{OpenMsgID: "m-now", Text: "@员工 发版哪天？"}}}
+	input := employeeSavedInput{}
+	input.Input.Memory = "brief"
+	o.h.appendEmployeeVerbatimRecall(ctx, &input, employeeentry.Job{Scope: key, CreatedAt: now}, registered, window)
+	if !strings.HasPrefix(input.Input.Memory, "brief\n[O] ") || !strings.Contains(input.Input.Memory, "发版定在周四") {
+		t.Fatalf("memory = %q", input.Input.Memory)
+	}
+	input.Input.Memory = "brief"
+	input.Input.RecentConversation = `{"messages":[{"role":"user","text":"发版定在周四","message_id":"say-release"}]}`
+	o.h.appendEmployeeVerbatimRecall(ctx, &input, employeeentry.Job{Scope: key, CreatedAt: now}, registered, window)
+	if input.Input.Memory != "brief" {
+		t.Fatalf("recent line recalled again: %q", input.Input.Memory)
+	}
 }
 
 // The wake-time read by-product stores human lines only and is idempotent

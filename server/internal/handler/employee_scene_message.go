@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // Group transcript (M8): observe every group message, wake selectively.
@@ -263,3 +265,48 @@ func clipBytes(s string, limit int) string {
 }
 
 var recallMarkers = strings.NewReplacer("==", "=", "```", "'''", "[O]", "(O)", "[P]", "(P)", "[R]", "(R)", "[V]", "(V)", "[S]", "(S)")
+
+// appendEmployeeVerbatimRecall freezes the [O] section into a new group
+// snapshot's memory. The query is the current window; the window and the
+// lines already in the recent conversation are excluded; a failure only
+// leaves the section out.
+func (h *Handler) appendEmployeeVerbatimRecall(ctx context.Context, input *employeeSavedInput, job employeeentry.Job, registered db.AgentScene, messages []employeeSourceMessage) {
+	if registered.SceneKind != scene.KindGroup {
+		return
+	}
+	exclude := employeeRecallExclusions(messages, input.Input.RecentConversation)
+	recall, err := h.employeeSceneVerbatimRecall(ctx, job.Scope, registered.SceneKind, employeeRecallQuery(messages), exclude, job.CreatedAt)
+	if err != nil {
+		slog.WarnContext(ctx, "employee verbatim recall unavailable", "event", "employee_verbatim_recall_failed", "job_id", job.ID, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "employee verbatim recall", "event", "employee_verbatim_recall", "job_id", job.ID, "scene_id", job.Scope.SceneID,
+		"terms", len(recall.Terms), "corpus", recall.Corpus, "hits", len(recall.MessageIDs))
+	if recall.Section != "" {
+		input.Input.Memory = strings.TrimRight(input.Input.Memory, "\n") + "\n" + recall.Section
+	}
+}
+
+// employeeRecallExclusions lists the provider message ids already in front
+// of the model: the current window and the recent conversation's lines.
+func employeeRecallExclusions(messages []employeeSourceMessage, recentConversation string) []string {
+	out := []string{}
+	for _, message := range messages {
+		if message.Message.OpenMsgID != "" {
+			out = append(out, message.Message.OpenMsgID)
+		}
+	}
+	var recent struct {
+		Messages []struct {
+			MessageID string `json:"message_id"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal([]byte(recentConversation), &recent) == nil {
+		for _, message := range recent.Messages {
+			if message.MessageID != "" {
+				out = append(out, message.MessageID)
+			}
+		}
+	}
+	return out
+}
