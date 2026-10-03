@@ -27,7 +27,7 @@ Direct commit 已成功时，即使外层工具 journal 写失败或调用被取
 
 普通能力介绍和仅索取配置入口优先直接使用已提供的能力目录，在首轮调用 `describe_capabilities`；不为了“更准确”额外读取配置。只有用户明确询问开关、提示词原文或已有例行任务等配置细节，且当前上下文没有答案时，才使用 `scene_config_get`。普通介绍通常一到三句，用同事之间的自然表达说明能协助完成什么，不照抄工具名、Direct 或配置字段。明确配置查询则保留用户要求的准确技能名、开关状态与提示词原文，按所需细节完整回答；“详细配置加链接”同样适用，不受普通介绍的一到三句限制。DWS、技能、连接器和 MCP 属于后台执行能力，不能称为前台可直接调用。
 
-**前台与后台的边界。**前台只做三件事：回复、读当前窗口/记忆/任务与本场域配置（`scene_config_get`）、给配置链接（`describe_capabilities`）。其余一律经 `dispatch_task` 交后台：DWS 查询（通讯录、主管、组织、日程、文档、窗口外的消息）、技能、连接器、MCP、脚本、文件，以及场域自管理——例行任务/定时任务的新建、修改、暂停、恢复、删除、立即运行，场域提示词，开关已公开的技能与连接器，增删远程 MCP。后台 Direct 任务挂着本场域的 `config-qwen-tag-scene` MCP（`scene_routine_create` 等）完成这些变更；例行任务每次运行都在后台执行，平台在场域里发开始和结束消息。前台没有某个工具不等于后台做不到：遇到需要执行的请求就派发，不回答“做不到/没有记录/没有工具”，只有任务结果才能证明做不到；也不把人支到管理员或平台设置。只有缺“做什么/什么时候”时才先简短追问。账号连接和连接器授权在配置页完成，前台给链接。`scene_config_get` 结果不再带 `read_only`（执行器里它表示例行任务运行只读，前台曾把它读成“本场域不可改”），改为 `how_to_change` 指向 `dispatch_task`。后台技能把请求人自己的明确、完整请求视为确认，直接执行；缺要素、多项无关变更、新增或改址远程 MCP 时才先复述确认（对齐 GawkBot：人的请求本身就是授权，高风险变更由工具侧把关）。
+**前台与后台的边界。**前台只做三件事：回复、读当前窗口/记忆/任务与本场域配置（`scene_config_get`）、给配置链接（`describe_capabilities`）。当前窗口、近期对话、记忆、任务简报与报告，或请求人自己给出的事实、日志、数字和观察已经包含回答所需的证据时，直接回答，不派发：判断和解释手头证据是前台自己的事，不是查询；证据不足以下结论时，如实说明它能证明什么、不能确认什么，并提出可以去后台核实，只有请求人要求核实时才派发（DS-01：「发送侧 200，对方收到了吗」曾被派成 20 次沙箱调用的后台核查）。需要上下文之外的数据或动作才一律经 `dispatch_task` 交后台：DWS 查询（通讯录、主管、组织、日程、文档、当前窗口和近期对话之外的消息）、技能、连接器、MCP、脚本、文件，以及场域自管理——例行任务/定时任务的新建、修改、暂停、恢复、删除、立即运行，场域提示词，开关已公开的技能与连接器，增删远程 MCP。后台 Direct 任务挂着本场域的 `config-qwen-tag-scene` MCP（`scene_routine_create` 等）完成这些变更；例行任务每次运行都在后台执行，平台在场域里发开始和结束消息。前台没有某个工具不等于后台做不到：遇到需要执行的请求就派发，不回答“做不到/没有记录/没有工具”，只有任务结果才能证明做不到；也不把人支到管理员或平台设置。只有缺“做什么/什么时候”时才先简短追问。账号连接和连接器授权在配置页完成，前台给链接。`scene_config_get` 结果不再带 `read_only`（执行器里它表示例行任务运行只读，前台曾把它读成“本场域不可改”），改为 `how_to_change` 指向 `dispatch_task`。后台技能把请求人自己的明确、完整请求视为确认，直接执行；缺要素、多项无关变更、新增或改址远程 MCP 时才先复述确认（对齐 GawkBot：人的请求本身就是授权，高风险变更由工具侧把关）。
 
 **引用回复与配置链接。**钉钉群里用引用回复下达新任务是常态：`dispatch_task` 接受带引用的源消息，外层正文就是请求，requester 仍是外层发言人，被引用消息随源证据进入工作包，只作材料、不授权（与 `steer_task`、记忆纠正对引用的处理一致）；reaction 与结构 continuation 仍不受理。历史中的配置链接改写为 `[earlier configuration link omitted]`，不再保留可照抄的 Markdown 链接形状；若模型仍在普通回复里抄出占位链接，Host 去掉死链，并按 `describe_capabilities` 同一路径签发一个新链接，签发结果记入工具日志（`host:copied-config-link`），重放不重复签发。此合同不新增模型调用、事后润色或更改三轮硬上限；真实模型首轮选择、回复长度和时延仍须通过 canary 验证。
 
@@ -86,6 +86,8 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 该呈现版本由 marker 10 保护。版本为空的已受理快照继续生成原单条 user JSON 历史块及原消息顺序，缓存 request 不重写；未知版本、未知历史角色、损坏 JSON 或越界数据在模型调用前拒绝，显式 history unavailable 仍作为不可用数据呈现。原快照和新渲染均保持 20 条/16 KiB 边界，模型请求总预算仍为三次。未来若改变已冻结版本的字节呈现，应另设版本，不能热改旧 journal 的渲染规则。
 
 新 wake 的 Persona 冻结时序解释约束：同一对象的最新明确陈述或重设覆盖旧取值与旧更正，不能把旧更正再应用到更新的重设之上；单项修改保留其他当前事实。指代按最近相关交换中的对象顺序解释，旧 assistant 回复不覆盖更新的用户陈述，历史请求不当作新的执行命令。这只是新快照的提示约束，不改历史记录、全局 BuildPrompt、低延迟请求参数、长期记忆或已冻结快照；真实模型能否正确处理仍须单独验收。
+
+**Persona 档案、语言与 Host 事实块（M3）。**新快照（chat wake 与 task wake）在 Persona 末尾冻结：`SELF PROFILE`（账号显示名、负责人显示名、本场域租户组织名，以及 M6 `employeeDirectoryFacts` 按本 wake 执行身份读出的本人通讯录直属主管/部门/职位；「通讯录未登记」如实说，「未读取」可派发查询；负责人与直属主管是两件事）、`EXECUTION CLAIMS`（本 wake 的工具结果或 Host 回执没有证明时，不说代码跑过、程序算过、产出了文件或用了工具；直接回答按自己的推算表述，MEM-01 反例）、`TIME`（Host 时间一律 Asia/Shanghai，带 +08:00 偏移，不对人说 UTC）、`MEMORY REPLIES` 补充（置顶偏好默认生效；说法不一要指出分歧；只有已验证条目算事实；群里不提供任何人的私人记忆）、chat wake 的 `AMBIGUITY`（有多种合理读法时先问一句或分别回答，不先下结论再自相矛盾，DS-03）、仅当快照真的带了群旁听转录（coverage 含 `group_transcript=loaded`）时的 `GROUP TRANSCRIPT`，最后是逐 wake 的 `LANGUAGE`：按请求人当前消息的语言回复，无明确信号时用简体中文，请求人明确要求的语言优先；Host 对窗口外层正文做确定性观察（含汉字为中文，≥3 个拉丁词且无汉字为英文），英文系统提示和 Host 数据不决定回复语言（DS-07）。`Input.Memory` 末尾追加 ≤1 KiB 的 `[S]` 场域状态块：本 wake 的 Host 时间；本场域 24 小时内最多 3 条失败或被 hold 的前台轮次（task wake 的 hold 是正常停止，不计），原因只取 `model_timeout / model_budget / tool_rejected / window_too_large / provider_error / held`；会话场域最多 3 个例行任务的名称、cron 与时区、启停、下次运行和上次运行（成功/失败/跳过/运行中/从未运行）。块头注明「被问到或直接相关时才用，不主动提起」。群场域在 `[S]` 之后追加 M6 的 `GROUP MEMBERS` 数据块（当前发言人优先，同名歧义照 M6 标注；显示名由用户控制，所以放数据区，不进系统提示）。trace 记 M6 `Metadata()` 及 `persona_language`、`persona_transcript_rules`、`host_facts_bytes`。失败查询走部分索引 `employee_scene_job_failure_idx`（9892）。这些内容只在构建新快照时读取一次，读取失败写明 unavailable、不让 wake 重试；旧快照与 journal 逐字节重放，全局 BuildPrompt 不变，不新增模型调用，不升 marker。近期对话快照的 since/before/observed_at、前台 `scene_config_get` 的例行任务时间也改为 +08:00。task wake 的 Task 快照对模型只给 `task_ref: t1`、authority/evidence 的类别和去掉 UUID 的 actor/source 引用，原始 Task/Run/plan/queue ID 只留在 Host 私有字段。
 
 新 wake 只读同 workspace、agent、tenant、scene 和受理 principal 的近期用户原话，以及有 provider 消息 ID 和匹配会话的已送达 Host 回复。截止时间固定为原 job 受理时间，上限 24 小时、20 条、16 KiB；当前窗口排除，截断显式标记。不读取未确认发送的模型结果，不增加总结 LLM，不写长期记忆。callback 回复必须同时匹配原 URL 和确切同步 RequestID；其他 Run 回复依赖独立的 notice 来源记录，不能仅凭复用 URL 纳入。
 
@@ -184,7 +186,7 @@ lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八�
 
 新输入快照还冻结记忆回复的表达约束：遵守用户限定的输出格式，只回答目标事实；缺失时简答不知道，不列举无关记录或承诺访问其他场域私有记忆。普通确认不展示 record ID、内部状态及来源字段，忘记后不复述被忘内容；用户明确要求审计细节时例外。该约束仅追加到新快照的 Persona 与工具描述，不修改全局 BuildPrompt、历史快照、权限或调用预算，该表达增量不单独提升 marker。
 
-本批不接 HumanStated、verified Distill、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。
+verified distill 已接入：Host 验证通过的 Run 由 worker 维护 tick 经 `ReconcileEmployeeVerifications` → `ReconcileEmployeeVerifiedDistill` 写入记忆（不调模型）。本批仍不接 HumanStated、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。
 
 ## Task 生命周期 v2（读取端，2026-10-03）
 
