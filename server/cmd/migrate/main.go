@@ -106,6 +106,8 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"9902_employee_task_wait_id_idx":          cleanupInvalidConcurrentIndexHook("employee_task_wait_id_idx"),
 	"9903_employee_task_wait_ref_idx":         cleanupInvalidConcurrentIndexHook("employee_task_wait_ref_idx"),
 	"9904_employee_task_entry_completion_idx": cleanupInvalidConcurrentIndexHook("employee_task_entry_completion_idx"),
+	// One Task-to-Task link per task, relation and related task.
+	"9861_employee_task_link_idx": cleanupInvalidConcurrentIndexHook("employee_task_link_idx"),
 	// Cross-scene collection ledger (taskinput): ids, one collection per task
 	// source, one invitation per slot, one input per source and version, and
 	// one ready intent per collection revision (ON CONFLICT arbiters).
