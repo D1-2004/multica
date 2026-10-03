@@ -13,6 +13,8 @@ const (
 	HostNoticeTaskWake   = "task_wake"
 	HostNoticeInvitation = "invitation"
 	HostNoticeWatchdog   = "watchdog"
+	// HostNoticeTaskPlan is a deterministic plan note (paused, budget spent).
+	HostNoticeTaskPlan = "task_plan"
 )
 
 // HostNotice links a Host-initiated scene message to the dialogue it belongs
@@ -34,7 +36,7 @@ type HostNotice struct {
 // Recording the same action again with other facts is ErrConflict.
 func RecordHostNotice(ctx context.Context, db DB, n HostNotice) error {
 	switch n.SourceKind {
-	case HostNoticeTaskWake, HostNoticeInvitation, HostNoticeWatchdog:
+	case HostNoticeTaskWake, HostNoticeInvitation, HostNoticeWatchdog, HostNoticeTaskPlan:
 	default:
 		return ErrInvalid
 	}
