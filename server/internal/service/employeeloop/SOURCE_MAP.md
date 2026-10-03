@@ -177,6 +177,24 @@ shared BuildPrompt renderer or the copied kernel. Existing snapshots and model
 journals retain their original bytes; authority, tool results and call limits are
 unchanged (replica marker remains 5).
 
+The DS-09 correction adds a general `REPLY CONTRACT` in new Host Persona
+snapshots (`handler/employee_persona_profile.go`). It extends the output guidance
+beyond memory: the current admitted request's explicit format and scope override
+default persona/voice habits to add acknowledgements, explanations or follow-ups.
+The model checks its own answer within the same generation; unsupported facts
+and material ambiguity remain explicit, and output constraints confer no Host
+authority. This retains the fixed source's prompt/voice ownership and its
+question-versus-execution boundary (`prompt_builder.go:655/:919`, documented in
+`docs/plans/2026-10-03/employee-foreground-boundary.md`). No copied kernel, global
+BuildPrompt, online template, journal bytes, call budget or replica marker changes;
+Host does not extract a code or truncate prose to manufacture compliance.
+The same contract requires actual accepted/refused Host results before claiming
+an action or memory change; a withdrawal request or old assistant claim is not
+an applied effect. Confirmed forgetting/reset does not license repeating removed
+values from history, except for an explicit authorized audit. This extends the
+existing receipt and memory-reply contracts without changing memory storage or
+tombstone projection.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without

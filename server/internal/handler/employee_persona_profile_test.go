@@ -142,7 +142,7 @@ func TestPersonaOldSnapshotReplaysWithoutM3Sections(t *testing.T) {
 	if string(requests[0]) != string(requests[1]) || len(requests[0]) == 0 {
 		t.Fatal("replaying one frozen snapshot produced different requests")
 	}
-	for _, section := range []string{"SELF PROFILE", "LANGUAGE:", "TIME:", "AMBIGUITY:", "GROUP TRANSCRIPT:", "[S] Scene status"} {
+	for _, section := range []string{"SELF PROFILE", "LANGUAGE:", "TIME:", "AMBIGUITY:", "GROUP TRANSCRIPT:", "REPLY CONTRACT:", "[S] Scene status"} {
 		if strings.Contains(string(requests[0]), section) {
 			t.Fatalf("old snapshot request gained M3 section %q at run time", section)
 		}
@@ -217,7 +217,7 @@ func TestPersonaAmbiguityRuleForChatWakes(t *testing.T) {
 		}
 	}
 	wake := w.employeePersonaInput(context.Background(), job, employeePersonaWake{TaskWake: true, RequesterTexts: []string{"整理反馈"}}, "")
-	if strings.Contains(wake.Persona, "AMBIGUITY:") || !strings.Contains(wake.Persona, "SELF PROFILE") || !strings.Contains(wake.Persona, "TIME:") {
+	if strings.Contains(wake.Persona, "AMBIGUITY:") || !strings.Contains(wake.Persona, "SELF PROFILE") || !strings.Contains(wake.Persona, "TIME:") || !strings.Contains(wake.Persona, employeePersonaReplyContract) {
 		t.Fatal("task wake persona sections are wrong")
 	}
 }
@@ -264,6 +264,7 @@ func TestPersonaMemoryRepliesAndTimeRules(t *testing.T) {
 	input, _, _ := employeePersonaSnapshot(t, f, []DispatchMessage{{OpenMsgID: "m", SenderUID: "alice", Text: "周报哪天交？"}})
 	prompt := employeeloop.BuildPrompt(input.Config.Persona)
 	for _, want := range []string{
+		employeePersonaReplyContract,
 		"Pinned preferences and agreements in the memory snapshot apply by default",
 		"说法不一", "Only items marked verified (已验证) are established facts",
 		"never reveal or confirm anyone's private memory",
