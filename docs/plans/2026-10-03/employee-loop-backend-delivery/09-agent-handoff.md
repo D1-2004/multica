@@ -2,10 +2,13 @@
 
 本文件供用户直接发给其他智能体。不要求它们持有本对话；先定位同一Git仓库和最新目标分支。以下各段是开发指令，只有用户实际发给目标智能体才构成该智能体任务分配。
 
+所有接手者先读 [Step 0](00-step-0-environment.md) 和 [交付标准](10-delivery-standard.md)。主代理规划真实迭代节奏，具体实现主要参考，可由强模型优化；子代理完成后统一合入交付分支测试、发布及验收。
+
 ## 1. 通用启动协议
 
 ```text
 你在 dt-fde-multica 仓库开发 EmployeeLoop 后端。
+首先读 docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md 和10-delivery-standard.md，登记本地/集成/真实验收环境依赖。
 目标 origin/feat/tag-multitenant 持续更新；先 fetch，记录实际 base SHA，创建自己的 codex/employee-包名 工作树和独立本地测试DB。
 先读 AGENTS.md / CLAUDE.md、docs/employee-loop.md，以及 docs/plans/2026-10-03/employee-loop-backend-delivery/README.md、00-context-and-contracts.md、自己包的文档。
 架构前情先读 docs/plans/2026-09-30/employee-loop-overview.md 和 docs/plans/2026-10-02/employee-loop-task-service-design.md；按总控“设计沿革”查R5全文与实施拆解，旧文档完成状态以最新代码/验收纠正。
@@ -13,6 +16,7 @@
 Task 独立于Issue；PG为事实，Redis为通知/加速；复用现有queue/executor/scheduler/outbox。
 先写有业务价值的RED反例，再做最小实现、真实PG/并发/重投/故障回归；默认测试不执行用户安装的agent CLI。
 共享Host/worker/router/marker/sqlc/state DTO由P/I负责；开工先提交所有权清单和拟接口，不在自己的包里各造一套推进器。
+任务包实现细节是参考，以业务交付标准验收；更优方案写清接口/兼容/反例，交主代理协调后采用，不按固定文案或函数名评分。
 提交格式 type(scope): 摘要，正文是真实换行；用heredoc，提交后返回git log -1 --pretty=%B。
 每次提交交集成负责人，独立同步智能体负责rebase最新目标、验证及非强推；你不自行占用共享预发/正式流水线，不本地build Daemon镜像，不任意联系同事。
 你交付代码、RED/GREEN证据、接口合同、兼容/故障边界和准确未完成项；部署/E2E由I/Q统一安排，库完成不等于功能上线。
@@ -24,6 +28,7 @@ Task 独立于Issue；PG为事实，Redis为通知/加速；复用现有queue/ex
 
 ```text
 你负责01-foundation.md和08-integration-and-release.md的P/I实施。
+你先完成Step 0的环境/资源/依赖/分支准入；按可用资源和上一轮结果规划发布节奏，不机械执行固定S1–S6次数。
 先P1分离Task目标与Run终态、保留v1语义，再P2实现typed Task wake、P3来源reader/预授权后续工作、P4 Task读取API。
 你拥有公共DTO、Task状态、worker、Host、router、sqlc、migration编号、marker和通知owner接缝；A/B/C/D/F/G提交adapter由你串行接线。
 别让自动化或收集开发者把内部wake伪装人类消息；普通terminal保持零额外模型；reader先部署producer后启。

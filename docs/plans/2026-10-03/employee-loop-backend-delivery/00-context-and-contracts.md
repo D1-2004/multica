@@ -2,6 +2,8 @@
 
 本文件可脱离原对话使用。完整仓库路径均相对当前工作树根目录；源码表中的包缩写以 `server/internal/` 为前缀，`employeeloop`、`employeememory` 位于其中的 `service/`。机器绝对路径只作为本机接手线索。
 
+开工第一步见 [Step 0测试环境与协作准入](00-step-0-environment.md)；最终以 [结果交付标准](10-delivery-standard.md) 验收。本文件中的当前实现约束保留，拟增量的具体设计允许主代理/开发模型优化并同步合同。
+
 ## 1. 从哪里开工
 
 - 目标分支：`origin/feat/tag-multitenant`，真实远端 `git@gitlab.alibaba-inc.com:dingtalk-ai-lab/dt-fde-multica.git`。当前仓库仅配置 origin；不要照旧脚本假定还存在 aone remote。

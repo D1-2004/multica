@@ -4,6 +4,8 @@
 
 **目标：**把领域/reader/producer分片交付为已部署、已真实验证的完整后端，保留可重放的证据和明确回退步骤。
 
+先满足 [Step 0](00-step-0-environment.md) 对相应测试层级的准入，按 [最终交付标准](10-delivery-standard.md) 判断业务结果。本手册的case/命令/波次是参考验证路径；主代理可调整实现与每轮范围，但不可省略真实效果、权限/恢复证据或把pending当通过。
+
 ## 1. 所有权和接线原则
 
 I持有P共享列表、工具schema、job reader、route、sqlc、migration分配、replica marker、SOURCE_MAP和当前合同更新。Q拥有拟新增`scripts/employee-e2e/`剧本/只读证据校验、发布manifest及自己的独立测试文件；具体脚本名前先查仓库同类实现。
@@ -84,7 +86,7 @@ CR `36355253`是本会话已用线索；触发前确认它仍对应目标与本�
 | WD-01/02/03/04 | 无进展、系统活动、真活动恢复、等待提醒 | once episode/action、诚实状态、无新Run |
 | RES-01/02/03 | 隐藏附件码、像素和图形、错误资源 | 实际内容和provider request，不猜或越权 |
 | REF-01/REA-01 | 引用续接/停止、旧命令reaction | 可信定位、当前外层授权、真退出、轻反馈无副作用 |
-| FOLLOW-01 | 明确预授权两步任务终态触发后续 | 同Task、唯一typed wake/next step、旧revision/取消/超8步不续行 |
+| FOLLOW-01 | 明确预授权多步任务终态触发后续 | 同Task、唯一推进、旧revision/取消不续行；达到约定步数/预算上限后正确收束 |
 | MEM-01/02/03/04 | verification→distill→新Task使用→晋级撤回 | 真实proof、manifest、作用域授权、撤回后不召回 |
 | FAIL-01 | 专用测试Runtime实际runner失败 | queue真实failed/Run failed/事实Event和准确通知一次；不能以坏shell被agent解释后succeeded冒充 |
 | ROLL-01 | 新reader/旧reader窗口、关闭producer/恢复 | 无新源误处理、旧job可完成、新job不丢、不降级sharedrevision |

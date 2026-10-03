@@ -1,5 +1,7 @@
 # P 包：独立 Task 生命周期、内部唤醒与共享接缝
 
+> **验收与实现方针：**先读 [Step 0](00-step-0-environment.md) 与 [交付标准](10-delivery-standard.md)。本包的内部API/表结构/阈值/步骤是参考路线，可由主代理协调优化；业务结果、权限、幂等、恢复、真实证据及已合入公共合同必须保持。
+
 > **执行方式：**P 按 P1→P2→P3→P4 逐项实施并独立审查。其他包可写自己的领域代码，但只有 P/I 修改本文件列出的共享接缝。
 
 **目标：**一次 Run 完成与整件 Task 完成分开；聊天和内部 Task wake 共用已持久的模型/工具引擎；自动化来源可验证；Task 可独立查询和运维。
@@ -31,7 +33,7 @@ server/cmd/server/router.go
 
 ## 2. P1：Task 生命周期 v2
 
-**先定合同：**新增 `lifecycle_version` 和 `completion_mode`。既有记录默认 `1/single_run`，继续现有 RecordResult 行为；新普通 Direct 也可以 single_run。收集/多步骤目标显式 `2/explicit_goal`，Task 状态增加 waiting，Run 状态仍只有 running/succeeded/failed/cancelled。
+**参考合同：**可新增 `lifecycle_version` 和 `completion_mode`。等价方案也可采用，但须区分目标/执行语义、保留旧任务行为并经主代理确认公共协议。既有记录默认 `1/single_run`，继续现有 RecordResult 行为；新普通 Direct 也可以 single_run。收集/多步骤目标显式 `2/explicit_goal`，Task 状态增加 waiting，Run 状态仍只有 running/succeeded/failed/cancelled。
 
 | 当前事项 | Task | Run | 完成方式 |
 | --- | --- | --- | --- |
@@ -94,7 +96,7 @@ kind 首批为 `collection.ready`、`execution.follow_up`、`routine.decision`�
 
 普通 `execution.terminal` 保持事实消费（job_id=NULL）。不能把它改成所有成功/失败都再问一轮模型。
 
-**execution.follow_up 授权合同：**原 Task explicit_goal 的 work plan 预先保存下一步和允许的事件条件；Host 核对确切 terminal Run、goal revision、plan revision、条件及退出事实，只为匹配步骤写一个 follow-up intent。每个 plan revision 最多消费一次该 terminal，最多8个后续步骤；超限保存需要人工输入的状态，无新请求。新目标/纠正使旧 plan wake 失效；取消后不继续。确定性单次派发不调用前台模型，语义判断使用正常 typed wake 的≤3次预算。
+**execution.follow_up 授权合同：**原 Task explicit_goal 的 work plan 预先保存下一步和允许的事件条件；Host 核对确切 terminal Run、goal revision、plan revision、条件及退出事实，只为匹配步骤写一个 follow-up intent。每个 plan revision 最多消费一次该 terminal，建议起始上限为8个后续步骤，主代理按实际资源设定并冻结有界预算；超限保存需要人工输入的状态，无新请求。新目标/纠正使旧 plan wake 失效；取消后不继续。确定性单次派发不调用前台模型，语义判断使用正常 typed wake 的≤3次预算。
 
 **自动化来源 reader：**统一验证冻结的来源引用和所有者，但保留 schedule/webhook 各自 payload/幂等协议。service constructor 从 PG 返回不可由 HTTP/model 直接构造的 validated origin。Member creator、Agent creator、endpoint installation 分别调用已有当前权限服务；不借管理员 fallback。
 
