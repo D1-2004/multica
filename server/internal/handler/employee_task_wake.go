@@ -737,3 +737,62 @@ func employeeTaskWakeDelivery(ctx context.Context, q *db.Queries, job employeeen
 func employeeTraceWake(trace *langfuse.Trace, job employeeentry.Job) {
 	trace.AddMetadata(map[string]any{"job_kind": job.Kind})
 }
+
+// beforeEmployeeTaskWakeSend re-checks a task wake reply immediately before
+// provider submission, like a Run notice: a Task stopped or corrected after
+// the reply was enqueued, or a scene no longer served, suppresses the send.
+// handled is false when the action is not a task wake reply.
+func (h *Handler) beforeEmployeeTaskWakeSend(ctx context.Context, in dingtalkresponse.ActionInput) (bool, error) {
+	if in.ActionID == "" || in.SceneNoticeID == "" {
+		return false, nil
+	}
+	var job employeeentry.Job
+	err := h.DB.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,source_id FROM employee_host_notice WHERE action_id=$1 AND source_kind=$2`, in.ActionID, employeeentry.HostNoticeTaskWake).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	suppress := func(reason string) (bool, error) {
+		return true, &dingtalkresponse.SuppressSendError{Reason: reason}
+	}
+	if in.WorkspaceID != job.Scope.WorkspaceID || in.AgentID != job.Scope.AgentID || in.SceneID != job.Scope.SceneID || in.SceneNoticeID != job.ID {
+		return suppress("task_wake_binding_mismatch")
+	}
+	err = h.DB.QueryRow(ctx, `SELECT items FROM employee_scene_job WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4 AND scene_id=$5::uuid AND kind='task_wake'`, job.ID, job.Scope.WorkspaceID, job.Scope.AgentID, job.Scope.TenantOrgID, job.Scope.SceneID).Scan(&job.Items)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return suppress("task_wake_job_missing")
+	}
+	if err != nil {
+		return true, err
+	}
+	if len(job.Items) != 1 {
+		return suppress("task_wake_invalid")
+	}
+	wake, err := employeeentry.DecodeTaskWake(job.Items[0])
+	if err != nil {
+		return suppress("task_wake_invalid")
+	}
+	var state string
+	var revision int64
+	err = h.DB.QueryRow(ctx, `SELECT state,goal_revision FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4 AND scene_id=$5::uuid`, wake.TaskID, job.Scope.WorkspaceID, job.Scope.AgentID, job.Scope.TenantOrgID, job.Scope.SceneID).Scan(&state, &revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return suppress("task_missing")
+	}
+	if err != nil {
+		return true, err
+	}
+	switch {
+	case state == string(employeetask.StateCancelled):
+		return suppress("task_stopped")
+	case revision != wake.GoalRevision:
+		return suppress("task_wake_stale_goal_revision")
+	}
+	if _, err = employeeSceneFence(ctx, h, job); errors.Is(err, scene.ErrNotFound) || errors.Is(err, scene.ErrStaleTenant) || errors.Is(err, scene.ErrUnresolved) {
+		return suppress("tenant_revoked")
+	} else if err != nil {
+		return true, err
+	}
+	return true, nil
+}
