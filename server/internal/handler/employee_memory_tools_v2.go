@@ -347,7 +347,7 @@ func (h *employeeSceneHost) captureV2(ctx context.Context, tx pgx.Tx, sel employ
 		// The sender's own stated preference, quoted from their own outer
 		// message, is user-stated: trusted and not decayed (decision D4).
 		humanStated := kind == string(employeememory.LearningTypePreference)
-		record, err := store.RecordPrivateObservationTx(ctx, tx, scope, employeememory.LearningRecord{Type: employeememory.LearningType(kind), Key: key, Subject: subject, Insight: quote, SpeakerRef: speakerRef, SpeakerName: source.Message.SenderDisplayName, SaidAt: sel.receivedAt.UTC(), CaptureOrigin: employeememory.CaptureOriginWindow, Source: employeememory.LearningSourceObserved, Confidence: 4},
+		record, err := store.RecordPrivateObservationTx(ctx, tx, scope, employeememory.LearningRecord{Type: employeememory.LearningType(kind), Key: key, Subject: subject, Insight: quote, SpeakerRef: speakerRef, SpeakerName: source.Message.SenderDisplayName, SaidAt: sel.receivedAt.UTC(), CaptureOrigin: employeememory.CaptureOriginWindow, CaptureSourceID: "employee-message:" + source.ReceiptID, Source: employeememory.LearningSourceObserved, Confidence: 4},
 			employeememory.TrustedEvidence{SourceID: "employee-message:" + source.ReceiptID, EvidenceID: source.Message.OpenMsgID, ActorID: source.RequesterRef, OccurredAt: sel.receivedAt, HumanStated: humanStated})
 		if err != nil {
 			return employeeMemoryView{}, employeeMemoryStoreRefusal(err)
@@ -361,7 +361,7 @@ func (h *employeeSceneHost) captureV2(ctx context.Context, tx pgx.Tx, sel employ
 		if sel.registered.SceneKind != scene.KindGroup && sel.registered.SceneKind != scene.KindDM {
 			return employeeMemoryView{}, employeeMemoryRefusal("%v", employeememory.ErrSceneKindNotShared)
 		}
-		in := employeememory.SceneFactInput{Type: employeememory.LearningType(kind), Subject: subject, Quote: quote, ActorID: source.RequesterRef}
+		in := employeememory.SceneFactInput{Type: employeememory.LearningType(kind), Subject: subject, Quote: quote, ActorID: source.RequesterRef, CaptureSourceID: "employee-message:" + source.ReceiptID}
 		if hasTranscript {
 			frozen, err := h.memoryFrozen(ctx, tx)
 			if err != nil {

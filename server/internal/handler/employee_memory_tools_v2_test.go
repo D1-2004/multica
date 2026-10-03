@@ -162,7 +162,7 @@ func TestEmployeeMemoryV2SceneCaptureQuoteMustMatchFrozenTranscriptLine(t *testi
 		t.Fatalf("model view: %s", result.Content)
 	}
 	rec, state := memoryRow(t, result.Receipt)
-	if state != "active" || rec.Scope != "scene" || rec.SpeakerRef != v2Director || rec.CreatedBy != v2Alice || rec.CaptureOrigin != employeememory.CaptureOriginTranscript || !rec.SaidAt.Equal(said) || rec.EvidenceID != "dws-msg-1" || rec.SourceID != employeememory.SceneFactSourcePrefix+host.job.Scope.SceneID || rec.Trusted || rec.Source != employeememory.LearningSourceObserved {
+	if state != "active" || rec.Scope != "scene" || rec.SpeakerRef != v2Director || rec.CreatedBy != v2Alice || rec.CaptureOrigin != employeememory.CaptureOriginTranscript || !rec.SaidAt.Equal(said) || rec.EvidenceID != "dws-msg-1" || rec.SourceID != employeememory.SceneFactSourcePrefix+host.job.Scope.SceneID || rec.Trusted || rec.Source != employeememory.LearningSourceObserved || rec.CaptureSourceID != "employee-message:"+sources[0].ReceiptID {
 		t.Fatalf("stored attribution: %+v", rec)
 	}
 }
@@ -269,7 +269,7 @@ func TestEmployeeMemoryV2SelfPreferenceHumanStatedNoDecay(t *testing.T) {
 			if err = testPool.QueryRow(ctx, `SELECT principal_id,scene_id::text FROM employee_learning WHERE id=$1`, result.Receipt).Scan(&principal, &sceneID); err != nil {
 				t.Fatal(err)
 			}
-			if !rec.Trusted || rec.Source != employeememory.LearningSourceUserStated || principal != v2Alice || sceneID != host.job.Scope.SceneID {
+			if !rec.Trusted || rec.Source != employeememory.LearningSourceUserStated || rec.CaptureSourceID != "employee-message:"+sources[0].ReceiptID || principal != v2Alice || sceneID != host.job.Scope.SceneID {
 				t.Fatalf("self preference stored as %+v in %s/%s", rec, principal, sceneID)
 			}
 			// Trusted records never decay: an old timestamp keeps its confidence.

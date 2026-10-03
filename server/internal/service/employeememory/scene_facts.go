@@ -76,6 +76,9 @@ type SceneFactInput struct {
 	Origin    CaptureOrigin
 	ActorID   string
 	Grounding SceneFactGrounding
+	// CaptureSourceID is "employee-message:<receipt_id>" of the admitted
+	// message that asked for the capture; empty for the flush writer.
+	CaptureSourceID string
 }
 
 // SceneEntry reports the durable state of one scene record. Replayed means the
@@ -142,6 +145,12 @@ func validateAttribution(rec LearningRecord, scope Scope) error {
 	if len(rec.SpeakerName) > 128 || !utf8.ValidString(rec.SpeakerName) || strings.ContainsRune(rec.SpeakerName, 0) {
 		return errors.New("invalid speaker name")
 	}
+	if rec.CaptureSourceID != "" {
+		receipt, ok := strings.CutPrefix(rec.CaptureSourceID, "employee-message:")
+		if _, err := uuid.Parse(receipt); !ok || err != nil {
+			return errors.New("invalid capture source")
+		}
+	}
 	switch rec.CaptureOrigin {
 	case "", CaptureOriginWindow, CaptureOriginTranscript, CaptureOriginFlush:
 		return nil
@@ -174,7 +183,7 @@ func sceneFactRecord(scope Scope, in SceneFactInput) (LearningRecord, TrustedEvi
 	if err != nil {
 		return LearningRecord{}, TrustedEvidence{}, err
 	}
-	rec := LearningRecord{Type: in.Type, Key: key, Insight: quote, Subject: in.Subject, SpeakerRef: g.SpeakerRef, SpeakerName: strings.TrimSpace(g.SpeakerName), SaidAt: g.SaidAt.UTC(), CaptureOrigin: in.Origin, Source: LearningSourceObserved, Confidence: 4}
+	rec := LearningRecord{Type: in.Type, Key: key, Insight: quote, Subject: in.Subject, SpeakerRef: g.SpeakerRef, SpeakerName: strings.TrimSpace(g.SpeakerName), SaidAt: g.SaidAt.UTC(), CaptureOrigin: in.Origin, CaptureSourceID: in.CaptureSourceID, Source: LearningSourceObserved, Confidence: 4}
 	switch in.Origin {
 	case CaptureOriginWindow, CaptureOriginTranscript:
 	case CaptureOriginFlush:

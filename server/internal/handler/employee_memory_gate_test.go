@@ -129,3 +129,15 @@ func TestEmployeeMemoryV2RefusalLetsModelReply(t *testing.T) {
 		t.Fatalf("refused capture wrote %d rows", n)
 	}
 }
+
+// Memory eval bindings (employee_memory_eval_test.go). Shared scene capture has
+// no runtime switch: it is on for every employee-mode agent once the tools are
+// v2, and tools v2 follow the replica marker, which these bindings report as
+// supported by every live replica.
+func init() {
+	memoryEvalEnable[memoryEvalSceneCapture] = func(*testing.T, memoryEvalTarget) bool { return true }
+	memoryEvalEnable[memoryEvalToolsV2] = func(_ *testing.T, target memoryEvalTarget) bool {
+		target.Worker.MemoryToolsReady = func(context.Context) (bool, error) { return true, nil }
+		return true
+	}
+}

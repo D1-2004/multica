@@ -25,12 +25,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-var storeEvalKnownGaps = map[string]string{
-	"scene-conflict/cross-author-both-active":    "M5: cross-author conflict kept",
-	"scene-conflict/conflict-points-at-previous": "M5: conflicts_with",
-	"learning-types/fact-accepted":               "M5: LearningType fact",
-	"learning-types/decision-accepted":           "M5: LearningType decision",
-}
+var storeEvalKnownGaps = map[string]string{}
 
 type storeEvalCheck struct {
 	id, detail string

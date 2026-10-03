@@ -54,17 +54,8 @@ var memoryEvalKnownGaps = map[string]string{
 	"experience-reuse/context-used-lists-memory-id":       "M4: ContextUsed memory:<id>",
 	"experience-reuse/context-used-lists-history-job":     "M4: ContextUsed history:<job_id>",
 	"experience-reuse/packet-carries-frozen-history":      "M4: dispatch packet history from the frozen wake",
-	"scene-capture/scene-record-written":                  "M5: memory_capture audience=scene",
-	"scene-capture/attribution-from-host-evidence":        "M5: speaker_ref/created_by/capture_origin",
-	"scene-capture/host-generated-key":                    "M5: Host key from subject",
-	"scene-capture/other-member-recalls-with-attribution": "M5: scene layer shared with attribution",
-	"scene-capture/cross-author-conflict-kept":            "M5: cross-author conflict",
-	"scene-capture/conflict-shown-to-model":               "M5+M1: 说法不一 rendering",
-	"scene-capture/non-author-forget-refused":             "M5: scene forget permission",
-	"scene-capture/speaker-forget-succeeds":               "M5: ForgetSceneTx",
-	"scene-capture/third-party-reset-keeps-scene-records": "M5: group /reset-memory narrowed (D3)",
-	"self-preference/own-preference-user-stated":          "M5: HumanStated self preference (D4)",
-	"self-preference/lookup-scope-scene":                  "M5: memory_lookup scope=scene",
+	"scene-capture/other-member-recalls-with-attribution": "M1: brief renders SceneAttribution (speaker name, date)",
+	"scene-capture/conflict-shown-to-model":               "M1: brief renders ConflictPeers as 说法不一",
 }
 
 // Feature names gated in production. A binding enables exactly that feature

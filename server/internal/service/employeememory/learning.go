@@ -95,6 +95,10 @@ type LearningRecord struct {
 	// ConflictsWith names an active scene record with the same type and key
 	// written by another author. Both stay active as conflicting candidates.
 	ConflictsWith string `json:"conflicts_with,omitempty"`
+	// CaptureSourceID names the admitted message that asked for the capture
+	// ("employee-message:<receipt_id>"), so history can hide the capture job's
+	// own confirmation once the record is forgotten or superseded.
+	CaptureSourceID string `json:"capture_source_id,omitempty"`
 }
 
 func dedupeLearnings(records []LearningRecord) []LearningRecord {

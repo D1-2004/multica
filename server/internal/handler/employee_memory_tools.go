@@ -138,7 +138,7 @@ func (h *employeeSceneHost) memoryTool(ctx context.Context, tx pgx.Tx, call empl
 		if !strings.Contains(source.Message.Text, quote) {
 			return employeeloop.ToolResult{}, errors.New("memory quote must be exact text from the selected outer message")
 		}
-		record, err := store.RecordPrivateObservationTx(ctx, tx, scope, employeememory.LearningRecord{Type: employeememory.LearningType(kind), Key: key, Insight: quote, Source: employeememory.LearningSourceObserved, Confidence: 4}, employeememory.TrustedEvidence{SourceID: "employee-message:" + source.ReceiptID, EvidenceID: source.Message.OpenMsgID, ActorID: source.RequesterRef, OccurredAt: at})
+		record, err := store.RecordPrivateObservationTx(ctx, tx, scope, employeememory.LearningRecord{Type: employeememory.LearningType(kind), Key: key, Insight: quote, CaptureSourceID: "employee-message:" + source.ReceiptID, Source: employeememory.LearningSourceObserved, Confidence: 4}, employeememory.TrustedEvidence{SourceID: "employee-message:" + source.ReceiptID, EvidenceID: source.Message.OpenMsgID, ActorID: source.RequesterRef, OccurredAt: at})
 		if err != nil {
 			return employeeloop.ToolResult{}, err
 		}

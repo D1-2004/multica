@@ -233,6 +233,17 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 			return LearningRecord{}, ErrUntrustedCorrection
 		}
 	}
+	// No untrusted statement stands next to a trusted record either: another
+	// author's trusted record for this key is never put in conflict.
+	if author != nil && other.ID != "" {
+		var trusted bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL AND record->>'type'=$7 AND record->>'key'=$8 AND (record->>'trusted')::boolean)`, append(scope.args(), string(rec.Type), rec.Key)...).Scan(&trusted); err != nil {
+			return LearningRecord{}, err
+		}
+		if trusted {
+			return LearningRecord{}, ErrUntrustedCorrection
+		}
+	}
 	if orderedObservation {
 		// Forgotten and superseded records still fence older sources. Otherwise
 		// forgetting the current value could reactivate an unseen delayed event.
