@@ -367,7 +367,8 @@
         "f01_native_ingress_trusted_facts",
         "f01_native_own_output_not_reentered",
         "f01_native_account_owned_by_one_path",
-        "f01_native_backlog_not_answered"
+        "f01_native_backlog_not_answered",
+        "f01_native_group_title_and_trigger_person"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -451,6 +452,10 @@
         "server/internal/dwseventsource/source.go",
         "server/internal/handler/dws_native_dispatch.go",
         "server/internal/handler/dws_native_ownership.go",
+        "server/internal/handler/dws_native_title.go",
+        "server/internal/handler/dws_native_title_test.go",
+        "server/internal/dwsclient/conversation.go",
+        "server/internal/contextcap/scope.go",
         "server/internal/handler/coordinator_issue_backend.go",
         "server/internal/service/employee_issue_backend.go",
         "server/internal/service/employee_issue_backend_lifecycle.go",

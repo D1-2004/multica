@@ -34,7 +34,7 @@ layer wins.
 | Offer catalog (「公开给场域」) | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「公开给场域」, shown only while the app is not a 通用能力; Aone FaaS row switch 「公开给场域」 on offer-only rows) / Skills, section 「公开给场域」 (skills not assigned to the agent) | `context_capability_binding` (`scope_type='offer'`) |
 | Enterprise (企业级, a tenant) | agent + org_id (scope key = org_id) | agent managers, in the web Context Builder; the configure page shows it read-only to everyone who may open the agent there (managers included) | web agent detail → 场域 → tenant → 配置; mobile 场域能力 → 企业能力 (display only) | `agent_tenant` (the tenant), `context_capability_binding` / `context_connector_credential` / `context_scope_mcp_config` / `context_prompt_component` with `scope_type='org'` |
 | Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | whoever may open it: agent managers (web and configure page), members holding the conversation's configure link (a group's or a 1:1 chat's, minted the same way, §5) | web and mobile `/dingtalk/configure` 场域能力 → 当前会话; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
-| Personal (个人) | agent + org_id + staffId | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` 场域能力 → 个人能力; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
+| Personal (个人) | agent + org_id + trigger person key (the sender's staffId, else the openDingTalkId a DWS native subscription names them by, §2) | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` 场域能力 → 个人能力; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 
 - Resources are library items only: `resource_type='connector'` (an
   `internal_connector` row) or `resource_type='skill'` (a workspace `skill`
@@ -350,6 +350,30 @@ server-written DingTalk dispatch context. Nothing is read from the prompt.
   only one data-level sender. So one person's credentials never serve a batch
   that may contain someone else's message. Coordinator item tasks already
   rebind `sender` per work item.
+- Person of a DWS native subscription dispatch (2026-10-03): the event names
+  its sender only by openDingTalkId (no staffId, no uid), so a sender without
+  a staffId is keyed by `sender.openDingTalkId` (else
+  `senderOpenDingTalkId`; the two must agree, the literal `null` is none):
+  `contextcap.TriggerPersonKey`. That id is relative to the receiving
+  DingTalk account: measured on 2026-10-03, one account sees the same
+  person under the same id in its 1:1 chat and in a group, while another
+  account (even in the same org) sees another id. It therefore keys the
+  person's capabilities with this agent and its bound account, which is the
+  person scope's own boundary (agent + org); rebinding the agent to another
+  account gives the same people new keys, and their earlier configuration is
+  left unused, never applied to someone else. The single-sender rule is the
+  same with openDingTalkId in place of staffId (`singleTriggerOpenID`): a
+  message that carries a staffId or another openDingTalkId disqualifies the
+  run, and merged windows need every message stamped with the same
+  `senderOpenDingTalkId`. A sender with a staffId never falls back to the
+  openDingTalkId, even when the staffId is unusable. Only capability
+  configuration uses this key; scene routines never carry a person (§9). The
+  tenant's people list (`ListOrgPersons`, `ListAgentOrgActivity`) reads 1:1
+  senders by the same rule, so a native 1:1 sender is listed under that id.
+  No path mints a person grant for such a key yet (personal links were
+  retired on 2026-10-02, §5), so the person layer of a native sender applies
+  what is stored under the key, and the configure page cannot yet offer the
+  person their own level.
 - org_id (the tenant): the dispatch's recorded agent org
   (`external_identity.dws.orgId`), else the agent's
   `agent_dingtalk_identity.org_id` (same source as scene memory). A task

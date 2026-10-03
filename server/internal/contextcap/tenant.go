@@ -302,6 +302,15 @@ func jobOrgExpr(identityParam string) string {
 	return `COALESCE(NULLIF(BTRIM(job.command #>> '{externalIdentity,dws,orgId}'), ''), ` + identityParam + `::text)`
 }
 
+// jobPersonKeyExpr is the trigger person key of an inbound job's dispatch
+// command, as TriggerPersonKey derives it: sender.staffId, else the sender's
+// openDingTalkId (a DWS native subscription event names its sender only so).
+const jobPersonKeyExpr = `COALESCE(NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), ''),
+	CASE WHEN lower(` + jobSenderOpenIDExpr + `) IN ('', 'null') THEN NULL ELSE ` + jobSenderOpenIDExpr + ` END)`
+
+const jobSenderOpenIDExpr = `BTRIM(COALESCE(NULLIF(BTRIM(job.command #>> '{event,data,sender,openDingTalkId}'), ''),
+	job.command #>> '{event,data,sender,senderOpenDingTalkId}', ''))`
+
 // OrgActivity counts the group scenes and the people of one org of an
 // agent.
 type OrgActivity struct {
@@ -352,12 +361,12 @@ func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, id
 	}
 
 	// Every 1:1 sender names a person.
-	rows, err = db.Query(ctx, `SELECT DISTINCT `+jobOrgExpr("$3")+`, BTRIM(job.command #>> '{event,data,sender,staffId}')
+	rows, err = db.Query(ctx, `SELECT DISTINCT `+jobOrgExpr("$3")+`, `+jobPersonKeyExpr+`
 		FROM inbound_coordinator_job job
 		WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
 		  AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
 		  AND lower(BTRIM(COALESCE(job.command #>> '{event,data,conversation,type}', ''))) IN ('single', 'p2p', 'private', 'direct')
-		  AND NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), '') IS NOT NULL`, workspaceID, agentID, identityOrgID)
+		  AND `+jobPersonKeyExpr+` IS NOT NULL`, workspaceID, agentID, identityOrgID)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +464,7 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 
 	rows, err := db.Query(ctx, `SELECT DISTINCT ON (staff_id) staff_id, sender_name, scene_id, created_at
 		FROM (
-		  SELECT BTRIM(job.command #>> '{event,data,sender,staffId}') AS staff_id,
+		  SELECT `+jobPersonKeyExpr+` AS staff_id,
 		    BTRIM(COALESCE(job.command #>> '{event,data,sender,displayName}', '')) AS sender_name,
 		    BTRIM(COALESCE(job.command #>> '{agent_scene,scene_id}', '')) AS scene_id,
 		    job.created_at, job.id
@@ -463,7 +472,7 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 		  WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
 		    AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
 		    AND lower(BTRIM(COALESCE(job.command #>> '{event,data,conversation,type}', ''))) IN ('single', 'p2p', 'private', 'direct')
-		    AND NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), '') IS NOT NULL
+		    AND `+jobPersonKeyExpr+` IS NOT NULL
 		    AND `+jobOrgExpr("$4")+` = $3::text
 		) j
 		ORDER BY staff_id, created_at DESC, id DESC`, workspaceID, agentID, orgID, identityOrgID)

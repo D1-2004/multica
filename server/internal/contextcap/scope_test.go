@@ -134,6 +134,78 @@ func TestScopeFromTaskContext(t *testing.T) {
 			want: Scope{ConversationType: "single"},
 		},
 		{
+			// A staffId decides even when it is unusable: the openDingTalkId
+			// never stands in for a staffId the dispatch named.
+			name: "invalid staff id does not fall back to the openDingTalkId",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"single"},
+				"sender":{"staffId":"a\u0007b","openDingTalkId":"DopenA"},"messages":[{"senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			// DWS native subscription: the sender is named only by the
+			// openDingTalkId the receiving account sees.
+			name: "native group mention keys the person by openDingTalkId",
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"external_identity":{"dws":{"uid":"598441033","orgId":"439446171"}},"dispatch_event_data":{
+				"conversation":{"openConversationId":"cidGroupA","type":"group","title":"Multica 预发群测试"},
+				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
+				"messages":[{"openMsgId":"m1","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","mentions":[{"uid":"598441033"}]}]}}`,
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Multica 预发群测试", PersonKey: "Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+				PersonName: "冬翔", ConversationType: "group", DispatchOrgID: "439446171"},
+		},
+		{
+			name: "native single chat keys the same person the same way",
+			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},"external_identity":{"dws":{"uid":"598441033","orgId":"439446171"}},"dispatch_event_data":{
+				"conversation":{"openConversationId":"cidDirect","type":"single"},
+				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
+				"messages":[{"openMsgId":"m2","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"}]}}`,
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", PersonKey: "Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+				PersonName: "冬翔", ConversationType: "single", DispatchOrgID: "439446171"},
+		},
+		{
+			name: "merged native window of one sender",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{PersonKey: "DopenA", ConversationType: "group"},
+		},
+		{
+			name: "merged native window of two senders has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"senderOpenDingTalkId":"DopenB"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "merged native window with an unstamped message has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"text":"who?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "coalesced follow-ups without messages have no native person",
+			raw:  `{"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"}}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "a message with a staff id is not the openDingTalkId sender",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA","senderStaffId":"staff-9"}]}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			name: "disagreeing sender openDingTalkIds name nobody",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"DopenA","senderOpenDingTalkId":"DopenB"}}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			name: "only senderOpenDingTalkId is enough",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"senderOpenDingTalkId":"DopenA"}}}`,
+			want: Scope{PersonKey: "DopenA", ConversationType: "single"},
+		},
+		{
+			name: "the literal null is no openDingTalkId",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"null"}}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
 			// Still a dispatch: the org layer may apply without scene or person.
 			name: "dispatch without conversation or sender",
 			raw:  `{"dispatch_event_data":{}}`,

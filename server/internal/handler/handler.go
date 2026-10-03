@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -386,6 +387,10 @@ type Handler struct {
 	// messages of execution identities with native subscription on, always
 	// on the production DWS gateway. Nil without Redis.
 	DWSNativeEvents *dwseventsource.Source
+	// DWSNativeConversationTitle reads a group's title as the native
+	// identity sees it (native IM events carry none). Nil leaves native
+	// group scenes untitled.
+	DWSNativeConversationTitle func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error)
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.

@@ -1047,6 +1047,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				slog.Error("DWS native subscription source disabled", "event", "dws_native_source_disabled", "error", err)
 			} else {
 				h.DWSNativeEvents = nativeSource
+				// Native IM events carry no group title: read it as the identity
+				// sees the group, through the same sessions as its stream.
+				h.DWSNativeConversationTitle = func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error) {
+					return native.ConversationTitle(ctx, id, mint, conversationID)
+				}
 			}
 		}
 	}

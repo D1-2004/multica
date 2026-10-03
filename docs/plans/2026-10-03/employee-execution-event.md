@@ -61,3 +61,21 @@ Cron 复用 `jobs_autopilot.go`、`sys_cron_executions` 和 `(trigger_id, planne
 旧 skip 采用 `version=1` 存储格式加 `proof_version=2` 校验版本：旧副本继续识别兼容 marker，新副本重评旧无 proof 的误判；拿 scene 锁后再次尊重当前或更高 proof。身份行 FOR SHARE 覆盖 tenant fence 至提交，复用现有服务租户判断以支持合法 secondary tenant，避免解绑时进入机器人 fallback。缺失身份仍 held，数据库/取消错误回滚重试。
 
 作者最终 handler race 8.297s、root 独立 7.346s；entry/router race、build、独立复审通过。上线后先验证原 Run 自动补事实、无任务重执行和重复通知，再做新取消与成功输出实测；修复上线后的事件验收仍待完成。
+
+## 修复后真实验收通过（预发 3110331461）
+
+目标 `b9ea5040f4559026a0fafa273880b7ca6398217c` 构建、部署、集成测试成功。以下三个独立验证通过；每个原始 Employee job 均只有一次前台 generation，没有因终态消费新增模型调用。
+
+| 场景 | Run | 执行 receipt | 结果 |
+|---|---|---|---|
+| 旧误标自动恢复 | `33846107-0ee5-4971-b860-e9a4e42f1d9d` | `61083031-b0ac-4aef-a427-3e6c7140db2f` | succeeded，原 job `b463a322-98ac-438f-a6b5-0de26de61cd1` 补出一条 Event |
+| 运行中取消 | `4acae247-7952-4696-b6c9-f072605cf1f4` | `7175299e-8ac1-473a-a160-8273c47086b6` | cancelled，job `83634646-8a31-4405-9053-4487f190a537` 一条 Event |
+| 新成功与原样输出 | `08a265f1-f504-4546-81aa-aa4a05551d30` | `a9b3fdf9-d2ae-4c7b-a857-497e025f704e` | succeeded，job `ee79a691-2540-4f21-a935-b638a084fd1c` 一条 Event |
+
+回执 API 读到真实 `employee.execution`、原 legacy 路由和正确 scene；Langfuse 的消费 state=completed 与实际 run_state 分开，receipt/source_receipt/queue ID 逐项对应。旧 Run 没有重执行；其执行时间仍为 08:36:03—08:36:14。
+
+取消 queue `94fe80ae-59eb-46ee-85b9-2814cb3acb7a` 的 transcript 确认 Python sleep(90) 已启动。用户取消接口在 09:45:19 返回 cancelled，Daemon cancel-ack 在 09:45:21 为 200，09:45:50 sandbox `sbx-fdb850a6-bfbd-45d1-bfee-f628560d2aa6` 被 idle_trimmed，未出现 finished 输出。群里仅一次取消说明 `msgMsxzjL7hUOXntqoVcKad9Q==`，没有追加完成总结。
+
+新成功 queue `b4c0bdf8-fa6d-49c4-ba28-00c711b68b46` 的真实 bash 输出与 queue.result.output、钉钉消息 `msg/C8DN1EWc3tKWodMH2PMog==` 逐字一致，无固定前缀。真实 failed 终态仍只由 PG 回归覆盖。原始 SLS 查询取满 100 行，不据单页声称全时间窗日志总数；唯一回执和 Event 以精确 ID 查询核对。
+
+后续质量项：一次派发 ACK 提前使用“Python 已在沙箱启动”的表述，实际当时仅入队；状态事实与最终结果均正确，但接受 ACK 的措辞仍可进一步收紧。该项不改变本次终态事件的验收结论。
