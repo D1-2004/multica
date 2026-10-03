@@ -173,7 +173,10 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	// A DWS native subscription 1:1 chat names its sender only by the
 	// openDingTalkId the agent's account sees: that id is the person.
 	deeDM := f.insertScene(t, "org-home", "dm", "cidHomeNative", "Dee", 30*time.Minute)
-	f.nativeDirectSceneJob(t, "cidHomeNative", deeDM, "DopenDee", "Dee", "org-home", 30*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNative", deeDM, "DopenDee", "DopenDee", "Dee", "org-home", 30*time.Minute)
+	// Two openDingTalkIds that disagree name nobody.
+	eveDM := f.insertScene(t, "org-home", "dm", "cidHomeNativeEve", "Eve", 40*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNativeEve", eveDM, "DopenEve", "DopenOther", "Eve", "org-home", 40*time.Minute)
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, nil, []string{f.skillID}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +209,13 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if err != nil || len(persons) != 3 {
 		t.Fatalf("org-home persons=%+v err=%v", persons, err)
 	}
-	if dee, ok := FindPerson(persons, "DopenDee"); !ok || dee.Title != "Dee" || dee.DMSceneID != deeDM {
+	if dee, ok := FindPerson(persons, "odt:DopenDee"); !ok || dee.Title != "Dee" || dee.DMSceneID != deeDM {
 		t.Fatalf("dee=%+v", dee)
+	}
+	for _, key := range []string{"odt:DopenEve", "odt:DopenOther", "DopenDee"} {
+		if _, ok := FindPerson(persons, key); ok {
+			t.Fatalf("%s listed: %+v", key, persons)
+		}
 	}
 	ann, ok := FindPerson(persons, "staff-ann")
 	if !ok || ann.Title != "Ann" || ann.DMSceneID != annDM || ann.LastActiveAt.IsZero() {
@@ -252,14 +260,14 @@ func TestOrgActivityAndPersons(t *testing.T) {
 
 // nativeDirectSceneJob plants a 1:1 Coordinator job as a DWS native
 // subscription dispatches it: the sender is named only by openDingTalkId.
-func (f storeFixture) nativeDirectSceneJob(t *testing.T, cid, sceneID, openID, name, dispatchOrg string, age time.Duration) {
+func (f storeFixture) nativeDirectSceneJob(t *testing.T, cid, sceneID, openID, senderOpenID, name, dispatchOrg string, age time.Duration) {
 	t.Helper()
 	command, err := json.Marshal(map[string]any{
 		"source":      map[string]any{"platform": "dingtalk", "type": "digital_employee"},
 		"agent_scene": map[string]any{"scene_id": sceneID},
 		"event": map[string]any{"data": map[string]any{
 			"conversation": map[string]any{"openConversationId": cid, "type": "single"},
-			"sender":       map[string]any{"displayName": name, "openDingTalkId": openID, "senderOpenDingTalkId": openID},
+			"sender":       map[string]any{"displayName": name, "openDingTalkId": openID, "senderOpenDingTalkId": senderOpenID},
 		}},
 		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg}},
 	})

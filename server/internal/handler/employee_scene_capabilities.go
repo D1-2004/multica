@@ -99,8 +99,10 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 	return out, nil
 }
 
-// A person layer requires the same known actor and staff identifier on every
-// original message, including messages removed by foreground command handling.
+// A person layer requires the same known actor and person key
+// (contextcap.TriggerPersonKey: the staffId, else the openDingTalkId of a
+// native sender) on every original message, including messages removed by
+// foreground command handling.
 func employeeCapabilityPerson(job employeeentry.Job, envelopes []employeeDispatchEnvelope) string {
 	actor, staff := "", ""
 	for _, env := range envelopes {
@@ -109,8 +111,8 @@ func employeeCapabilityPerson(job employeeentry.Job, envelopes []employeeDispatc
 		}
 		for _, message := range env.Command.Event.Data.Messages {
 			ref := employeeRequesterRef(job.Scope.TenantOrgID, message)
-			key := strings.TrimSpace(message.SenderStaffID)
-			if ref == "" || !contextcap.ValidStaffID(key) {
+			key := contextcap.TriggerPersonKey(message.SenderStaffID, message.SenderOpenDingTalkID)
+			if ref == "" || key == "" {
 				return ""
 			}
 			if actor != "" && (actor != ref || staff != key) {

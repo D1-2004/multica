@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/pkg/dws"
 	dwsevents "github.com/multica-ai/multica/server/pkg/dws/events"
 )
@@ -121,6 +122,28 @@ func TestNativeConversationTitleCachesAndDegrades(t *testing.T) {
 	if got := h.nativeConversationTitle(context.Background(), identity, "cid-1"); got != "项目群" || calls != 4 {
 		t.Fatalf("retry after a failure: title = %q calls = %d", got, calls)
 	}
+
+	// A read that names no title is kept like a title.
+	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	answer = ""
+	h.nativeConversationTitle(context.Background(), identity, "cid-1")
+	now = now.Add(nativeTitleMissTTL)
+	if got := h.nativeConversationTitle(context.Background(), identity, "cid-1"); got != "" || calls != 5 {
+		t.Fatalf("untitled read: title = %q calls = %d, want one lookup", got, calls)
+	}
+
+	// The stream's cancellation does not reach the read.
+	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	answer = "项目群"
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.DWSNativeConversationTitle = func(ctx context.Context, _ dwsclient.Identity, _ string) (string, error) {
+		calls++
+		return answer, ctx.Err()
+	}
+	if got := h.nativeConversationTitle(cancelled, identity, "cid-1"); got != "项目群" {
+		t.Fatalf("title under a cancelled stream context = %q", got)
+	}
 }
 
 // Only a group event reads a title; a single chat never costs a lookup.
@@ -165,8 +188,39 @@ func TestNativeDispatchTriggerPersonIsTheSameInGroupAndSingleChat(t *testing.T) 
 			t.Fatal(err)
 		}
 		scope := contextcap.ScopeFromTaskContext(dispatchRuntimeContext(command, "idem-1"))
-		if scope.PersonKey != "open-user-1" || scope.PersonName != "测试用户甲" || scope.DispatchOrgID != nativeUnitOrg {
+		if scope.PersonKey != "odt:open-user-1" || scope.PersonName != "测试用户甲" || scope.DispatchOrgID != nativeUnitOrg {
 			t.Fatalf("%s: scope = %+v", key, scope)
 		}
+	}
+}
+
+// The Employee foreground directory keys its person layer by the same rule
+// as task claims: staffId, else the native sender's openDingTalkId.
+func TestEmployeeCapabilityPersonKeysNativeSenders(t *testing.T) {
+	job := employeeentry.Job{Scope: employeeentry.Scope{TenantOrgID: nativeUnitOrg}}
+	envelope := func(messages ...DispatchMessage) employeeDispatchEnvelope {
+		var env employeeDispatchEnvelope
+		env.Command.Event.Data.Messages = messages
+		return env
+	}
+	native := func(openID string) DispatchMessage {
+		return DispatchMessage{OpenMsgID: "m-" + openID, SenderOpenDingTalkID: openID}
+	}
+	for _, tt := range []struct {
+		name      string
+		envelopes []employeeDispatchEnvelope
+		want      string
+	}{
+		{"one native sender", []employeeDispatchEnvelope{envelope(native("DopenA")), envelope(native("DopenA"))}, "odt:DopenA"},
+		{"two native senders", []employeeDispatchEnvelope{envelope(native("DopenA"), native("DopenB"))}, ""},
+		{"a message without a sender", []employeeDispatchEnvelope{envelope(native("DopenA"), DispatchMessage{OpenMsgID: "anon"})}, ""},
+		{"router staff id", []employeeDispatchEnvelope{envelope(DispatchMessage{SenderUID: "u1", SenderStaffID: "staff-1", SenderOpenDingTalkID: "DopenA"})}, "staff-1"},
+		{"no messages", []employeeDispatchEnvelope{envelope()}, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := employeeCapabilityPerson(job, tt.envelopes); got != tt.want {
+				t.Fatalf("person = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

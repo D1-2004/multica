@@ -154,3 +154,21 @@ func TestProactiveFollowUpSkipsLockedOldestIssue(t *testing.T) {
 		t.Fatalf("unlocked Issue was not dispatched: count=%d err=%v", count, err)
 	}
 }
+
+// One conversation's follow-ups batch together whatever title each delivery
+// carried; another conversation or type does not.
+func TestFollowUpConversationScopeIgnoresTitle(t *testing.T) {
+	a := followUpConversationScope(json.RawMessage(`{"openConversationId":"cidA","type":"group","title":"项目群"}`))
+	b := followUpConversationScope(json.RawMessage(`{"openConversationId":"cidA","type":"group"}`))
+	if a != b {
+		t.Fatalf("title split the scope: %q vs %q", a, b)
+	}
+	for _, other := range []string{`{"openConversationId":"cidB","type":"group"}`, `{"openConversationId":"cidA","type":"single"}`} {
+		if followUpConversationScope(json.RawMessage(other)) == a {
+			t.Fatalf("%s shares cidA's scope", other)
+		}
+	}
+	if got := followUpConversationScope(json.RawMessage(`[1]`)); got != `[1]` {
+		t.Fatalf("undecodable conversation = %q", got)
+	}
+}

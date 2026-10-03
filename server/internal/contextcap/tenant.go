@@ -303,13 +303,19 @@ func jobOrgExpr(identityParam string) string {
 }
 
 // jobPersonKeyExpr is the trigger person key of an inbound job's dispatch
-// command, as TriggerPersonKey derives it: sender.staffId, else the sender's
-// openDingTalkId (a DWS native subscription event names its sender only so).
+// command, as TriggerPersonKey derives it: sender.staffId, else "odt:" + the
+// sender's openDingTalkId (a DWS native subscription event names its sender
+// only so); NULL when the sender's two openDingTalkId fields disagree.
 const jobPersonKeyExpr = `COALESCE(NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), ''),
-	CASE WHEN lower(` + jobSenderOpenIDExpr + `) IN ('', 'null') THEN NULL ELSE ` + jobSenderOpenIDExpr + ` END)`
+	CASE WHEN lower(` + jobSenderOpenIDExpr + `) IN ('', 'null')
+	  OR (` + jobSenderOpenIDA + ` <> '' AND ` + jobSenderOpenIDB + ` <> '' AND ` + jobSenderOpenIDA + ` <> ` + jobSenderOpenIDB + `)
+	THEN NULL ELSE '` + PersonKeyOpenDingTalkPrefix + `' || ` + jobSenderOpenIDExpr + ` END)`
 
-const jobSenderOpenIDExpr = `BTRIM(COALESCE(NULLIF(BTRIM(job.command #>> '{event,data,sender,openDingTalkId}'), ''),
-	job.command #>> '{event,data,sender,senderOpenDingTalkId}', ''))`
+const (
+	jobSenderOpenIDA    = `BTRIM(COALESCE(job.command #>> '{event,data,sender,openDingTalkId}', ''))`
+	jobSenderOpenIDB    = `BTRIM(COALESCE(job.command #>> '{event,data,sender,senderOpenDingTalkId}', ''))`
+	jobSenderOpenIDExpr = `COALESCE(NULLIF(` + jobSenderOpenIDA + `, ''), ` + jobSenderOpenIDB + `)`
+)
 
 // OrgActivity counts the group scenes and the people of one org of an
 // agent.

@@ -67,7 +67,10 @@ func (c *nativeTitleCache) put(key, title string, ttl time.Duration, now time.Ti
 // nativeConversationTitle returns the title of a native group event's
 // conversation as id sees it, "" when it cannot be read: the failure is
 // logged and the message is dispatched untitled (the scene keeps the title
-// it has).
+// it has). The read is detached from the stream's context, like the
+// submission, so a stream handover does not turn it into a cached miss; a
+// read that answers with no title is kept as long as a title (a refused
+// internal group costs a group-list walk per read).
 func (h *Handler) nativeConversationTitle(ctx context.Context, id dwsclient.Identity, conversationID string) string {
 	lookup := h.DWSNativeConversationTitle
 	conversationID = strings.TrimSpace(conversationID)
@@ -78,7 +81,7 @@ func (h *Handler) nativeConversationTitle(ctx context.Context, id dwsclient.Iden
 	if title, ok := nativeConversationTitles.get(key, nativeClock()); ok {
 		return title
 	}
-	lookupCtx, cancel := context.WithTimeout(ctx, nativeTitleTimeout)
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nativeTitleTimeout)
 	defer cancel()
 	title, err := lookup(lookupCtx, id, conversationID)
 	if err != nil {
@@ -88,10 +91,6 @@ func (h *Handler) nativeConversationTitle(ctx context.Context, id dwsclient.Iden
 		return ""
 	}
 	title = clipRunes(strings.TrimSpace(title), 256)
-	ttl := nativeTitleTTL
-	if title == "" {
-		ttl = nativeTitleMissTTL
-	}
-	nativeConversationTitles.put(key, title, ttl, nativeClock())
+	nativeConversationTitles.put(key, title, nativeTitleTTL, nativeClock())
 	return title
 }

@@ -126,8 +126,8 @@ type Scope struct {
 	SceneID    string
 	SceneTitle string
 	// PersonKey is the trigger person's key (TriggerPersonKey): the sender's
-	// staffId, else their openDingTalkId; empty when the run merged messages
-	// from several senders or the sender is unknown.
+	// staffId, else "odt:" + their openDingTalkId; empty when the run merged
+	// messages from several senders or the sender is unknown.
 	PersonKey  string
 	PersonName string
 	// ConversationType is dispatch_event_data.conversation.type as written by
@@ -167,25 +167,38 @@ func ValidOpenConversationID(id string) bool {
 }
 
 // ValidStaffID accepts a personal scope key: a DingTalk staffId or, for a
-// sender a dispatch names only by openDingTalkId, that id
+// sender a dispatch names only by openDingTalkId, "odt:" + that id
 // (TriggerPersonKey).
 func ValidStaffID(id string) bool {
 	return validScopeKey(id)
 }
 
+// PersonKeyOpenDingTalkPrefix marks a personal scope key that is an
+// openDingTalkId, so it never equals a staffId.
+const PersonKeyOpenDingTalkPrefix = "odt:"
+
 // TriggerPersonKey is the personal scope key of a message sender: the
 // sender's staffId when the dispatch carries one (Router deliveries), else
-// the sender's openDingTalkId. A DWS native subscription event names its
-// sender only by openDingTalkId; that id is relative to the receiving
-// DingTalk account (another account sees another id for the same person)
-// and stays the same in that account's 1:1 chats and groups, so it keys the
-// person's capabilities with this agent. "" when neither is a valid key.
+// "odt:" + the sender's openDingTalkId. A DWS native subscription event
+// names its sender only by openDingTalkId; that id is relative to the
+// receiving DingTalk account (another account sees another id for the same
+// person) and stays the same in that account's 1:1 chats and groups, so it
+// keys the person's capabilities with this agent. A staffId that carries the
+// prefix is refused rather than confused with one. "" when neither is a
+// valid key.
 func TriggerPersonKey(staffID, openDingTalkID string) string {
-	if staffID = strings.TrimSpace(staffID); ValidStaffID(staffID) {
-		return staffID
+	if staffID = strings.TrimSpace(staffID); staffID != "" {
+		if ValidStaffID(staffID) && !strings.HasPrefix(staffID, PersonKeyOpenDingTalkPrefix) {
+			return staffID
+		}
+		return ""
 	}
-	if openDingTalkID = strings.TrimSpace(openDingTalkID); ValidStaffID(openDingTalkID) && !strings.EqualFold(openDingTalkID, "null") {
-		return openDingTalkID
+	openDingTalkID = strings.TrimSpace(openDingTalkID)
+	if openDingTalkID == "" || strings.EqualFold(openDingTalkID, "null") {
+		return ""
+	}
+	if key := PersonKeyOpenDingTalkPrefix + openDingTalkID; ValidStaffID(key) {
+		return key
 	}
 	return ""
 }
@@ -290,10 +303,11 @@ type taskContextEnvelope struct {
 //
 //   - SceneID is the dispatch's SceneRef (agent_scene.scene_id), a group or a
 //     1:1 chat; the caller checks it is the agent's scene in the task's org.
-//   - PersonKey is the sender's TriggerPersonKey (sender.staffId, else the
-//     sender's openDingTalkId), only when the run positively comes from that
-//     one person (see singleTriggerPerson), so one person's credentials never
-//     serve a merged run that contains someone else's message.
+//   - PersonKey is the sender's TriggerPersonKey (sender.staffId, else
+//     "odt:" + the sender's openDingTalkId), only when the run positively
+//     comes from that one person (singleTriggerPerson, singleTriggerOpenID),
+//     so one person's credentials never serve a merged run that contains
+//     someone else's message.
 //
 // Dispatched is set for every context with dispatch_event_data. A context
 // marked with ReplayedDispatchContextKey (a manual rerun) yields the zero
@@ -333,14 +347,15 @@ func ScopeFromTaskContext(raw []byte) Scope {
 
 	coalesced := len(envelope.FollowUpCommentIDs) > 1
 	if staffID := strings.TrimSpace(data.Sender.StaffID); staffID != "" {
-		if ValidStaffID(staffID) && singleTriggerPerson(staffID, data.Sender, data.Messages, coalesced) {
-			scope.PersonKey = staffID
+		if key := TriggerPersonKey(staffID, ""); key != "" && singleTriggerPerson(staffID, data.Sender, data.Messages, coalesced) {
+			scope.PersonKey = key
 			scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
 		}
-	} else if openID := senderOpenDingTalkID(data.Sender); openID != "" &&
-		TriggerPersonKey("", openID) == openID && singleTriggerOpenID(openID, data.Sender, data.Messages, coalesced) {
-		scope.PersonKey = openID
-		scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
+	} else if openID := senderOpenDingTalkID(data.Sender); openID != "" {
+		if key := TriggerPersonKey("", openID); key != "" && singleTriggerOpenID(openID, data.Sender, data.Messages, coalesced) {
+			scope.PersonKey = key
+			scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
+		}
 	}
 	return scope
 }
@@ -423,13 +438,13 @@ func singleTriggerPerson(staffID string, sender taskContextSender, messages []ta
 }
 
 // singleTriggerOpenID is singleTriggerPerson for a sender named only by
-// openDingTalkID (no staffId anywhere): no message may name another sender
-// or carry a staffId, and when the run merges several messages (or
-// coalesced follow-ups) every one must carry senderOpenDingTalkId ==
-// openDingTalkID.
+// openDingTalkID (no staffId anywhere). It is stricter: every message must
+// carry senderOpenDingTalkId == openDingTalkID, one alone included, and none
+// may carry a staffId or another uid. A work item cut from a merged window
+// keeps the window's data-level sender, so a message whose own sender is
+// unknown (a group event without an openDingTalkId) proves nothing.
 func singleTriggerOpenID(openDingTalkID string, sender taskContextSender, messages []taskContextMessage, coalesced bool) bool {
 	senderUID := strings.TrimSpace(sender.UID)
-	requireID := coalesced || len(messages) > 1
 	if coalesced && len(messages) == 0 {
 		return false
 	}
@@ -437,11 +452,7 @@ func singleTriggerOpenID(openDingTalkID string, sender taskContextSender, messag
 		if strings.TrimSpace(message.SenderStaffID) != "" {
 			return false
 		}
-		openID := strings.TrimSpace(message.SenderOpenDingTalkID)
-		switch {
-		case openID != "" && openID != openDingTalkID:
-			return false
-		case requireID && openID == "":
+		if strings.TrimSpace(message.SenderOpenDingTalkID) != openDingTalkID {
 			return false
 		}
 		if uid := strings.TrimSpace(message.SenderUID); uid != "" && senderUID != "" && uid != senderUID {
