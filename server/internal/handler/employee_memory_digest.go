@@ -133,7 +133,7 @@ func (m employeeDigestModel) Chat(ctx context.Context, params openai.ChatComplet
 		request := params
 		request.Model = ref.Model
 		request.ReasoningEffort = shared.ReasoningEffortNone
-		extra := map[string]any{"tool_choice": "required", "enable_thinking": false}
+		extra := map[string]any{"tool_choice": map[string]any{"type": "function", "function": map[string]any{"name": "propose_scene_digest"}}, "enable_thinking": false}
 		model := strings.ToLower(ref.Model)
 		if strings.Contains(model, "deepseek") && strings.Contains(model, "flash") {
 			request.ReasoningEffort = ""

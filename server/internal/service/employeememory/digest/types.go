@@ -63,13 +63,17 @@ const (
 	// MaintainEvery is the zero-model maintenance cadence per scene.
 	MaintainEvery = 10 * time.Minute
 	// MaxOpsPerCall bounds what one model call may propose.
-	MaxOpsPerCall = 8
+	MaxOpsPerCall   = 8
+	MaxSubjectRunes = 20
+	MaxQuoteRunes   = 300
+	// MaxCompletionTokens accommodates eight legitimate Chinese quotations.
+	MaxCompletionTokens = 8192
 	// MemoryMarker gates claims: every live replica must understand the
 	// flush tables, journal and scene-fact origin before any writer runs.
 	MemoryMarker = "[employee-memory:3]"
 	// PromptVersion participates in the page hash, so a prompt change never
 	// replays a journal recorded for another prompt.
-	PromptVersion = "employee-scene-digest-v1"
+	PromptVersion = "employee-scene-digest-v2"
 	// FlushActorPrefix identifies the writer's own outputs (retract-own-only).
 	FlushActorPrefix = "employee-flush:"
 )

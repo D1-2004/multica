@@ -248,7 +248,9 @@ func (w *Writer) generate(ctx context.Context, c claim, run *runRow, p *page, tr
 		base := pl.Proposed
 		if perr != nil {
 			reason := "invalid_arguments"
-			if errors.Is(perr, errNoToolCall) {
+			if errors.Is(perr, errOutputTruncated) {
+				reason = "output_truncated"
+			} else if errors.Is(perr, errNoToolCall) {
 				reason = "no_tool_call"
 			}
 			pl.Rejections = append(pl.Rejections, Rejection{Index: base, Reason: reason})
@@ -258,12 +260,7 @@ func (w *Writer) generate(ctx context.Context, c claim, run *runRow, p *page, tr
 		if ordinal+1 >= MaxCallsPerClaim || !pl.fixable() || msg == nil {
 			break
 		}
-		feedback := repairMessage(pl.Rejections)
-		if callID != "" {
-			messages = append(append(append([]openai.ChatCompletionMessageParamUnion{}, messages...), msg.ToParam()), openai.ToolMessage(feedback, callID))
-		} else {
-			messages = append(append(append([]openai.ChatCompletionMessageParamUnion{}, messages...), msg.ToParam()), openai.UserMessage("请调用 "+proposeTool+"。"+feedback))
-		}
+		messages = repairMessages(original, callID, pl)
 	}
 	if exhausted {
 		return w.finish(ctx, c, run, runResult{Outcome: OutcomeBudgetExhausted, Error: "daily budget"}, settle{Neutral: true, HoldSeconds: holdNextDay}, nil)
@@ -309,7 +306,7 @@ func (w *Writer) call(ctx context.Context, c claim, run *runRow, ordinal int, pa
 	}
 	generation := trace.StartObservation(langfuse.ObservationOptions{
 		Type: langfuse.TypeGeneration, Name: "employee_scene_digest.call", Input: params.Messages,
-		ModelParameters: map[string]any{"tools": []string{proposeTool}, "tool_choice": "required", "max_completion_tokens": 1024, "temperature": 0},
+		ModelParameters: map[string]any{"tools": []string{proposeTool}, "tool_choice": proposeTool, "strict": true, "max_completion_tokens": MaxCompletionTokens, "temperature": 0},
 		Metadata:        map[string]any{"ordinal": ordinal, "request_sha256": sha},
 	})
 	callCtx, cancel := context.WithTimeout(ctx, CallTimeout)
@@ -338,6 +335,7 @@ func (w *Writer) call(ctx context.Context, c claim, run *runRow, ordinal int, pa
 		end.Usage = &langfuse.Usage{Input: promptTokens, Output: completionTokens, Total: completion.Usage.TotalTokens}
 		if len(completion.Choices) > 0 {
 			end.Output = completion.Choices[0].Message
+			end.Metadata["finish_reason"] = completion.Choices[0].FinishReason
 		}
 	}
 	generation.End(end)
@@ -393,7 +391,7 @@ func (w *Writer) finish(ctx context.Context, c claim, run *runRow, r runResult, 
 		switch {
 		case accepted > 0:
 			r.Outcome, s.Progress = OutcomeCommitted, true
-		case pl.Proposed == 0 || policyOnly:
+		case len(pl.Rejections) == 0 || policyOnly:
 			r.Outcome, s.Progress = OutcomeNoChange, true
 		default:
 			r.Outcome = OutcomeRejected

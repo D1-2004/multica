@@ -442,7 +442,7 @@ DM 消息已经全部受理过，Host 发送也已有 `response_action`，所以
 
 - **输入：** 只读本地的 `employee_scene_message`，用 `(sent_at, provider_message_id)` 作游标。不通过 DWS 正向分页读取。
 - **触发：** 有新 human 行时标脏；去抖 60s，最长等待 10 分钟；用 `FOR UPDATE SKIP LOCKED` 认领，lease 3 分钟。
-- **模型调用：** 每次认领最多 2 次（1 次正常调用 + 最多 1 轮修复），使用 `tool_choice=required`。
+- **模型调用：** 每次认领最多 2 次（1 次正常调用 + 最多 1 轮修复），使用 strict native 单函数 `propose_scene_digest`（`tool_choice` 指定此函数）。每次最多 8 操作，主题 ≤20 字，引文 4–300 字，输出容量 8192 token；strict 不能替代 Host 来源校验。损坏/截断响应不回灌修复上下文、不得补 JSON 或截主题后接纳；全拒绝计无进展，合法空 ops 才算 no_change。真实失败与研究依据见 `19-digest-native-output-repair.md`。
 - **允许的操作：** `upsert{kind: fact|decision|open_item}`，以及 `retract`。`retract` 只能作用于 `origin=digest` 的条目。不生成人物档案类条目。
 - **确定性校验：**
   - 证据必须是本页里 `sender_class=human` 且未撤回的消息；

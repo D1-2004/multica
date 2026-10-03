@@ -25,7 +25,7 @@ var fixableReasons = map[string]bool{
 	"invalid_op": true, "invalid_kind": true, "invalid_subject": true, "unknown_evidence": true,
 	"duplicate_evidence": true, "quote_not_verbatim": true, "invalid_quote": true,
 	"subject_literal_not_in_evidence": true, "subject_not_grounded": true, "unknown_item": true,
-	"no_tool_call": true, "invalid_arguments": true,
+	"no_tool_call": true, "invalid_arguments": true, "output_truncated": true,
 }
 
 type plannedUpsert struct {
@@ -122,11 +122,8 @@ func instructionLike(s string) bool {
 	return false
 }
 
-// normalizeSpace collapses whitespace runs; quotes are compared on it.
-func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
-
 func validSubject(s string) bool {
-	if s == "" || utf8.RuneCountInString(s) > 40 || !utf8.ValidString(s) {
+	if s == "" || utf8.RuneCountInString(s) > MaxSubjectRunes || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
@@ -197,7 +194,7 @@ func validate(pl *plan, p *page, ops []proposal, facts FactStore, baseIndex int)
 			tag := strings.TrimSpace(op.Evidence)
 			kind := strings.TrimSpace(op.Kind)
 			subject := strings.TrimSpace(op.Subject)
-			quote := strings.TrimSpace(op.Quote)
+			quote := op.Quote
 			if kind != KindFact && kind != KindDecision && kind != KindOpenItem {
 				reject(tag, "invalid_kind")
 				continue
@@ -215,12 +212,12 @@ func validate(pl *plan, p *page, ops []proposal, facts FactStore, baseIndex int)
 				reject(tag, "duplicate_evidence")
 				continue
 			}
-			if n := utf8.RuneCountInString(quote); n < 4 || n > 300 || !utf8.ValidString(quote) {
+			if n := utf8.RuneCountInString(quote); n < 4 || n > MaxQuoteRunes || !utf8.ValidString(quote) {
 				reject(tag, "invalid_quote")
 				continue
 			}
-			body := normalizeSpace(line.Body)
-			if !strings.Contains(body, normalizeSpace(quote)) {
+			body := line.Body
+			if !strings.Contains(body, quote) {
 				reject(tag, "quote_not_verbatim")
 				continue
 			}
@@ -254,7 +251,7 @@ func validate(pl *plan, p *page, ops []proposal, facts FactStore, baseIndex int)
 				continue
 			}
 			pl.used[tag] = true
-			pl.Upserts = append(pl.Upserts, plannedUpsert{Index: index, Tag: tag, Key: key, Op: FactUpsert{Kind: kind, Subject: subject, Quote: normalizeSpace(quote), Evidence: line}})
+			pl.Upserts = append(pl.Upserts, plannedUpsert{Index: index, Tag: tag, Key: key, Op: FactUpsert{Kind: kind, Subject: subject, Quote: quote, Evidence: line}})
 		default:
 			reject("", "invalid_op")
 		}

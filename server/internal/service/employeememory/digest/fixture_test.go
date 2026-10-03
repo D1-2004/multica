@@ -246,13 +246,14 @@ func seedMemberFact(t *testing.T, pool *pgxpool.Pool, key SceneKey, kind, subjec
 // fakeModel is an OpenAI-compatible httptest server; each request pops the
 // next scripted tool-call arguments (the last one repeats).
 type fakeModel struct {
-	srv      *httptest.Server
-	requests atomic.Int32
-	mu       sync.Mutex
-	script   []string
-	bodies   []string
-	delay    time.Duration
-	status   int
+	srv          *httptest.Server
+	requests     atomic.Int32
+	mu           sync.Mutex
+	script       []string
+	bodies       []string
+	delay        time.Duration
+	status       int
+	finishReason string
 }
 
 func newFakeModel(t *testing.T, script ...string) *fakeModel {
@@ -266,7 +267,10 @@ func newFakeModel(t *testing.T, script ...string) *fakeModel {
 		if len(m.script) > 0 {
 			args = m.script[min(n, len(m.script)-1)]
 		}
-		delay, status := m.delay, m.status
+		delay, status, finish := m.delay, m.status, m.finishReason
+		if finish == "" {
+			finish = "tool_calls"
+		}
 		m.mu.Unlock()
 		if delay > 0 {
 			time.Sleep(delay)
@@ -278,7 +282,7 @@ func newFakeModel(t *testing.T, script ...string) *fakeModel {
 		}
 		quoted, _ := json.Marshal(args)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"id":"c%d","object":"chat.completion","created":1,"model":"fake-digest","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_%d","type":"function","function":{"name":"propose_scene_digest","arguments":%s}}]}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}`, n, n, quoted)
+		fmt.Fprintf(w, `{"id":"c%d","object":"chat.completion","created":1,"model":"fake-digest","choices":[{"index":0,"finish_reason":%q,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_%d","type":"function","function":{"name":"propose_scene_digest","arguments":%s}}]}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}`, n, finish, n, quoted)
 	}))
 	t.Cleanup(m.srv.Close)
 	return m
@@ -421,6 +425,9 @@ func (e *testEnv) activeFacts(t *testing.T, key SceneKey) []Fact {
 }
 
 func ops(list ...map[string]string) string {
+	if list == nil {
+		list = []map[string]string{}
+	}
 	raw, _ := json.Marshal(map[string]any{"ops": list})
 	return string(raw)
 }

@@ -3,6 +3,8 @@ package digest
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -285,7 +287,7 @@ func TestDigestNoProgressBlocks(t *testing.T) {
 }
 
 func TestDigestReplayZeroGeneration(t *testing.T) {
-	env := newEnv(t, ops(map[string]string{"op": "upsert", "kind": "decision", "subject": "周四发版", "quote": "定了：周四发版", "evidence": "g3"}))
+	env := newEnv(t, `{"ops":[{"op":"upsert","subject":"错误草稿`, ops(map[string]string{"op": "upsert", "kind": "decision", "subject": "周四发版", "quote": "定了：周四发版", "evidence": "g3"}))
 	key := newKey()
 	env.observe(t, key, chatLines(time.Now().Add(-2*time.Hour))...)
 	env.makeDue(t, key)
@@ -297,25 +299,25 @@ func TestDigestReplayZeroGeneration(t *testing.T) {
 		t.Fatalf("the failed commit rolled back: %+v", facts)
 	}
 	first := env.runs(t, key)
-	if len(first) != 1 || first[0].Outcome != "" || first[0].Calls != 1 {
+	if len(first) != 1 || first[0].Outcome != "" || first[0].Calls != 2 {
 		t.Fatalf("unfinished run with its journaled response: %+v", first)
 	}
 	if _, err := env.pool.Exec(context.Background(), `UPDATE employee_scene_digest_state SET lease_until=now()-interval '1 second' WHERE scene_id=$1::uuid`, key.SceneID); err != nil {
 		t.Fatal(err)
 	}
 	mustProcess(t, env.writer)
-	if got := env.model.requests.Load(); got != 1 {
+	if got := env.model.requests.Load(); got != 2 {
 		t.Fatalf("replay must generate nothing; requests = %d", got)
 	}
 	runs := env.runs(t, key)
-	if len(runs) != 1 || runs[0].ID != first[0].ID || runs[0].Outcome != OutcomeCommitted || runs[0].Calls != 1 {
+	if len(runs) != 1 || runs[0].ID != first[0].ID || runs[0].Outcome != OutcomeCommitted || runs[0].Calls != 2 {
 		t.Fatalf("the same run commits from its journal: %+v", runs)
 	}
 	if facts := env.activeFacts(t, key); len(facts) != 1 || facts[0].Insight != "定了：周四发版" {
 		t.Fatalf("facts = %+v", facts)
 	}
-	if st := env.state(t, key); st.BudgetCalls != 1 {
-		t.Fatalf("budget charged once: %+v", st)
+	if st := env.state(t, key); st.BudgetCalls != 2 {
+		t.Fatalf("each original call charged once: %+v", st)
 	}
 }
 
@@ -641,5 +643,103 @@ func TestDigestMigrationsConcurrentSingleStatement(t *testing.T) {
 		if strings.Contains(upper, "REFERENCES") || strings.Contains(upper, "CREATE INDEX") || !strings.Contains(upper, "CREATE TABLE IF NOT EXISTS") {
 			t.Fatalf("%s: tables carry no FK and no inline index", name)
 		}
+	}
+}
+
+// These contrast cases cover the real MF failure, not model quality.
+func TestDigestMalformedNativeRepair(t *testing.T) {
+	draft := `{"ops":[{"op":"upsert","subject":"错误草稿思考，不可回灌`
+	quote := "定了：周四  下午三点发版\n在会议室集合。"
+	good := ops(map[string]string{"op": "upsert", "kind": "decision", "subject": "发版时间", "quote": quote, "evidence": "g1", "item": ""})
+	for _, tc := range []struct {
+		name, first, second, outcome string
+		accepted                     int
+		reason                       string
+	}{
+		{"repair", draft, good, OutcomeCommitted, 1, "invalid_arguments"},
+		{"both malformed", draft, draft, OutcomeRejected, 0, "invalid_arguments"},
+		{"missing array", `{}`, `{}`, OutcomeRejected, 0, "invalid_arguments"},
+		{"null array", `{"ops":null}`, `{"ops":null}`, OutcomeRejected, 0, "invalid_arguments"},
+		{"unknown field", `{"ops":[],"thought":"草稿"}`, `{"ops":[],"thought":"草稿"}`, OutcomeRejected, 0, "invalid_arguments"},
+		{"long subject", ops(map[string]string{"op": "upsert", "kind": "decision", "subject": strings.Repeat("发版", 11), "quote": quote, "evidence": "g1"}), good, OutcomeCommitted, 1, "invalid_subject"},
+		{"altered whitespace", ops(map[string]string{"op": "upsert", "kind": "decision", "subject": "发版时间", "quote": strings.ReplaceAll(quote, "  ", " "), "evidence": "g1"}), good, OutcomeCommitted, 1, "quote_not_verbatim"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, tc.first, tc.second)
+			key := newKey()
+			e.observe(t, key, human("m1", time.Now().Add(-time.Hour), "Director", quote))
+			e.makeDue(t, key)
+			mustProcess(t, e.writer)
+			r := e.runs(t, key)[0]
+			st := e.state(t, key)
+			if r.Outcome != tc.outcome || r.Accepted != tc.accepted || r.Calls != 2 || !strings.Contains(r.Rejected, tc.reason) {
+				t.Fatalf("run=%+v", r)
+			}
+			if st.BudgetCalls != 2 || (tc.accepted == 0 && st.NoProgress != 1) {
+				t.Fatalf("state=%+v", st)
+			}
+			if tc.accepted == 1 && e.activeFacts(t, key)[0].Insight != quote {
+				t.Fatal("quote changed")
+			}
+			var request map[string]any
+			if err := json.Unmarshal([]byte(e.model.lastBody()), &request); err != nil {
+				t.Fatal(err)
+			}
+			if request["max_completion_tokens"] != float64(MaxCompletionTokens) || request["parallel_tool_calls"] != false {
+				t.Fatalf("request params=%+v", request)
+			}
+			messages := request["messages"].([]any)
+			if len(messages) != 4 {
+				t.Fatalf("repair messages=%+v", messages)
+			}
+			assistant := messages[2].(map[string]any)
+			call := assistant["tool_calls"].([]any)[0].(map[string]any)
+			if call["function"].(map[string]any)["arguments"] != `{"ops":[]}` || call["id"] != "call_0" {
+				t.Fatalf("unsafe repair native call=%+v", call)
+			}
+			tool := messages[3].(map[string]any)
+			if tool["tool_call_id"] != "call_0" || !strings.Contains(tool["content"].(string), tc.reason) {
+				t.Fatalf("repair feedback=%+v", tool)
+			}
+			schema := request["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
+			if schema["strict"] != true {
+				t.Fatal("native schema is not strict")
+			}
+		})
+	}
+}
+
+func TestDigestNativeBoundaryRejectsTruncation(t *testing.T) {
+	raw := func(args, finish string, calls int) json.RawMessage {
+		list := make([]any, 0, calls)
+		for i := 0; i < calls; i++ {
+			list = append(list, map[string]any{"id": fmt.Sprintf("call_%d", i), "type": "function", "function": map[string]any{"name": proposeTool, "arguments": args}})
+		}
+		b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"finish_reason": finish, "message": map[string]any{"role": "assistant", "tool_calls": list}}}})
+		return b
+	}
+	if _, _, _, err := parseCompletion(raw(`{"ops":[]}`, "length", 1)); !errors.Is(err, errOutputTruncated) {
+		t.Fatalf("truncated complete JSON accepted: %v", err)
+	}
+	for _, args := range []string{`{"ops":[]} {}`, `{"ops":[{"op":"retract","item":"d1","thought":"secret"}]}`} {
+		if _, _, _, err := parseCompletion(raw(args, "tool_calls", 1)); err == nil {
+			t.Fatalf("invalid arguments accepted: %s", args)
+		}
+	}
+	if _, _, _, err := parseCompletion(raw(`{"ops":[]}`, "tool_calls", 2)); err == nil {
+		t.Fatal("multiple native calls accepted")
+	}
+	if ops, _, _, err := parseCompletion(raw(`{"ops":[]}`, "tool_calls", 1)); err != nil || len(ops) != 0 {
+		t.Fatalf("legitimate empty proposal refused: %v", err)
+	}
+	e := newEnv(t, `{"ops":[]}`)
+	key := newKey()
+	e.model.finishReason = "length"
+	e.observe(t, key, chatLines(time.Now().Add(-2*time.Hour))...)
+	e.makeDue(t, key)
+	mustProcess(t, e.writer)
+	r := e.runs(t, key)[0]
+	if r.Outcome != OutcomeRejected || r.Calls != 2 || r.Accepted != 0 || !strings.Contains(r.Rejected, "output_truncated") || e.state(t, key).NoProgress != 1 {
+		t.Fatalf("truncation masked as no_change: %+v", r)
 	}
 }

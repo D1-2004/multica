@@ -107,7 +107,9 @@ func TestEmployeeDigestModelUsesSharedCoordinatorChain(t *testing.T) {
 		t.Fatalf("prepared=%v model=%s", routes.prepared, routes.attempt.request.Model)
 	}
 	extra := routes.attempt.request.ExtraFields()
-	if extra["tool_choice"] != "required" || extra["enable_thinking"] != false {
+	choice, ok := extra["tool_choice"].(map[string]any)
+	function, functionOK := choice["function"].(map[string]any)
+	if !ok || !functionOK || choice["type"] != "function" || function["name"] != "propose_scene_digest" || extra["enable_thinking"] != false {
 		t.Fatalf("request profile: %v", extra)
 	}
 	routes.plan.Candidates = routes.plan.Candidates[:1]
