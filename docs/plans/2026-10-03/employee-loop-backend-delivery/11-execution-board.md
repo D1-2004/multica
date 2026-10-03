@@ -13,8 +13,8 @@
 - 原计划三笔“遗漏补丁”已有等价实现，不再拣；旧审查四项已修，H2 混版来源冻结与历史迁移风险单列。
 - Q harness 五笔提交及六个脏文件仍待收口。已交付默认 dry-run 为 30 runnable/15 partial/28 blocked_harness/15 waiting_ops；51 ready 是静态标签。
 - 历史 rel-b4 的 13 NEW 重算为 7 个未解释失败；int-b5 定向 256 pass 不覆盖其中四条 service，待定向归因。
-- 后续按 [Employee 交付工作流](../../../employee-delivery-workflow.md) 推进。四条 service 在独立本地库实跑均 FAIL，三项 fixture/合同期待过时、一项真实 retry/reconciler 并发缺陷，已进入 [16 修复切片](16-service-retry-repair.md)。
-- M8 的 group_all probe allowed；实际未 @ 摄入还未验证。group_p_hx 服务端无 scene，先按真实 @ 入站建立夹具再开业务验证；临时账号与场域事实逐波读回。
+- 后续按 [Employee 交付工作流](../../../employee-delivery-workflow.md) 推进。四条 service 实跑归因为三项 fixture/合同期待过时、一项 retry/reconciler 生产并发缺陷；修复集成 `e45a96403a`，11 定向 PASS/0 FAIL/0 SKIP、3 race PASS、build/vet 通过，见 [16 修复切片](16-service-retry-repair.md)。尚未部署这笔修复，首次建库 9821/9930 顺序缺陷独立遗留。
+- M8 已通过真实 @ 建立 scene，并证明三条未 @ 摄入、一次主动唤醒、冻结原话和真实投递；严格 DS-09 因多补解释而 fail，见 [17 首轮证据](17-m8-first-canary.md)。MEMX-L1 和其他记忆包未验证。
 
 ## 1. 协作方式
 

@@ -25,4 +25,8 @@
 
 ## 状态
 
-合同已写；实现与复验进行中。完成后回填代码 SHA、实际测试结论、集成/部署状态和仍未处理项。
+合同先写后实现。开发提交 `afc0cbeee6` 已完成，主代理集成后记录在执行板：三个入口统一父行锁/child 查账，修正两条 ASB fixture 与 FC relay 期待。原四条及受影响共 11 PASS/0 FAIL/0 SKIP，3 条 race 通过，service build/vet/gofmt/diff 检查通过；独立只读审查无阻断。
+
+新库 migrate-up 暴露既存依赖顺序：9821 引用尚未由 9930 创建的 employee_routine_occurrence。未改迁移，本轮在独立空 schema 副本验证；不声明首次迁移成功。证据：`~/d1/employee-e2e-evidence/CODEX-RESUME-20261004-SERVICE/repair-assessment.md`。
+
+状态：locally_verified / 集成切片；未推送、未部署、未完成该修复的预发验收。下一批按工作流集中发布，首次迁移缺陷独立登记。已有第五批测试证据不被本地新提交覆盖。
