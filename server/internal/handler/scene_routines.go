@@ -392,7 +392,8 @@ const employeeDMSenderWindow = 20
 
 // employeeDMSenders returns the distinct senders among the newest user
 // messages the EmployeeLoop admitted in the scene: unheld consumptions whose
-// ready receipt and envelope name this scene. A message's own
+// receipt (unified/ready, or legacy/legacy while the event scene router is
+// off, as the recent-history reader accepts) and envelope name this scene. A message's own
 // senderOpenDingTalkId wins; a single-message window falls back to its
 // envelope sender (a DWS native message keeps the address-book staffId on the
 // message and the openDingTalkId on the envelope). In a multi-message window
@@ -410,7 +411,8 @@ func (h *Handler) employeeDMSenders(ctx context.Context, a contextCapAgent, scen
 			THEN c.payload #> '{command,event,data,messages}' ELSE '[]'::jsonb END) WITH ORDINALITY m(value, ordinal)
 		WHERE c.workspace_id = $1::uuid AND c.agent_id = $2::uuid AND c.scene_id = $3::uuid AND c.owner_loop = 'employee'
 			AND c.state IN ('queued', 'completed', 'delegated') AND c.reason = '' AND r.reason = ''
-			AND r.route = 'unified' AND r.state = 'ready' AND r.envelope ->> 'category' = 'user_message'
+			AND ((r.route = 'unified' AND r.state = 'ready') OR (r.route = 'legacy' AND r.state = 'legacy'))
+			AND r.envelope ->> 'category' = 'user_message'
 			AND c.payload #>> '{command,agent_scene,scene_id}' = c.scene_id::text
 		ORDER BY c.created_at DESC, m.ordinal DESC
 		LIMIT $4) recent

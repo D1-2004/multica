@@ -26,6 +26,15 @@ func insertEmployeeDMMessage(t *testing.T, f *ctxcapFixture, sceneID, sender, re
 // openDingTalkId.
 func insertEmployeeDMWindow(t *testing.T, f *ctxcapFixture, sceneID string, envelopeSender map[string]any, messages []map[string]any, reason string, age time.Duration) {
 	t.Helper()
+	insertEmployeeDMWindowRoute(t, f, sceneID, envelopeSender, messages, reason, "unified", age)
+}
+
+// insertEmployeeDMWindowRoute stores the window under an event route: unified
+// receipts are ready, legacy receipts (event_scene_router off, as on 预发 for
+// Qwen-Real) are legacy and still carry the scene.
+func insertEmployeeDMWindowRoute(t *testing.T, f *ctxcapFixture, sceneID string, envelopeSender map[string]any, messages []map[string]any, reason, route string, age time.Duration) {
+	t.Helper()
+	state := map[string]string{"unified": "ready", "legacy": "legacy"}[route]
 	ctx := context.Background()
 	agentID := uuidToString(f.agent)
 	t.Cleanup(func() {
@@ -37,8 +46,8 @@ func insertEmployeeDMWindow(t *testing.T, f *ctxcapFixture, sceneID string, enve
 	var receiptID string
 	if err := testPool.QueryRow(ctx, `INSERT INTO scene_event_receipt
 		(workspace_id, agent_id, principal_id, tenant_org_id, source, source_event_id, fingerprint, envelope, scene_id, route, state, config_version, created_at)
-		VALUES ($1, $2, $3, $4, 'messagerouter/test', $5, 'fp', '{"category":"user_message"}'::jsonb, $6, 'unified', 'ready', 'test', $7)
-		RETURNING id::text`, testWorkspaceID, agentID, testUserID, ctxcapOrg, uuid.NewString(), sceneID, at).Scan(&receiptID); err != nil {
+		VALUES ($1, $2, $3, $4, 'messagerouter/test', $5, 'fp', '{"category":"user_message"}'::jsonb, $6, $8, $9, 'test', $7)
+		RETURNING id::text`, testWorkspaceID, agentID, testUserID, ctxcapOrg, uuid.NewString(), sceneID, at, route, state).Scan(&receiptID); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]any{
@@ -190,5 +199,20 @@ func TestSceneRoutineDMCounterpartFromNativeEmployeeMessages(t *testing.T) {
 		[]map[string]any{{"senderStaffId": "staff-alice"}, {"senderStaffId": "staff-alice"}}, "", 10*time.Second)
 	if cp, err := f.h.sceneRoutineDMCounterpart(ctx, a, ctxcapDirectScene); err != nil || cp.OpenDingTalkID != "$:LWCP_v1:$native-alice" {
 		t.Fatalf("multi-message envelope leaked into the counterpart: %+v %v", cp, err)
+	}
+}
+
+// With the event scene router off (预发 Qwen-Real: route=legacy
+// state=legacy), the EmployeeLoop still admits the 1:1 chat's messages under
+// legacy receipts that carry the scene; they name the counterpart exactly as
+// unified ones do, like the recent-history reader.
+func TestSceneRoutineDMCounterpartFromLegacyRouteReceipts(t *testing.T) {
+	f, a := routineFixture(t)
+	f.registerDirectScene(t)
+	insertEmployeeDMWindowRoute(t, f, ctxcapDirectScene, map[string]any{"openDingTalkId": "$:LWCP_v1:$legacy-alice", "staffId": "staff-alice"},
+		[]map[string]any{{"senderOpenDingTalkId": "$:LWCP_v1:$legacy-alice", "senderStaffId": "staff-alice"}}, "", "legacy", 10*time.Second)
+	cp, err := f.h.sceneRoutineDMCounterpart(context.Background(), a, ctxcapDirectScene)
+	if err != nil || cp.OpenDingTalkID != "$:LWCP_v1:$legacy-alice" {
+		t.Fatalf("legacy-route counterpart = %+v %v", cp, err)
 	}
 }
