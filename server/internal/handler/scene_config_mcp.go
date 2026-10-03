@@ -348,7 +348,7 @@ func sceneConfigToolDefinitions(kind string) []any {
 		"required": []string{"kind"},
 	}
 	execution := map[string]any{"type": "string", "enum": []string{contextcap.RoutineRunOnly, contextcap.RoutineEmployeeDecide},
-		"description": "run_only (default) runs the instructions on every occurrence. employee_decide first lets you look at this scene and the last results and decide per occurrence: run the instructions, reply once here, wait for the next occurrence, or stay quiet. Use employee_decide only when the requester asked for a conditional routine (for example only remind when something is missing)."}
+		"description": "run_only (default) runs the instructions on every occurrence. employee_decide first lets you look at this scene and the last results and decide per occurrence: run the instructions, reply once here, wait for the next occurrence, or stay quiet. Use employee_decide only when the requester asked for a conditional routine (for example only remind when something is missing). Scheduled routines only; a webhook routine always runs."}
 	where, linkLabel := "this group chat", "配置本群能力"
 	if kind == scene.KindDM {
 		where, linkLabel = "this 1:1 chat", "配置本单聊能力"

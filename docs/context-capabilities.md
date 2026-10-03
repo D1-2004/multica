@@ -1376,8 +1376,12 @@ arrives. There are no org-level or person-level routines.
   AutopilotRun with `result.employee_decision` and closes its Task without a
   Run. Choosing `employee_decide` is refused with
   `routine_decision_unavailable` until every live replica runs the decision
-  reader. While the previous occurrence is undecided or its Run is still
-  active, the next one is recorded as `skipped_overlap`.
+  reader, and with `invalid_routine` on a webhook routine (a delivery
+  always runs its instructions). While the previous occurrence is undecided
+  or its Run is still active, the next one is recorded as `skipped_overlap`.
+  A schedule slot whose planned time fell while the routine was paused is
+  recorded as skipped even when the routine is resumed before the
+  dispatcher's five-minute lateness window closes.
 - **Who may change them.** `rights.edit_routines` follows the scene rights:
   agent managers (configure page and admin Context Builder). From a
   conversation, the config-qwen-tag-scene tools (§10) act for the scene

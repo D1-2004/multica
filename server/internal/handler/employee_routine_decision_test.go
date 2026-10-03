@@ -236,6 +236,15 @@ func TestEmployeeRoutineDecisionModeSwitchIsGated(t *testing.T) {
 	if routine := mustRoutine(t, f, x.a, x.routine.ID); routine.EmployeeExecution != decide {
 		t.Fatal("choice not stored", routine.EmployeeExecution)
 	}
+	// A webhook delivery always runs: employee_decide needs a schedule.
+	if _, err := normalizeRoutineInput(sceneRoutineInput{Title: "Hook", Instructions: "Summarize the delivery.", EmployeeExecution: decide,
+		Trigger: sceneRoutineTrigger{Kind: sceneRoutineTriggerHook}}); routineCode(err) != "invalid_routine" {
+		t.Fatal("webhook routine accepted employee_decide", err)
+	}
+	if _, err := normalizeRoutineInput(sceneRoutineInput{Title: "Hook", Instructions: "Summarize the delivery.", EmployeeExecution: contextcap.RoutineRunOnly,
+		Trigger: sceneRoutineTrigger{Kind: sceneRoutineTriggerHook}}); err != nil {
+		t.Fatal("webhook routine refused run_only", err)
+	}
 	for _, def := range sceneConfigToolDefinitions("group") {
 		tool := def.(map[string]any)
 		name := tool["name"].(string)

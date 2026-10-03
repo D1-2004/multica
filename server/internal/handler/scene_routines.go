@@ -267,8 +267,15 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 	default:
 		return in, routineInvalid("trigger.kind must be schedule or webhook")
 	}
+	if in.EmployeeExecution == contextcap.RoutineEmployeeDecide && in.Trigger.Kind != sceneRoutineTriggerCron {
+		return in, errRoutineDecideNeedsSchedule
+	}
 	return in, nil
 }
+
+// errRoutineDecideNeedsSchedule: a webhook delivery is its own event and
+// always runs its instructions, so only a schedule may let the employee decide.
+var errRoutineDecideNeedsSchedule = routineInvalid("employee_decide applies to scheduled routines; a webhook delivery always runs its instructions")
 
 // normalizeRoutineEmployeeExecution defaults an empty choice to run_only.
 func normalizeRoutineEmployeeExecution(choice string) (string, error) {
@@ -627,6 +634,9 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 	if patch.EmployeeExecution != nil {
 		if execution, err = normalizeRoutineEmployeeExecution(*patch.EmployeeExecution); err != nil {
 			return sceneRoutineResult{}, err
+		}
+		if execution == contextcap.RoutineEmployeeDecide && trigger.Kind != sceneRoutineTriggerCron {
+			return sceneRoutineResult{}, errRoutineDecideNeedsSchedule
 		}
 		if execution != routine.EmployeeExecution {
 			if err := h.routineDecisionAvailable(ctx, execution); err != nil {

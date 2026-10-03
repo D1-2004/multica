@@ -93,6 +93,8 @@ this run has no scene to configure; say so instead of improvising.
   occurrence, or stay quiet. Use `employee_decide` only when the requester
   asked for something conditional ("only remind when the report is
   missing"), and write the condition and what to do into the instructions.
+  Only a scheduled routine can use `employee_decide`; a webhook routine
+  always runs its instructions.
   It may be refused with `routine_decision_unavailable` while the platform is
   updating; keep `run_only` then. A change applies to later occurrences, not
   to one already started.
