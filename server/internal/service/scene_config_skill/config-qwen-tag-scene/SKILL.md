@@ -35,8 +35,6 @@ this run has no scene to configure; say so instead of improvising.
   in a group or `[配置本单聊能力](dingtalk_url)` in a 1:1 chat; never paste
   the bare URL. The same tool answers a request for the configuration link
   (场域配置链接) in a group and in a 1:1 chat alike: it is this scene's link.
-  In a 1:1 chat the link also opens the person's own level (个人能力) for
-  them; it is meant for that person only.
   Keep the returned URL unchanged: the host selects its environment and may
   keep the production origin while forwarding to the scene's home
   deployment.

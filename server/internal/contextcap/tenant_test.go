@@ -181,11 +181,20 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn", "staff-ann"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn"); err != nil || got != "staff-ann" {
-		t.Fatalf("kept staff id = %q %v", got, err)
+	if got, at, err := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn"); err != nil || got != "staff-ann" || at.IsZero() {
+		t.Fatalf("kept staff id = %q at %v %v", got, at, err)
 	}
-	if got, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-2", "DopenAnn"); got != "" {
+	if got, _, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-2", "DopenAnn"); got != "" {
 		t.Fatalf("another viewer's openDingTalkId resolved to %q", got)
+	}
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone", "staff-gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ForgetOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenGone"); got != "" {
+		t.Fatalf("a forgotten staff id is still kept: %q", got)
 	}
 	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenX", "odt:DopenX"); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("a prefixed staff id was kept: %v", err)

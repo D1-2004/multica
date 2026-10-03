@@ -32,8 +32,9 @@ agent + tenant org + scene kind + stable scene instance → one scene_id
   of a sender a DWS native subscription names only so, context capabilities
   §2) still exists for personal capabilities (context capabilities §1.1) and
   is a separate thing;
-  a 1:1 chat's configuration link is its scene link and also carries the
-  chat's person (2026-10-03, context capabilities §5).
+  a 1:1 chat's configuration link is its scene link; the one the Host
+  appends itself also carries the chat's person (2026-10-03, context
+  capabilities §5).
 - Renames, membership changes, credential rotation and model/session restarts
   do not change a scene_id. Holding a scene_id grants nothing by itself; every
   read and write still checks workspace, agent, tenant org and the caller's

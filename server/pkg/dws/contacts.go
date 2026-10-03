@@ -104,8 +104,9 @@ func (s *ContactService) StaffIDOf(ctx context.Context, openDingTalkID string, n
 			return "", err
 		}
 		for _, p := range people {
-			if p.OpenDingTalkID == openDingTalkID && strings.TrimSpace(p.UserID) != "" {
-				return strings.TrimSpace(p.UserID), nil
+			userID := strings.TrimSpace(p.UserID)
+			if p.OpenDingTalkID == openDingTalkID && userID != "" && !strings.EqualFold(userID, "null") {
+				return userID, nil
 			}
 		}
 		return "", nil
@@ -119,6 +120,12 @@ func (s *ContactService) StaffIDOf(ctx context.Context, openDingTalkID string, n
 		return "", nil
 	}
 	members, err := s.c.Groups.MembersByIDs(ctx, conversationID, []string{openDingTalkID})
+	var denied *Error
+	if errors.As(err, &denied) && denied.Code == "FORBIDDEN" {
+		// A group that refuses its member list (an internal group of
+		// another org) names nobody further: a miss, not a failure.
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}

@@ -631,17 +631,16 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 			"messages":     []map[string]any{{"openMsgId": "ma", "senderStaffId": ctxcapStaff}},
 		},
 	})
-	// The DM's link is its scene link and also carries the DM's person
-	// (2026-10-03): stored as a person link keyed by the sender's staffId
-	// with the DM scene as its extra scene.
+	// The DM's link is its scene link, minted like a group's: keyed by the
+	// DM scene (its conversation), not by the person.
 	dmTask := f.task(t, dmContext)
 	dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, nil))
-	if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM || !dmLink.IncludesPerson {
-		t.Fatalf("dm mint isError=%v link=%+v text=%q", isError, dmLink, text)
+	if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM {
+		t.Fatalf("dm mint isError=%v text=%q", isError, text)
 	}
 	token := ctxcapLinkToken(t, dmLink)
 	var scopeKey, extra string
-	if err := testPool.QueryRow(ctx, `SELECT scope_key, extra_scene_key FROM context_config_link WHERE token_hash = $1`, contextcap.HashLinkToken(token)).Scan(&scopeKey, &extra); err != nil || scopeKey != ctxcapStaff || extra != dmScene {
+	if err := testPool.QueryRow(ctx, `SELECT scope_key, extra_scene_key FROM context_config_link WHERE token_hash = $1`, contextcap.HashLinkToken(token)).Scan(&scopeKey, &extra); err != nil || scopeKey != dmScene || extra != "" {
 		t.Fatalf("dm link scope_key=%q extra_scene_key=%q err=%v", scopeKey, extra, err)
 	}
 
@@ -650,22 +649,21 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusOK, "dm redeem")
 	var redeemed map[string]string
 	ctxcapDecode(t, w, &redeemed)
-	if redeemed["scope_type"] != contextcap.ScopePerson || redeemed["scope_key"] != ctxcapStaff || redeemed["scope_title"] != "Alice" ||
-		redeemed["extra_scene_id"] != dmScene {
+	if redeemed["scope_type"] != contextcap.ScopeScene || redeemed["scope_key"] != dmScene || redeemed["scope_title"] != "Alice" {
 		t.Fatalf("redeem=%v", redeemed)
 	}
 	sceneGrant, err := contextcap.GetLiveGrant(ctx, testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, dmScene)
 	if err != nil || sceneGrant.ScopeTitle != "Alice" {
 		t.Fatalf("dm scene grant=%+v err=%v", sceneGrant, err)
 	}
-	// The DM scene is granted as long as its person.
-	ctxcapExpiresWithin(t, sceneGrant.ExpiresAt.UTC().Format(time.RFC3339), contextcap.GrantTTLPerson)
+	ctxcapExpiresWithin(t, sceneGrant.ExpiresAt.UTC().Format(time.RFC3339), contextcap.GrantTTLScene)
 
-	// The configure page lists the DM as a dm scene, next to the person.
+	// The configure page lists the DM as a dm scene; the link grants no
+	// personal scope.
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, alice, nil)
 	var detail ctxcapAgentDetail
 	ctxcapDecode(t, w, &detail)
-	if detail.Person == nil || detail.Person.ScopeKey != ctxcapStaff || len(detail.Scenes) != 1 || detail.Scenes[0].ScopeKey != dmScene || detail.Scenes[0].Kind != "dm" {
+	if detail.Person != nil || len(detail.Scenes) != 1 || detail.Scenes[0].ScopeKey != dmScene || detail.Scenes[0].Kind != "dm" {
 		t.Fatalf("agent detail person=%+v scenes=%+v", detail.Person, detail.Scenes)
 	}
 	// The DM scene is its own scope: the link holder reads and changes it

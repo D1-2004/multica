@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
@@ -207,7 +209,7 @@ func (h *employeeSceneHost) capabilityReply(ctx context.Context, tx pgx.Tx, repl
 	if err != nil {
 		return reply
 	}
-	result, err := view.mintContextConfigLink(ctx, contextConfigLinkMint{WorkspaceID: h.job.Scope.WorkspaceID, AgentID: h.job.Scope.AgentID, Scope: target.scope, Origin: origin, Issuer: contextConfigLinkIssuerEmployee, EmployeeJobID: h.job.ID})
+	result, err := view.mintContextConfigLink(ctx, contextConfigLinkMint{WorkspaceID: h.job.Scope.WorkspaceID, AgentID: h.job.Scope.AgentID, Scope: target.scope, Origin: origin, Issuer: contextConfigLinkIssuerEmployee, EmployeeJobID: h.job.ID, HostAppended: true})
 	if err != nil {
 		return reply
 	}
@@ -223,7 +225,7 @@ func (h *employeeSceneHost) capabilityReply(ctx context.Context, tx pgx.Tx, repl
 	if target.scene.Kind == scene.KindDM {
 		label = "本单聊能力配置"
 	}
-	return strings.TrimSpace(reply) + "\n\n[" + label + "](" + result.DingTalkURL + ")（30 分钟内有效）"
+	return strings.TrimSpace(reply) + "\n\n[" + label + "](" + result.DingTalkURL + ")（" + strconv.Itoa(int(configLinkValidFor(result)/time.Minute)) + " 分钟内有效）"
 }
 
 // Attach only the Host suffix after the loop has composed every accepted reply.

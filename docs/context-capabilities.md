@@ -368,7 +368,16 @@ server-written DingTalk dispatch context. Nothing is read from the prompt.
     and dispatched as `sender.staffId` and each message's `senderStaffId`,
     exactly like a Router delivery; it stays out of the native acceptance
     fingerprint. A miss is retried after 10 minutes, a failure after 1
-    minute (per process), and the message goes on without a staffId.
+    minute (per process), and the message goes on without a staffId. A
+    group that refuses its member list counts as a miss. A kept staffId is
+    proved again after 7 days: one the address book no longer proves (the
+    person left, the staffId was reassigned) is dropped, while a failed
+    lookup keeps it. Events that will not be dispatched (no content, no
+    message reference) cost no lookup. Known limit: the address book search
+    is ranked and capped, so a common real name in a large org may miss
+    until a nick or group nick finds the person; configuration saved under
+    a person's `odt:` key while they were unresolved stops applying once
+    their staffId is proved (it stays stored and listed, not migrated).
   - The staffId is not always there: a member of another org (an external
     group member, a cross-org 1:1 chat) has no staffId in the tenant org,
     and some accounts (NHI accounts) are not in the address book. Such a
@@ -575,27 +584,38 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   scene (it was posted in the conversation, so its readers are the
   conversation's members). The title is the dispatch's conversation title,
   else the scene directory's.
-  **A 1:1 chat's link also carries the chat's person** (冬翔 2026-10-03:
-  单聊的场域可以拿到个人配置入口, keyed by the person's staffId): when the
-  run has a trigger person (§2, `TriggerPersonKey`: the staffId a Router
-  delivery carries or a native sender's address book lookup proves, else
-  `odt:` + the openDingTalkId), the link is stored as a person link
+  **A 1:1 chat's Host-appended link also carries the chat's person**
+  (冬翔 2026-10-03: 单聊的场域可以拿到个人配置入口, keyed by the person's
+  staffId). Only the links the Host appends to a reply itself carry it:
+  the Coordinator's capability answer and the Employee foreground's
+  (`HostAppended`), which keep the link out of every stored transcript
+  (`RedactConfigLinks`, the Employee model journal and tool results). The
+  executor tools above always return the scene link: their result lands in
+  the run's task messages, which every member who may read the run can
+  see. When such a run has one trigger person (§2, `TriggerPersonKey`: the
+  staffId a Router delivery carries or a native sender's address book
+  lookup proves, else `odt:` + the openDingTalkId) and the dispatch says
+  the conversation is a 1:1 chat, the link is stored as a person link
   (scope_type `person`, scope_key the person key, `extra_scene_key` the
-  chat's scene_id, title the person's name, 30 minutes). Redeeming it
-  grants the chat's scene and, for 365 days, the person's own level
-  (个人能力). Only the person reads the chat it is posted in, so the first
-  DingTalk account that opens it holds the person; that account may open
-  it again until it expires, any other account gets 410, and while a
-  person's grant is live another account answers 409 and leaves the link
-  unconsumed. It proves delivery to the 1:1 chat, not the account's
-  identity. A 1:1 run without one trigger person (a merged window of
-  several speakers) gets the plain scene link. Person links stored before
-  2026-10-02 redeem by the same rules until they expire.
+  chat's scene_id, title the person's name, `LinkTTLPerson` = 15 minutes).
+  Redeeming it grants the chat's scene and, for 365 days, the person's own
+  level (个人能力). The first DingTalk account that opens it holds the
+  person; that account may open it again while it still holds the person's
+  grant (a revoked grant is not restored by reopening), any other account
+  gets 410, and while a person's grant is live another account answers 409
+  and leaves a link unconsumed. Known limits: redemption proves delivery to
+  the 1:1 chat, not the account's identity (no general DingTalk API maps
+  the configure page's unionId to a tenant staffId); until it is opened the
+  link also sits in the employee account's own DingTalk history, which the
+  agent's own DWS tools can read. A 1:1 run without one trigger person (a
+  merged window of several speakers) gets the plain scene link. Person
+  links stored before 2026-10-02 redeem by the same rules until they
+  expire.
   The tool returns (as `structuredContent` and as JSON text)
   `{url, dingtalk_url, scope, scene_kind, expires_at, includes_person?}`
   (`scope` is always `scene`, `scene_kind` the directory kind, `group` or
-  `dm`, `includes_person` true for a 1:1 chat's link that carries its
-  person): `url` is
+  `dm`; `includes_person` is never set by the tools, only by the Host's own
+  links): `url` is
   `<app origin>/dingtalk/configure?link=<token>` (app origin = `MULTICA_APP_URL`,
   else `FRONTEND_ORIGIN`), `dingtalk_url` is
   `dingtalk://dingtalkclient/page/link?url=<urlencoded url>&pc_slide=true`
@@ -748,7 +768,7 @@ know) and the tenant org they live in.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id, extra_scene_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; a group's link grants that group's scene; a 1:1 chat's link is a person link with `extra_scene_key` (§5): it grants the chat's scene_id and the person, and `extra_scene_id` names that chat so the page opens it rather than another 1:1 chat a manager sees; `extra_scene_id` is `""` for any other link); 410 when unknown, malformed, expired or (person link) already consumed by another account (its own account may open it again); 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
+| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id, extra_scene_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; a group's link grants that group's scene; a 1:1 chat's link is a person link with `extra_scene_key` (§5): it grants the chat's scene_id and the person, and `extra_scene_id` names that chat so the page opens it rather than another 1:1 chat a manager sees; `extra_scene_id` is `""` for any other link); 410 when unknown, malformed, expired or (person link) already consumed by another account, or by this account after its person grant was revoked (otherwise its own account may open it again); 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
 | GET | `/api/context-capabilities/agents` | `{agents: [{id, name, avatar_url, workspace_id, access, scopes: [{scope_type, scope_key, scope_title, source, expires_at, org_id}]}]}`: agents with a live grant for the caller under one of the agent's tenant orgs (`access: "grant"`, newest grant first; grants under an org that is not a tenant are left out), then the other non-archived user agents the caller manages (`access: "manager"`, `scopes: []`, by name). An agent both granted and managed is listed once with `access: "manager"` and its grants. Older backends send no `access` (read it as `grant`) |
 | GET | `/api/context-capabilities/agents/{agentId}?org_id=` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, apps: [{slug, name}], person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C], rights: R, prompts: [P], mcp_config: M, mcp_config_redacted}, scenes: [{scope_key, scope_title, source, expires_at, kind, org_id}], access, jsapi_available, tenant: null \| {org_id, name, source}, tenants: [{org_id, name, source}], org: null \| {scope_key, scope_title, bindings: [B], credentials: [C], rights: R, can_edit, prompts: [P], mcp_config: M, mcp_config_redacted}}` for one tenant org: `org_id`, else the identity org, else (a caller who does not manage the agent and holds no grant there) the org of the caller's newest grant. `tenant` is that org (null for an agent without a DingTalk identity when none was named), `tenants` the orgs the caller may switch to (every tenant for a manager, else those holding a grant of the caller), `org` its enterprise layer for every caller (rights only for a manager; for anyone else credential hints are blank, the MCP document is withheld, switched-off prompts and the accounts of connectors that are neither offered nor the agent's own are left out; null without a tenant); `can_edit` is `rights.toggle`, kept for older clients. `person.rights` is the person's own (everything). Needs any grant for the agent in that org or managing it (else 403). `access` is `manager` or `grant`. `scenes` lists the granted scenes and, for a manager, every other scene of the agent in that org, groups and 1:1 chats (newest activity first, at most 1000, `source: "manager"`, `expires_at: ""`, titles and kinds from the scene directory; none for an orgless agent). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; every app needs the connector credential key and an app origin, the other deployment checks of the start endpoint); the page shows 连接 only for a literal `true` (a missing field from an older backend hides it too) and offers the PAT form when `accepts_pat`. `install_url` is the GitHub App installation page (omitted when there is none). `apps` is the official app catalog in catalog order, opened for the agent or not (the page lists every supported app), each with `setup` (`automatic`: dynamic registration or a deployment client; `oauth_app`: an OAuth application is needed first, the workspace's or a scene's own; `unsupported`) and `ready` (the workspace can start a sign-in now). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
 | GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}?org_id=` | `{scene: {scope_key, scope_title, source, expires_at, kind, org_id}, scope: {type, key, title}, bindings: [B], credentials: [C], rights: R, can_connect, prompts: [P], mcp_config: M, mcp_config_redacted}` for one scene, a group or a 1:1 chat: `{sceneKey}` is its scene_id (a conversation id is 400). Scene grant or manager required; a manager without a grant gets `source: "manager"`. `scope` is the scene itself (`{type: "scene", key: <scene_id>, title}`); `bindings`, `credentials`, `prompts` and `mcp_config` are the scene's. `rights` is what the caller may change there (everything for a manager, nothing for a link holder: a group member, or the person of a 1:1 chat); `can_connect` is `rights.connect`, kept for older clients. A caller without `rights.connect` gets the credentials with `hint: ""` (the connected state, `kind` and `updated_at` stay). `kind` comes from the scene directory (an id it does not know is `group`). `scene_oauth_apps` lists the apps (catalog slugs) the scene signs in to with its own OAuth application (`[]` when none) |

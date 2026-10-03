@@ -365,3 +365,21 @@ func TestStaffIDOf(t *testing.T) {
 		t.Fatalf("searches = %d, want 4 (the literal null and repeated names are not searched)", searches)
 	}
 }
+
+// The literal "null" is no userId, and a group that refuses its member list
+// is a miss, not a failure.
+func TestStaffIDOfRefusals(t *testing.T) {
+	_, c := newTestClient(t, func(tool string, args map[string]any) (int, string) {
+		switch tool {
+		case "search_contact_by_key_word":
+			return ok(`[{"userId":"null","openDingTalkId":"open-me","name":"x"}]`)
+		case "list_group_member_by_ids":
+			return 200, toolText(`{"success":false,"errorCode":"FORBIDDEN","errorMsg":"无权访问该内部群","result":{}}`)
+		}
+		return ok(`{}`)
+	})
+	id, err := c.Contacts.StaffIDOf(context.Background(), "open-me", []string{"x"}, "cid-internal")
+	if err != nil || id != "" {
+		t.Fatalf("staff id = %q err = %v, want a miss", id, err)
+	}
+}

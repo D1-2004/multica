@@ -105,8 +105,8 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 		ctxcapExpectStatus(t, redeem(user, sceneToken), http.StatusOK, "coordinator scene link redeem")
 	}
 
-	// 1:1 chat (冬翔 2026-10-03): the chat's link also carries the chat's
-	// person, keyed by TriggerPersonKey (the staffId, else "odt:" + the
+	// 1:1 chat (冬翔 2026-10-03): the chat's Host-appended link also carries
+	// the chat's person, keyed by TriggerPersonKey (the staffId, else "odt:" + the
 	// openDingTalkId), and opens their own level for the first account that
 	// opens it; that account may open it again, nobody else may. A merged
 	// window of several speakers names no person: the plain scene link.
@@ -119,11 +119,17 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 		{"digital employee without staffId", "odt:DpJnOpenSender", "冬翔", ctxcapDWSDispatch("single", ctxcapDirectScene)},
 		{"merged window of several speakers", "", "Ctxcap group", ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)},
 	} {
+		// The Coordinator appends the link itself, so a 1:1 chat's carries
+		// its person and lives as long as a person link.
+		ttl := contextcap.LinkTTLPerson
+		if tc.personKey == "" {
+			ttl = contextcap.LinkTTLScene
+		}
 		direct, err := issue(tc.dispatch)
-		if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM || direct.ValidFor != contextcap.LinkTTLScene {
+		if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM || direct.ValidFor != ttl {
 			t.Fatalf("%s: 1:1 link=%+v err=%v", tc.name, direct, err)
 		}
-		ctxcapExpiresWithin(t, direct.ExpiresAt.UTC().Format(time.RFC3339), contextcap.LinkTTLScene)
+		ctxcapExpiresWithin(t, direct.ExpiresAt.UTC().Format(time.RFC3339), ttl)
 		token := coordinatorLinkToken(t, direct)
 		got := coordinatorStoredLinkFor(t, token)
 		if tc.personKey == "" {

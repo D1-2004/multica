@@ -428,16 +428,21 @@ func (h *Handler) acceptNativeMessage(ctx context.Context, id dwsclient.Identity
 			quotedOwn = true
 		}
 	}
-	conversationTitle, groupConversationID := "", ""
-	if ev.Key == dws.EventIMAt {
-		groupConversationID = conversationID
-		conversationTitle = h.nativeConversationTitle(ctx, id, conversationID)
+	// The title and the sender's staffId are looked up only for a message
+	// buildNativeDispatchCommand will dispatch.
+	conversationTitle, groupConversationID, senderStaffID := "", "", ""
+	if strings.TrimSpace(m.Content) != "" && conversationID != "" && strings.TrimSpace(m.MessageID) != "" {
+		if ev.Key == dws.EventIMAt {
+			groupConversationID = conversationID
+			conversationTitle = h.nativeConversationTitle(ctx, id, conversationID)
+		}
+		senderStaffID = h.nativeSenderStaffID(ctx, id, m, groupConversationID)
 	}
 	command, err := buildNativeDispatchCommand(nativeMessageInput{
 		AgentID: util.UUIDToString(agent.ID), UID: id.UID, OrgID: id.OrgID,
 		EventKey: ev.Key, Message: m, Policy: policy, QuotedOwn: quotedOwn,
 		ConversationTitle: conversationTitle,
-		SenderStaffID:     h.nativeSenderStaffID(ctx, id, m, groupConversationID),
+		SenderStaffID:     senderStaffID,
 	})
 	var skipped nativeSkip
 	if errors.As(err, &skipped) {
