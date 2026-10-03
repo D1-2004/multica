@@ -1,5 +1,11 @@
 # EmployeeLoop real-IM e2e harness
 
+> Suites: **cases-v2** (`cases/v2/`, 88 cases G/M/C/P/T; source `cases/v2/_build`, readable `cases/v2/SUITE.md`,
+> harness requirements `cases/v2/harness-gaps.md`, story `cases/v2/world.json`) and **GoldenCase-20**
+> (`cases/golden20.json`, source text `cases/golden20.md`), plus the memory suite (`cases/memory/`).
+> Known gaps: `cases/known_gaps.json` (GoldenCase-20), `cases/v2/known_gaps.json` (cases-v2), `cases/memory/known_gaps.json`.
+> Who plays whom: `ROLES.md`. Commands and gotchas: `TOOLS.md`. Round procedure: `.agents/skills/tag-eval/SKILL.md`.
+
 Drives real DingTalk conversations with the 预发 test employee **Qwen-Real**
 (Tag 33af235e, RealNiubility) and grades them against written criteria.
 Python 3.11, stdlib only. No secrets live in this directory.

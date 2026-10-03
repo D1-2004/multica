@@ -1,11 +1,11 @@
 {
  "schema": "el2e.world.v1",
- "note": "所有用例只从这里取背景事实；变量只用在被测的那一个事实上。跑前用 Director 与员工视角读群成员显示名，回填 display_name 字段。；2026-10-03 已读回：冬翔在 RealNiubility 的显示名是「冬翔」，Director 在三个测试群的群昵称是「D总」。",
+ "note": "所有用例只从这里取背景事实；变量只用在被测的那一个事实上。2026-10-03 已读回：冬翔在 RealNiubility 的显示名是「冬翔」；Director、dxxh 在 g_team / group_p_hx / group_t 的群昵称是「D总」「许航」。",
  "people": {
   "D总": {
    "actor": "director",
    "display_name": "DingTalk-FDE Director",
-   "group_nickname": "D总（g_team / group_p_hx / group_t 已设置群昵称）",
+   "group_nickname": "D总（g_team / group_p_hx / group_t 已设置）",
    "role": "交付经理，东翔的上级；管客户商务、日常对接、排期拍板",
    "preferences": [
     "汇报不要表格（手机上看全是竖线），分点、最多五条"
@@ -21,7 +21,7 @@
    ],
    "role": "华信、睿博两条线的技术负责人；技术方案拍板",
    "preferences": [
-    "进展喜欢表格，一行一个客户"
+    "进展每个客户一行，写成「客户：阶段｜下一步｜卡点」，结论放最前（钉钉会吞 Markdown 表格，所以不要表格）"
    ]
   },
   "小Q": {
@@ -31,7 +31,7 @@
   },
   "许航": {
    "actor": "dxxh",
-   "display_name": "dxxh（钉钉昵称 SixSix；g_team / group_p_hx / group_t 群昵称「许航」）",
+   "display_name": "dxxh（钉钉昵称 SixSix；三个测试群里群昵称「许航」）",
    "aliases": [
     "许航",
     "航哥",
@@ -128,6 +128,7 @@
   "g_team": {
    "name": "交付二组",
    "creator": "director",
+   "cid": "cidK9nArIWtuFzXEizIBHacIA==",
    "members": [
     "director",
     "zhujue",
@@ -136,13 +137,12 @@
     "wangxifeng",
     "dxxh"
    ],
-   "used_by": "G 全部 + M 群用例",
-   "cid": "cidK9nArIWtuFzXEizIBHacIA==",
-   "created_at": "2026-10-03"
+   "used_by": "G 全部 + M 群用例；也是 MEMX-G2/G3/X1/D1/L1 的 Qwen-Real 群"
   },
   "group_p_hx": {
    "name": "华信二期交付群",
    "creator": "director",
+   "cid": "cid9pVqaL7ehXiznGozdw1ydQ==",
    "members": [
     "director",
     "zhujue",
@@ -151,13 +151,12 @@
     "wangxifeng",
     "dxxh"
    ],
-   "used_by": "P 群用例 + C-13 群步骤 + G-15 跨群步骤",
-   "cid": "cid9pVqaL7ehXiznGozdw1ydQ==",
-   "created_at": "2026-10-03"
+   "used_by": "P 群用例 + C-13 群步骤 + G-15 跨群步骤"
   },
   "group_t": {
    "name": "交付二组·项目推进",
    "creator": "director",
+   "cid": "cidLPuJyCMy6OKslUltqlIpug==",
    "members": [
     "director",
     "zhujue",
@@ -165,9 +164,7 @@
     "dxxh"
    ],
    "used_by": "T 群用例",
-   "note": "不要登记为 routine 会话（否则平台的例行任务消息会被 grader 当噪音丢弃）",
-   "cid": "cidLPuJyCMy6OKslUltqlIpug==",
-   "created_at": "2026-10-03"
+   "note": "不要登记为 routine 会话（否则平台的例行任务消息会被 grader 当噪音丢弃）"
   },
   "g_customer": {
    "name": "华信对接群（测试）",
@@ -190,13 +187,13 @@
   },
   "group_de_probe": {
    "name": "EL-E2E-1003-DE（已存在）",
+   "cid": "cid1aKA0Jmc1HO3/G3BrfyTHg==",
    "members": [
     "director",
     "employee",
     "daiyu"
    ],
-   "used_by": "T-12 黛玉分支",
-   "cid": "cid1aKA0Jmc1HO3/G3BrfyTHg=="
+   "used_by": "T-12 黛玉分支"
   }
  }
 }

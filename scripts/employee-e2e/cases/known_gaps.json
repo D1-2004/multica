@@ -1,6 +1,6 @@
 {
   "schema": "el2e.known_gaps.v1",
-  "note": "Ratchet: a known gap that starts passing must be removed here in the same change. Baseline run R1003-baseline (2026-10-03).",
+  "note": "GoldenCase-20 (cases/golden20.json, source cases/golden20.md). Ratchet: a known gap that starts passing must be removed here in the same change. Baseline run R1003-baseline (2026-10-03). Other suites keep their own files: cases-v2 -> cases/v2/known_gaps.json (generated from each case's known_gap by `e2e.py v2 sync-gaps`), memory -> cases/memory/known_gaps.json; the grader merges all of them.",
   "gaps": {
     "DS-07": "group-context: native subscription delivers only @ group events, so un-@ material never reaches EmployeeLoop; first group reply also drifted to English",
     "DS-17": "group-context (the second-position @ itself is handled)",
