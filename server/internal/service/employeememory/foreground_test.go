@@ -375,3 +375,18 @@ func TestForegroundQueryStripsMentionsAndLinks(t *testing.T) {
 		t.Fatalf("a mention without separator swallowed the request: %q", glued)
 	}
 }
+
+func TestForegroundShowsAttributionAndConflictPeers(t *testing.T) {
+	e := newForegroundEnv(t)
+	said := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	first := e.put(t, e.group, LearningRecord{Type: LearningTypeOperational, Key: "weekly-deadline", Insight: "本组周报每周五 18 点前交", Confidence: 4, Source: LearningSourceObserved, SpeakerRef: fgBob, SpeakerName: "陈思远", SaidAt: said}, fgAlice)
+	second := e.put(t, e.group, LearningRecord{Type: LearningTypeOperational, Key: "weekly-deadline", Insight: "周报改成每周四交", Confidence: 4, Source: LearningSourceObserved, SpeakerRef: fgAlice, SpeakerName: "林晓", SaidAt: said.Add(24 * time.Hour)}, fgBob)
+	got := e.brief(t, ForegroundRequest{Scene: e.group, SceneKind: scene.KindGroup, Query: "本组周报每周五几点前交"})
+	ids := manifestIDs(got)
+	if ids[first.ID] == "" || ids[second.ID] == "" || strings.Count(got.Text, "说法不一") != 2 {
+		t.Fatalf("conflicting versions not shown together: %s %+v", got.Text, got.Manifest)
+	}
+	if !strings.Contains(got.Text, "陈思远 10-02 说") || !strings.Contains(got.Text, "林晓 10-03 说") || strings.Contains(got.Text, fgBob) {
+		t.Fatalf("speaker attribution missing or raw ref exposed: %s", got.Text)
+	}
+}

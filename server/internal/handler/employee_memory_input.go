@@ -89,7 +89,7 @@ func (w *EmployeeSceneWorker) employeeMemoryAfterWake(ctx context.Context, job e
 // employeeMemoryBriefLabels reports whether this snapshot's memory tools
 // resolve "[mN]" labels; until they do, the brief carries record UUIDs.
 func employeeMemoryBriefLabels(input *employeeSavedInput) bool {
-	return false
+	return employeeMemoryToolsV2Frozen(*input)
 }
 
 // freezeBrief replaces Input.Memory with the foreground brief v2.

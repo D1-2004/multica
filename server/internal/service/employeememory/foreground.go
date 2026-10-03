@@ -122,6 +122,9 @@ type foregroundRecord struct {
 	LearningSearchResult
 	layer   ScopeKind
 	sceneID string
+	// conflict marks a scene record that another author stated differently
+	// under the same type and key (M5 ConflictPeers); peers render beside it.
+	conflict bool
 }
 
 type foregroundPolicy struct {
@@ -325,7 +328,9 @@ func assembleForeground(req ForegroundRequest, policy foregroundPolicy, sceneCor
 	if policy.pinned > 0 {
 		candidates := make([]foregroundRecord, 0, len(all))
 		for _, r := range all {
-			if r.Type == LearningTypePreference && (r.Source == LearningSourceObserved || r.Source == LearningSourceUserStated) {
+			// Human preferences and decisions (design §5.2 [P], decisions from
+			// stage B); never synthesis or other machine-written records.
+			if (r.Type == LearningTypePreference || r.Type == LearningTypeDecision) && (r.Source == LearningSourceObserved || r.Source == LearningSourceUserStated) {
 				candidates = append(candidates, r)
 			}
 		}
@@ -368,6 +373,7 @@ func assembleForeground(req ForegroundRequest, policy foregroundPolicy, sceneCor
 			}
 		}
 	}
+	pinned, retrieved, verified = withConflictPeers(sceneCorpus, chosen, pinned, retrieved, verified)
 	// Shrink from the least stable section until the whole brief fits.
 	for {
 		out = renderForeground(out, req, query, pinned, retrieved, verified)
@@ -416,7 +422,7 @@ func renderForeground(out ForegroundBrief, req ForegroundRequest, query string, 
 		out.Stats.BytesBySection[kind] = used
 		return len(body)
 	}
-	out.Stats.Pinned = section(ForegroundPinned, "[置顶偏好与约定｜默认生效，除非当前消息明确改变]", pinned, foregroundPinnedRunes, foregroundPinnedBytes)
+	out.Stats.Pinned = section(ForegroundPinned, "[置顶偏好与约定｜默认生效，除非当前消息明确改变；标「说法不一」时要指出分歧]", pinned, foregroundPinnedRunes, foregroundPinnedBytes)
 	terms := neutralizeForeground(strings.Join(out.Stats.QueryTerms, " "))
 	out.Stats.Retrieved = section(ForegroundRetrieved, "[与当前消息相关的记忆]（检索："+terms+"）", retrieved, foregroundItemRunes, foregroundRetrievedBytes)
 	if out.Stats.Retrieved == 0 {
@@ -443,6 +449,8 @@ var foregroundTypeLabels = map[LearningType]string{
 	LearningTypeArchitecture: "架构",
 	LearningTypeTool:         "工具",
 	LearningTypeOperational:  "事项",
+	LearningTypeFact:         "事实",
+	LearningTypeDecision:     "决定",
 }
 
 var foregroundZone = time.FixedZone("Asia/Shanghai", 8*3600)
@@ -466,10 +474,16 @@ func foregroundLine(r foregroundRecord, req ForegroundRequest, label string, run
 		who = "本人 " + date + " 在其他场域说"
 	case r.layer == ScopePrivate:
 		who = "本人 " + date + " 说"
+	case SceneAttribution(r.LearningRecord) != "":
+		// Host-filled speaker and time of the captured statement.
+		who = neutralizeForeground(SceneAttribution(r.LearningRecord))
 	case r.Source == LearningSourceSynthesis:
 		kind, who = "候选", date+" 整理"
 	default:
 		who = "本场域 " + date + " 记录"
+	}
+	if r.conflict {
+		kind = "说法不一·" + kind
 	}
 	text := neutralizeForeground(strings.Join(strings.Fields(r.Insight), " "))
 	if req.Labels {
@@ -483,4 +497,42 @@ func neutralizeForeground(text string) string {
 		text = strings.ReplaceAll(text, marker, "[memory marker]")
 	}
 	return text
+}
+
+// withConflictPeers keeps disagreeing scene records together: when a chosen
+// record has cross-author peers (same type and key, another author), each
+// peer not already shown is placed right after it in the same section and
+// all of them are marked, so the model sees "说法不一" instead of one side.
+func withConflictPeers(sceneCorpus []foregroundRecord, chosen map[string]bool, sections ...[]foregroundRecord) ([]foregroundRecord, []foregroundRecord, []foregroundRecord) {
+	plain := make([]LearningRecord, len(sceneCorpus))
+	byID := make(map[string]foregroundRecord, len(sceneCorpus))
+	for i, r := range sceneCorpus {
+		plain[i] = r.LearningRecord
+		byID[r.ID] = r
+	}
+	peers := ConflictPeers(plain)
+	for _, section := range sections {
+		for _, r := range section {
+			chosen[r.ID] = true
+		}
+	}
+	for i := range sections {
+		var out []foregroundRecord
+		for _, r := range sections[i] {
+			ids := peers[r.ID]
+			r.conflict = len(ids) > 0
+			out = append(out, r)
+			for _, id := range ids {
+				peer, ok := byID[id]
+				if !ok || chosen[id] {
+					continue
+				}
+				chosen[id] = true
+				peer.conflict = true
+				out = append(out, peer)
+			}
+		}
+		sections[i] = out
+	}
+	return sections[0], sections[1], sections[2]
 }

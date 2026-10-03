@@ -54,8 +54,6 @@ var memoryEvalKnownGaps = map[string]string{
 	"experience-reuse/context-used-lists-memory-id":       "M4: ContextUsed memory:<id>",
 	"experience-reuse/context-used-lists-history-job":     "M4: ContextUsed history:<job_id>",
 	"experience-reuse/packet-carries-frozen-history":      "M4: dispatch packet history from the frozen wake",
-	"scene-capture/other-member-recalls-with-attribution": "M1: brief renders SceneAttribution (speaker name, date)",
-	"scene-capture/conflict-shown-to-model":               "M1: brief renders ConflictPeers as 说法不一",
 }
 
 // Feature names gated in production. A binding enables exactly that feature
