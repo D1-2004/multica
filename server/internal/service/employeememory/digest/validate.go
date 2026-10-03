@@ -76,6 +76,9 @@ var (
 	idCardPattern  = regexp.MustCompile(`(^|[^0-9])[1-9][0-9]{16}[0-9Xx]([^0-9]|$)`)
 	secretKV       = regexp.MustCompile(`(?i)\b(api[_-]?key|token|secret|password|passwd|密码|口令)\s*[:=：]\s*\S+`)
 	literalPattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._:/\-]*`)
+	// valuePattern finds Chinese date, time and quantity values: a subject
+	// may name a topic freely, but never a value the evidence did not say.
+	valuePattern = regexp.MustCompile(`(周|星期|礼拜)[一二三四五六日天末]|[0-9零一二三四五六七八九十两百]+\s*(月|日|号|点|时|分|天|周|个|人|次|份|元|万|%)|(今|明|后|昨|前)天|(上|下|本|这)(周|个?月|季度?)`)
 )
 
 // sensitive detects contact data and secrets: the digest never stores them.
@@ -134,30 +137,30 @@ func validSubject(s string) bool {
 	return true
 }
 
-// literalsGrounded requires every number, code or ASCII token in the subject
-// to appear verbatim (case-insensitive) in the evidence line.
+// literalsGrounded requires every number, code, ASCII token and Chinese
+// date/time/quantity value in the subject to appear verbatim
+// (case-insensitive) in the evidence line.
 func literalsGrounded(subject, body string) bool {
 	lower := strings.ToLower(body)
-	for _, literal := range literalPattern.FindAllString(subject, -1) {
-		if !strings.Contains(lower, strings.ToLower(literal)) {
+	for _, literal := range append(literalPattern.FindAllString(subject, -1), valuePattern.FindAllString(subject, -1)...) {
+		if !strings.Contains(lower, strings.ToLower(strings.Join(strings.Fields(literal), ""))) && !strings.Contains(lower, strings.ToLower(literal)) {
 			return false
 		}
 	}
 	return true
 }
 
-// subjectGrounded requires the subject to reuse the evidence's own words:
-// at least two shared overlap units, or all of them for a one-unit subject.
+// subjectGrounded keeps the subject on the evidence's topic: it is a recall
+// label a later question would use (发版时间 for 「定了：周四发版」), so it
+// must share at least one retrieval unit with the evidence; values are
+// pinned separately by literalsGrounded and the content is the verbatim
+// quote.
 func subjectGrounded(subject, body string) bool {
 	shared, total := employeememory.SharedRetrievalUnits(subject, body)
 	if total == 0 {
 		return literalPattern.MatchString(subject) && literalsGrounded(subject, body)
 	}
-	need := 2
-	if total < need {
-		need = total
-	}
-	return shared >= need
+	return shared >= 1
 }
 
 // validate checks one batch of proposals against the page. Attribution is

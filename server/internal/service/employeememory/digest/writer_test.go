@@ -28,9 +28,10 @@ func chatLines(base time.Time) []TranscriptMessage {
 func TestDigestQuoteGrounding(t *testing.T) {
 	env := newEnv(t,
 		ops(
-			map[string]string{"op": "upsert", "kind": "decision", "subject": "周四发版", "quote": "定了：周四发版", "evidence": "g3"},
+			map[string]string{"op": "upsert", "kind": "decision", "subject": "发版时间", "quote": "定了：周四发版", "evidence": "g3"},
 			map[string]string{"op": "upsert", "kind": "fact", "subject": "候选编号", "quote": "候选编号是 K6 和 X3", "evidence": "g1"},
 			map[string]string{"op": "upsert", "kind": "fact", "subject": "V7 回执", "quote": "K6 已收到", "evidence": "g2"},
+			map[string]string{"op": "upsert", "kind": "fact", "subject": "周五回执", "quote": "Z2 已收到", "evidence": "g2"},
 		),
 		ops(map[string]string{"op": "upsert", "kind": "fact", "subject": "候选编号", "quote": "本场候选编号有 K6、X3、Z2", "evidence": "g1"}),
 	)
@@ -40,6 +41,9 @@ func TestDigestQuoteGrounding(t *testing.T) {
 	env.makeDue(t, key)
 	if !mustProcess(t, env.writer) {
 		t.Fatal("expected a claim")
+	}
+	if strings.Count(env.runs(t, key)[0].Rejected, "subject_literal_not_in_evidence") != 2 {
+		t.Fatalf("a weekday the evidence never said must be refused: %s", env.runs(t, key)[0].Rejected)
 	}
 	if got := env.model.requests.Load(); got != 2 {
 		t.Fatalf("model requests = %d, want 2 (one call plus one repair)", got)
