@@ -1303,7 +1303,13 @@ arrives. There are no org-level or person-level routines.
   `context_scope_routine` row (migrations 9520–9522) binding it to its
   `scene_id`, tenant org and kind, with the 1:1 counterpart's
   `openDingTalkId` frozen at creation for delivery (the `person_staff_id`
-  column is no longer written or read). The autopilot
+  column is no longer written or read). The configure pages read the
+  counterpart from server-written facts of that scene only: the sender of
+  its newest Coordinator job and the per-message senders of the newest 20
+  user messages the EmployeeLoop admitted there (an agent in employee mode
+  has no Coordinator jobs). They must name one person; otherwise creation
+  answers `dm_target_ambiguous` (none yet: `dm_target_unknown`). A routine
+  created from the chat itself uses that task's own sender. The autopilot
   keeps the trigger, schedule and run history; scene-managed autopilots
   answer 409 `managed_by_scene` on the autopilot routes.
 - **Runs carry the scene.** Every run (cron, webhook, run now) carries
@@ -1347,7 +1353,7 @@ arrives. There are no org-level or person-level routines.
   scene). Admin:
   the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`.
   Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
-  `dm_target_unknown`, `agent_runtime_required`, `routine_duplicate`,
+  `dm_target_unknown`, `dm_target_ambiguous`, `agent_runtime_required`, `routine_duplicate`,
   `routine_paused`, `scene_kind_without_routines`, `routine_gone` (the
   autopilot was archived or lost its trigger outside the scene API; delete
   the routine, or create it again, which replaces the stale row).

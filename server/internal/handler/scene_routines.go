@@ -277,29 +277,90 @@ func (h *Handler) routineIdentity(ctx context.Context, q *db.Queries, workspaceI
 }
 
 // sceneRoutineDMCounterpart finds who a configure-page routine of a dm scene
-// sends to: the sender of the scene's newest trusted inbound Coordinator job
-// (the server-written dispatch sender). A task in the 1:1 chat passes its own
+// sends to, from server-written facts of that scene only: the sender of its
+// newest trusted inbound Coordinator job, and the senders of the newest
+// messages the EmployeeLoop admitted there (an agent in employee mode has no
+// Coordinator jobs). The two must name the same single person; anything else
+// is dm_target_ambiguous, never a guess. A task in the 1:1 chat passes its own
 // sender instead. Only delivery uses it: a routine never runs with anyone's
 // personal layer.
 func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAgent, sceneID string) (sceneRoutineCounterpart, error) {
 	var cp sceneRoutineCounterpart
+	var coordinator string
 	err := h.DB.QueryRow(ctx, `SELECT
 			BTRIM(COALESCE(NULLIF(command #>> '{event,data,sender,openDingTalkId}', ''), command #>> '{event,data,sender,senderOpenDingTalkId}', ''))
 		FROM inbound_coordinator_job
 		WHERE agent_id = $2::uuid AND workspace_id = $1::uuid AND command #>> '{agent_scene,scene_id}' = $3
 		ORDER BY created_at DESC, id DESC
-		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&cp.OpenDingTalkID)
+		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&coordinator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
 	if err != nil {
 		return cp, err
 	}
-	if cp.OpenDingTalkID == "" {
+	senders := map[string]struct{}{}
+	if coordinator != "" {
+		senders[coordinator] = struct{}{}
+	}
+	employee, err := h.employeeDMSenders(ctx, a, sceneID)
+	if err != nil {
+		return cp, err
+	}
+	for _, sender := range employee {
+		senders[sender] = struct{}{}
+	}
+	switch len(senders) {
+	case 0:
 		return cp, routineRefusal(http.StatusConflict, "dm_target_unknown",
 			"this 1:1 chat has no message from its counterpart yet; send the agent a message there first")
+	case 1:
+		for sender := range senders {
+			cp.OpenDingTalkID = sender
+		}
+		return cp, nil
+	default:
+		return cp, routineRefusal(http.StatusConflict, "dm_target_ambiguous",
+			"this 1:1 chat's recent messages do not name one counterpart; create the routine from the chat instead")
 	}
-	return cp, nil
+}
+
+// employeeDMSenderWindow bounds how many of a 1:1 chat's newest admitted
+// Employee messages must agree on the counterpart.
+const employeeDMSenderWindow = 20
+
+// employeeDMSenders returns the distinct per-message senders among the newest
+// user messages the EmployeeLoop admitted in the scene: unheld consumptions
+// whose ready receipt and envelope name this scene. A message without its own
+// sender (a multi-person window) names nobody.
+func (h *Handler) employeeDMSenders(ctx context.Context, a contextCapAgent, sceneID string) ([]string, error) {
+	rows, err := h.DB.Query(ctx, `SELECT DISTINCT sender FROM (
+		SELECT BTRIM(COALESCE(m.value->>'senderOpenDingTalkId', '')) AS sender
+		FROM employee_event_consumption c
+		JOIN scene_event_receipt r ON r.id = c.receipt_id AND r.workspace_id = c.workspace_id AND r.agent_id = c.agent_id
+			AND r.tenant_org_id = c.tenant_org_id AND r.scene_id = c.scene_id
+		CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.payload #> '{command,event,data,messages}') = 'array'
+			THEN c.payload #> '{command,event,data,messages}' ELSE '[]'::jsonb END) WITH ORDINALITY m(value, ordinal)
+		WHERE c.workspace_id = $1::uuid AND c.agent_id = $2::uuid AND c.scene_id = $3::uuid AND c.owner_loop = 'employee'
+			AND c.state IN ('queued', 'completed', 'delegated') AND c.reason = '' AND r.reason = ''
+			AND r.route = 'unified' AND r.state = 'ready' AND r.envelope ->> 'category' = 'user_message'
+			AND c.payload #>> '{command,agent_scene,scene_id}' = c.scene_id::text
+		ORDER BY c.created_at DESC, m.ordinal DESC
+		LIMIT $4) recent
+		WHERE sender <> ''`, a.WorkspaceID, a.ID, sceneID, employeeDMSenderWindow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sender string
+		if err := rows.Scan(&sender); err != nil {
+			return nil, err
+		}
+		out = append(out, sender)
+	}
+	return out, rows.Err()
 }
 
 // createSceneRoutine creates a routine in sc, or updates the routine of sc
