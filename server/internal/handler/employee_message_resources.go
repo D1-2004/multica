@@ -25,7 +25,9 @@ type employeeResourceProvider interface {
 }
 
 const (
-	employeeResourceReadTimeout = 12 * time.Second
+	// employeeResourceReadTimeout keeps room for model requests inside the
+	// 45-second foreground wake.
+	employeeResourceReadTimeout = 8 * time.Second
 	// employeeResourceMaxMessageReads bounds provider message reads per wake,
 	// current and quoted messages together.
 	employeeResourceMaxMessageReads = 8
