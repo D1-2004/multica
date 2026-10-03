@@ -133,7 +133,7 @@ func TestEmployeeExecutionEventNativeLegacyAdmissionReassessesV1Skip(t *testing.
 				if err := testPool.QueryRow(ctx, `SELECT (context->'employee_execution_event_skip'->>'version')::int,(context->'employee_execution_event_skip'->>'proof_version')::int,context->'employee_execution_event_skip'->>'reason',COALESCE(context->'employee_execution_event_skip' @> jsonb_build_object('version',1,'run_id',$2::text) AND context->'employee_execution_event_skip'->>'reason'<>'',false) FROM agent_task_queue WHERE id=$1::uuid`, queueID, runID).Scan(&version, &proofVersion, &reason, &oldReaderSkips); err != nil {
 					t.Fatal(err)
 				}
-				if count != 0 || version != 1 || proofVersion != 2 || !oldReaderSkips || reason != tc.rejectReason || len(employeeExecutionTraceEvents(exporter)) != 0 {
+				if count != 0 || version != 1 || proofVersion != employeeExecutionProofVersion || !oldReaderSkips || reason != tc.rejectReason || len(employeeExecutionTraceEvents(exporter)) != 0 {
 					t.Fatal("legacy route bypassed provenance or old reader can downgrade proof", count, version, proofVersion, oldReaderSkips, reason)
 				}
 			}

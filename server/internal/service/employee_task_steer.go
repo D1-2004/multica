@@ -22,7 +22,6 @@ import (
 // recorded corrections, so the bound also bounds the successor packet.
 const (
 	EmployeeTaskSteerMaxBytes   = 16000
-	employeeTaskSteerRenderMax  = 20
 	employeeTaskSteerRunSuffix  = "/run"
 	employeeTaskSteerFenceSpace = "steer_writer_fence"
 )
@@ -257,6 +256,13 @@ func (s *TaskService) steerDirectEmployeeTaskOnce(ctx context.Context, req Emplo
 			return out, false, err
 		}
 	}
+	corrections, err := store.CorrectionsThrough(ctx, task.Scope, task.ID, task.LastEntrySeq)
+	if err != nil {
+		return out, false, err
+	}
+	if err = employeetask.CheckCorrectionBounds(corrections, content); err != nil {
+		return out, false, err
+	}
 	steer := employeetask.SteerParams{Source: req.Source, ActorRef: req.ActorRef, Body: content}
 	if task.ActiveRunID != "" && task.ActiveRunID != latest.ID {
 		return out, false, employeetask.ErrConflict
@@ -267,7 +273,7 @@ func (s *TaskService) steerDirectEmployeeTaskOnce(ctx context.Context, req Emplo
 		if out.Task, out.Entry, err = store.Steer(ctx, task.Scope, task.ID, steer); err != nil {
 			return out, false, err
 		}
-		next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, s.steerCorrections(ctx, store, task))
+		next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, steerCorrectionMaterials(append(corrections, out.Entry)))
 		if err != nil {
 			return out, false, err
 		}
@@ -334,7 +340,7 @@ func (s *TaskService) steerDirectEmployeeTaskOnce(ctx context.Context, req Emplo
 	if task, out.Entry, err = store.Steer(ctx, task.Scope, task.ID, steer); err != nil {
 		return out, false, err
 	}
-	next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, s.steerCorrections(ctx, store, task))
+	next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, steerCorrectionMaterials(append(corrections, out.Entry)))
 	if err != nil {
 		return out, false, err
 	}
@@ -483,11 +489,7 @@ func directWriterFenceEvidence(q db.AgentTaskQueue) string {
 	}
 }
 
-func (s *TaskService) steerCorrections(ctx context.Context, store *employeetask.Store, task employeetask.Task) []employeetask.SteerCorrection {
-	entries, err := store.Corrections(ctx, task.Scope, task.ID, employeeTaskSteerRenderMax)
-	if err != nil {
-		return nil
-	}
+func steerCorrectionMaterials(entries []employeetask.Entry) []employeetask.SteerCorrection {
 	out := make([]employeetask.SteerCorrection, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, employeetask.SteerCorrection{Ref: fmt.Sprintf("employee_task_entry:%s/%d", e.TaskID, e.Seq), ActorRef: e.ActorRef, Body: e.Body})
@@ -546,6 +548,15 @@ func directSteerSuccessorContext(predecessor db.AgentTaskQueue, overlay json.Raw
 	}
 	next["direct_steer_base_prompt"], _ = json.Marshal(basePrompt)
 	next["direct_task_prompt"], _ = json.Marshal(employeetask.WithCorrections(basePrompt, corrections))
+	policy, origin, err := InheritDirectTaskNoticePolicy(predecessor)
+	if err != nil {
+		return nil, err
+	}
+	if origin != nil {
+		next[DirectTaskNoticePolicyKey], _ = json.Marshal(policy)
+		next[DirectTaskNoticeOriginKey], _ = json.Marshal(origin)
+	}
+	next["direct_steer_corrections_version"] = json.RawMessage("1")
 	next["employee_direct_input"] = raw
 	next["task_steer"] = json.RawMessage("true")
 	next["steer_predecessor_task_id"], _ = json.Marshal(util.UUIDToString(predecessorID))

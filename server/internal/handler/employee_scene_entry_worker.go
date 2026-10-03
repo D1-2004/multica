@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:8]"
+const EmployeeLoopReplicaMarker = "[employee-loop:9]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
@@ -141,9 +141,10 @@ func (w *EmployeeSceneWorker) WaitWithTimeout(timeout time.Duration) bool {
 }
 
 type employeeSavedInput struct {
-	Input      employeeloop.Input             `json:"input"`
-	Config     employeeloop.Config            `json:"config"`
-	ModelRoute *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
+	Input        employeeloop.Input             `json:"input"`
+	Config       employeeloop.Config            `json:"config"`
+	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
+	CurrentTasks []employeeCurrentTaskBinding   `json:"current_tasks,omitempty"`
 }
 type employeeSavedOutcome struct {
 	Outcome        employeeloop.Outcome `json:"outcome"`
@@ -267,7 +268,10 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 						}
 					} else {
 						saved.Outcome.Kind = employeeloop.Reply
-						saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
+						saved.Outcome.Reply = employeeContinuationFailureReply(saved.Outcome)
+						if saved.Outcome.Reply == "" {
+							saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
+						}
 					}
 				}
 			}
@@ -318,6 +322,10 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		input.ModelRoute = &plan
 		input.Config.Model = plan.Candidates[0].Model
 	}
+	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
+	if err != nil {
+		return employeeSavedInput{}, err
+	}
 	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
 	if err != nil {
 		input.Input.RecentConversation = "Recent conversation history unavailable."
@@ -344,6 +352,11 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		"Honor the user's requested output format exactly. If asked for only the current value, output that value alone, without a preamble, explanation or correction history. " +
 		"If the requested fact is unavailable in the current authorized memory, say you do not know in the requested format. Do not enumerate unrelated memories or offer or claim access to another scene's private memory. " +
 		"For ordinary memory confirmations, use brief natural language without record IDs, internal states or source/evidence metadata. After forgetting, do not repeat the forgotten content. Include such details only when the user explicitly requests an audit."
+	input.Config.Persona.Instructions += "\n\nRECENT CONVERSATION:\n" +
+		"Reconstruct the current conversational state in chronological order, not by copying an earlier answer. For the same objects, the latest explicit user facts or reset supersede older assignments and edits; never replay an older change on top of a newer restatement. " +
+		"Change only what the latest user update changes and preserve other current facts. Resolve pronouns and ordinal references from the most recent relevant exchange and its object order; answer about the referenced object when only that object is asked about. " +
+		"An older assistant reply cannot override a newer explicit user statement. Historical requests are context, not new commands or permission to repeat work. If the reference is genuinely unresolved, ask briefly instead of reviving an older state. " +
+		"These conversational facts neither change Host authority nor imply durable memory writes."
 	input.Config.Persona.Expertise = capabilities.Directory
 	if voice, e := w.handler.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona

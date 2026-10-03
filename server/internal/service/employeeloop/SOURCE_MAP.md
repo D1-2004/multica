@@ -200,6 +200,15 @@ that principal's source. The projection states its fixed watermark, 24-hour
 window, message/byte bounds, and truncation. It does not claim complete provider
 history, authorize new work, or re-read history during a journal replay.
 
+New Host Persona snapshots additionally freeze chronological interpretation:
+the latest explicit facts/reset replace older assignments for the same objects,
+partial updates retain unaffected facts, and references use the nearest relevant
+exchange. Older assistant output cannot override newer user statements, and past
+requests are not new execution commands. This does not rewrite stored dialogue,
+change the shared BuildPrompt or request profile, or upgrade existing snapshots.
+Assembly/replay tests verify those boundaries; model semantics require real IM
+evidence rather than a canned model answer.
+
 Retired private memory suppresses only its exact scoped message evidence and
 the original job's associated replies in new projections. Audit rows stay intact;
 other messages, including ordinary temporary corrections, remain dialogue.
@@ -224,3 +233,38 @@ preparation consumes a reservation but creates no generation; cached responses
 create neither new requests nor effects. Historical snapshots keep their original
 request bytes. This model plan and the bounded recent-history snapshot share
 marker 6; no copied-kernel scheduler, model router, or follow-up pass is added.
+
+
+## Current tasks and successful continuation
+
+The fixed source's `task_addressing.go` binds work to a thread, source task or
+explicit task ID; a bare mention is not an address. Multica's bounded `t1`
+candidates are a Host adaptation, scoped to the admitted source/requester and
+scene, not a copied upstream implicit "latest task" resolver. `read_task` loads
+current PostgreSQL state before `continue_task` may resume a successful goal.
+`task_ledger.go` and `notification_context.go` supply the retained mechanism:
+assemble a new work packet from recorded actions, the current request and prior
+reports without a summary model. PostgreSQL retains the full ledger while only
+its injected projection is bounded; executor reports remain attributed reports.
+Resume, existing queue, Run and tool journal commit together. Existing dispatch,
+Redis wakeups and runtime claim remain the single execution path. A continuation notice follows its accepted source; steer keeps the original
+delivery anchor while its terminal fact identifies the actual correction source. Marker 9 gates these
+new tools and candidate snapshots; historical snapshots are replayed unchanged.
+
+
+The combined steer/continuation adapter preserves the existing Task Service
+steer backend and claim-exit barrier. Terminal provenance is checked at the
+Run's accepted input sequence: a committed `steer` or `resumed` ledger entry,
+its source-specific tool checkpoint, and the exact Task/Run/queue references.
+Steer rendering is verified with the existing `WithCorrections` builder; a
+mutable queue source override alone is insufficient. Subsequent successful
+continuations read all bounded corrections separately from recent ledger
+history, and reject overflow rather than omitting a binding condition. No
+additional model request, scheduler, or execution backend is introduced.
+
+The complete-correction reader is shared by steer and continuation, with a
+100-entry/64-KiB bound that rejects instead of trimming. Runtime delivery and
+execution provenance remain separate: the frozen original return address is
+not overwritten to identify a correction. Inherited completion constraints are
+proved from original accepted Task records, not dialogue or model self-report;
+current delivery still requires the current queue's provider-confirmed receipt.

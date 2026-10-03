@@ -39,6 +39,9 @@ type CompileInput struct {
 	Capabilities     []string
 	ReturnAddress    string
 	CompletionNotice CompletionNoticePolicy
+	// CompletionNoticeSource is the Host-verified original authorization when
+	// the current source inherits an earlier delivery constraint on this Task.
+	CompletionNoticeSource *PacketMaterial
 }
 
 // WorkPacket is deterministic compiler output. ContextUsed lists only refs that

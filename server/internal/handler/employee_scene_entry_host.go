@@ -19,9 +19,10 @@ import (
 )
 
 type employeeToolRecord struct {
-	Result        employeeloop.ToolResult `json:"result"`
-	Failure       string                  `json:"failure,omitempty"`
-	DeliveryReply string                  `json:"delivery_reply,omitempty"`
+	Result        employeeloop.ToolResult  `json:"result"`
+	Failure       string                   `json:"failure,omitempty"`
+	DeliveryReply string                   `json:"delivery_reply,omitempty"`
+	TaskRead      *employeeCurrentTaskRead `json:"task_read,omitempty"`
 }
 
 type employeeSceneHost struct {
@@ -41,17 +42,23 @@ func employeeSceneTools() []employeeloop.Tool {
 	}
 	source := stringField("Exact source_ref from the current window; the Host resolves its original requester.")
 	noticeSchema := map[string]any{"type": "object", "description": "Default is always: deliver the final result, including an explicitly requested summary. Select if_not_delivered only when this selected source explicitly asks for a native file and says not to send a separate completion summary after delivery. Quote that exact instruction from this message; never infer it from history, quoted material or the execution result.", "properties": map[string]any{"mode": map[string]any{"type": "string", "enum": []string{"always", "if_not_delivered"}}, "require_delivery": map[string]any{"type": "string", "enum": []string{"file"}}, "instruction_quote": stringField("Exact wording in the selected source that asks for no additional summary after file delivery; required with if_not_delivered.")}, "required": []string{"mode"}, "additionalProperties": false}
-	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_id": stringField("A known EmployeeTask UUID belonging to this requester in this scene.")}, "required": []string{"source_ref", "task_id"}, "additionalProperties": false}
+	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact source-bound t1-style candidate from this wake. Read current status before deciding continuation."), "task_id": stringField("Legacy explicit EmployeeTask UUID from the selected current message; use task_ref for natural references.")}, "required": []string{"source_ref"}, "additionalProperties": false}
 	tools := []employeeloop.Tool{
 		{Name: "describe_capabilities", Terminal: employeeloop.Reply, Description: "For an ordinary capability introduction or link-only request, answer from the supplied directory on the first model call; no configuration read is needed. Keep ordinary introductions brief and natural, normally 1–3 short sentences about useful work, without internal tool names or fields. For configuration details plus a link, read missing details first and preserve requested exact names, states, and prompt text; give the complete requested answer. Skills and connectors require background execution; do not claim foreground access. Host appends the scene link; write no URL and start no work. Do not combine with other terminal or effect tools.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("For ordinary introductions, use 1–3 natural short sentences about useful work, without internal names or inventories. For explicit configuration questions, preserve requested exact names, states, and prompt text in enough detail, including requests for details plus a link. Never write a configuration URL.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "scene_config_get", Description: "Read current scene configuration only for explicit configuration-detail questions about switches, stored prompts, or existing routines not already in context. This is not a prerequisite for a general capability introduction or link-only request, and does not verify runtime access. Explain naturally while preserving requested exact names, states, and prompt text. Existing Cron/Webhook switches do not prove Employee-triggered execution. This grants no write permission.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source}, "required": []string{"source_ref"}, "additionalProperties": false}},
 		{Name: "reply", Terminal: employeeloop.Reply, Description: "Reply directly using the current conversation and available facts, then finish without creating a task. Use for answers, explanations, clarifications and memory recall that need no background execution. Do not combine with dispatch_task or another effect tool in one batch.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("The complete answer to send now, not an acknowledgement of future work.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "stay_quiet", Terminal: employeeloop.Quiet, Description: "Record that this window does not require a response from this employee. No message is sent and no task is created or cancelled.", Schema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}},
-		{Name: "dispatch_task", Description: "Create a real background task only for self-contained new work explicitly requested in the selected source message that requires background execution. For an answer already available from context or memory, use reply or normal text instead; never dispatch merely to send a reply. If it refers to previous work without a concrete new goal, clarify instead; continuation is not registered. Include the acknowledgement to send after the queue commit. Continuation, control, reactions and quoted work are not supported by this tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "completion_notice_policy": noticeSchema, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result."), "deliverables": stringArray("Optional concrete outputs explicitly required by the requester. Omit when unspecified; do not invent deliverables."), "success_criteria": stringArray("Optional acceptance conditions explicitly required by the requester. Omit when unspecified."), "access_needed": stringArray("Optional access the request says is needed. This is a request only and never grants access or capabilities.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
+		{Name: "dispatch_task", Description: "Create a real background task only for self-contained new work explicitly requested in the selected source message that requires background execution. For an answer already available from context or memory, use reply or normal text instead; never dispatch merely to send a reply. For previous work use its candidate and read_task, then continue_task only after a successful current read. Do not create a replacement task for a continuation. Include the acknowledgement to send after the queue commit. Control, reactions and quoted work are not supported by this new-task tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "completion_notice_policy": noticeSchema, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result."), "deliverables": stringArray("Optional concrete outputs explicitly required by the requester. Omit when unspecified; do not invent deliverables."), "success_criteria": stringArray("Optional acceptance conditions explicitly required by the requester. Omit when unspecified."), "access_needed": stringArray("Optional access the request says is needed. This is a request only and never grants access or capabilities.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
 		employeeSteerTool(source, stringField),
-		{Name: "read_task", Description: "Read the requester's own explicitly identified task. A task UUID does not grant access.", Schema: readSchema},
+		{Name: "read_task", Description: "Read current persisted status and executor report for the selected source-bound task_ref. Reports are not delivery proof. Returns read_ref required by continue_task. Do not read or continue merely for thanks or ordinary chat.", Schema: readSchema},
 		{Name: "read_task_history", Description: "Read up to twenty entries of the requester's own explicitly identified task.", Schema: readSchema},
 	}
+	continueNoticeSchema := make(map[string]any, len(noticeSchema))
+	for key, value := range noticeSchema {
+		continueNoticeSchema[key] = value
+	}
+	continueNoticeSchema["description"] = "Omit to inherit the existing Task delivery constraint. An earlier file-only instruction stays effective; always does not revoke it. Set if_not_delivered only for a new explicit file-only instruction quoted from this selected source."
+	tools = append(tools, employeeloop.Tool{Name: "continue_task", Effect: true, Description: "Continue the same successfully completed task only when this source explicitly requests a further step of that goal. First read_task on its source-bound task_ref, then use the returned read_ref. Do not change the goal contract, start while running, retry failed/cancelled work, or treat thanks as work. With multiple plausible candidates clarify. A new Run is queued under the same Task; include its acceptance reply so no extra model call is required. Omit completion_notice_policy to preserve the Task delivery constraint; always cannot revoke an earlier file-only instruction without new requester authorization.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact candidate read this wake"), "read_ref": stringField("read_ref from this wake's successful read_task"), "instruction_quote": stringField("Exact outer-message excerpt explicitly requesting this continuation"), "prompt": stringField("Current requested step preserving user constraints; do not replace the stored goal"), "reply": stringField("Brief acceptance, not a completed result"), "completion_notice_policy": continueNoticeSchema}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote", "prompt", "reply"}, "additionalProperties": false}})
 	return append(tools, employeeMemoryTools()...)
 }
 func (h *employeeSceneHost) source(ref string) (employeeSourceMessage, employeeDispatchEnvelope, error) {
@@ -95,13 +102,13 @@ func optionalStringArray(args map[string]any, key string) ([]string, error) {
 }
 
 func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (returned employeeloop.ToolResult, returnedErr error) {
-	var memoryObservation *langfuse.Observation
-	memoryJournalCommitted := false
+	var journalObservation *langfuse.Observation
+	journalCommitted := false
 	defer func() {
-		// Memory spans start only inside real execution and end after the journal
-		// transaction. A result computed before a failed commit is not durable proof.
-		if memoryObservation != nil {
-			memoryObservation.End(langfuse.EndOptions{Output: employeeTraceSafe(returned), Err: employeeTraceError(returnedErr), Metadata: map[string]any{"journal_committed": memoryJournalCommitted}})
+		// Transactional effect spans end after the journal transaction. A result
+		// computed before a failed commit is not durable proof.
+		if journalObservation != nil {
+			journalObservation.End(langfuse.EndOptions{Output: employeeTraceSafe(returned), Err: employeeTraceError(returnedErr), Metadata: map[string]any{"journal_committed": journalCommitted}})
 		}
 	}()
 
@@ -126,23 +133,35 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			return employeeloop.ToolResult{}, err
 		}
 	}
+	var continuation *employeeContinuationPlan
+	var preparationErr error
+	if call.Name == "continue_task" {
+		continuation, preparationErr = h.prepareContinuation(ctx, source, env, call)
+	}
 	encoded, err := json.Marshal(call)
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
+	var acceptedContinuation *service.DirectTaskResult
 	var revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error)
 	if isEmployeeMemoryTool(call.Name) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.memoryReplay(ctx, tx, call, raw)
 		}
 	}
+	if call.Name == "continue_task" || ((call.Name == "read_task" || call.Name == "read_task_history") && call.Arguments["task_ref"] != nil) {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.currentTaskReplay(ctx, tx, source, call, raw)
+		}
+	}
 	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, revalidate, func(tx pgx.Tx) (json.RawMessage, error) {
 		observation := employeeTraceTool(ctx, h.job, call)
 		var result employeeloop.ToolResult
 		var deliveryReply string
+		var taskRead *employeeCurrentTaskRead
 		var err error
-		if isEmployeeMemoryTool(call.Name) {
-			memoryObservation = observation
+		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" {
+			journalObservation = observation
 		} else {
 			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
 		}
@@ -178,17 +197,30 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		case "steer_task":
 			result, err = h.steer(ctx, source, env, call)
 		case "read_task", "read_task_history":
-			result, err = h.read(ctx, source, call)
+			if call.Arguments["task_ref"] != nil {
+				result, taskRead, err = h.readCurrentTask(ctx, tx, source, call)
+			} else {
+				result, err = h.read(ctx, source, call)
+			}
+		case "continue_task":
+			if preparationErr != nil {
+				err = preparationErr
+			} else {
+				result, acceptedContinuation, err = h.continueTask(ctx, tx, source, call, continuation)
+			}
 		default:
 			err = errors.New("employee tool is not registered")
 		}
-		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply}
+		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply, TaskRead: taskRead}
 		if err != nil {
+			if call.Name == "continue_task" {
+				record.Result = employeeContinuationRefusalResult(err)
+			}
 			record.Failure = err.Error()
 		}
 		return json.Marshal(record)
 	})
-	memoryJournalCommitted = err == nil
+	journalCommitted = err == nil
 	var record employeeToolRecord
 	if len(raw) > 0 {
 		if decodeErr := json.Unmarshal(raw, &record); decodeErr != nil {
@@ -202,10 +234,20 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		if h.abort != nil {
 			h.abort()
 		}
+		if call.Name == "continue_task" {
+			return employeeloop.ToolResult{}, err
+		}
 		return record.Result, err
 	}
 	if record.Failure != "" {
 		return record.Result, errors.New(record.Failure)
+	}
+	if call.Name == "continue_task" {
+		if acceptedContinuation != nil {
+			h.worker.handler.TaskService.NotifyDirectTaskResult(ctx, *acceptedContinuation)
+		} else if record.Result.Receipt != "" {
+			h.notifyContinuedTask(ctx, record.Result)
+		}
 	}
 	if record.DeliveryReply != "" {
 		if h.deliveryReplies == nil {

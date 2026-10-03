@@ -51,7 +51,17 @@ func Compile(input CompileInput) (WorkPacket, error) {
 	default:
 		return WorkPacket{}, fmt.Errorf("%w: explicit history state is required", ErrInvalid)
 	}
-	input.CompletionNotice, err = NormalizeCompletionNoticePolicy(input.CompletionNotice, input.Source.Ref)
+	noticeSourceRef := input.Source.Ref
+	if input.CompletionNoticeSource != nil {
+		if input.CompletionNotice.Mode != CompletionNoticeIfNotDelivered || strings.TrimSpace(input.CompletionNoticeSource.Body) == "" {
+			return WorkPacket{}, fmt.Errorf("%w: inherited notice requires original authorization material", ErrInvalid)
+		}
+		if err := validatePacketMaterial(input, *input.CompletionNoticeSource); err != nil {
+			return WorkPacket{}, err
+		}
+		noticeSourceRef = input.CompletionNoticeSource.Ref
+	}
+	input.CompletionNotice, err = NormalizeCompletionNoticePolicy(input.CompletionNotice, noticeSourceRef)
 	if err != nil {
 		return WorkPacket{}, err
 	}

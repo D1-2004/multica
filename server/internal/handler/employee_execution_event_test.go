@@ -393,7 +393,7 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 	if err := json.Unmarshal(state, &skip); err != nil {
 		t.Fatal(err)
 	}
-	if !unchanged || skip["version"] != float64(1) || skip["proof_version"] != float64(2) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 4 {
+	if !unchanged || skip["version"] != float64(1) || skip["proof_version"] != float64(employeeExecutionProofVersion) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 4 {
 		t.Fatal(unchanged, string(state))
 	}
 	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 0 {
@@ -410,7 +410,7 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 }
 
 func TestEmployeeExecutionEventDoesNotDowngradeSettledProof(t *testing.T) {
-	for _, proof := range []int{2, 3} {
+	for _, proof := range []int{employeeExecutionProofVersion, employeeExecutionProofVersion + 1} {
 		t.Run(fmt.Sprint(proof), func(t *testing.T) {
 			f := employeeNoticeDatabase(t, "succeeded", false, false)
 			ctx := context.Background()
@@ -480,7 +480,7 @@ func TestEmployeeExecutionEventRechecksNewerProofAfterSceneWait(t *testing.T) {
 			t.Fatal(readCtx.Err())
 		}
 	}
-	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',3,'run_id',$2::text,'reason','newer_proof_rejected')) WHERE id=$1::uuid`, f.queueID, f.runID); err != nil {
+	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',$3::int,'run_id',$2::text,'reason','newer_proof_rejected')) WHERE id=$1::uuid`, f.queueID, f.runID, employeeExecutionProofVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := holder.Commit(ctx); err != nil {
