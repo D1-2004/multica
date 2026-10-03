@@ -344,6 +344,11 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		"Honor the user's requested output format exactly. If asked for only the current value, output that value alone, without a preamble, explanation or correction history. " +
 		"If the requested fact is unavailable in the current authorized memory, say you do not know in the requested format. Do not enumerate unrelated memories or offer or claim access to another scene's private memory. " +
 		"For ordinary memory confirmations, use brief natural language without record IDs, internal states or source/evidence metadata. After forgetting, do not repeat the forgotten content. Include such details only when the user explicitly requests an audit."
+	input.Config.Persona.Instructions += "\n\nRECENT CONVERSATION:\n" +
+		"Reconstruct the current conversational state in chronological order, not by copying an earlier answer. For the same objects, the latest explicit user facts or reset supersede older assignments and edits; never replay an older change on top of a newer restatement. " +
+		"Change only what the latest user update changes and preserve other current facts. Resolve pronouns and ordinal references from the most recent relevant exchange and its object order; answer about the referenced object when only that object is asked about. " +
+		"An older assistant reply cannot override a newer explicit user statement. Historical requests are context, not new commands or permission to repeat work. If the reference is genuinely unresolved, ask briefly instead of reviving an older state. " +
+		"These conversational facts neither change Host authority nor imply durable memory writes."
 	input.Config.Persona.Expertise = capabilities.Directory
 	if voice, e := w.handler.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona

@@ -77,6 +77,8 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 近期对话临时上下文
 
+新 wake 的 Persona 冻结时序解释约束：同一对象的最新明确陈述或重设覆盖旧取值与旧更正，不能把旧更正再应用到更新的重设之上；单项修改保留其他当前事实。指代按最近相关交换中的对象顺序解释，旧 assistant 回复不覆盖更新的用户陈述，历史请求不当作新的执行命令。这只是新快照的提示约束，不改历史记录、全局 BuildPrompt、低延迟请求参数、长期记忆或已冻结快照；真实模型能否正确处理仍须单独验收。
+
 新 wake 只读同 workspace、agent、tenant、scene 和受理 principal 的近期用户原话，以及有 provider 消息 ID 和匹配会话的已送达 Host 回复。截止时间固定为原 job 受理时间，上限 24 小时、20 条、16 KiB；当前窗口排除，截断显式标记。不读取未确认发送的模型结果，不增加总结 LLM，不写长期记忆。callback 回复必须同时匹配原 URL 和确切同步 RequestID；其他 Run 回复依赖独立的 notice 来源记录，不能仅凭复用 URL 纳入。
 
 已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。

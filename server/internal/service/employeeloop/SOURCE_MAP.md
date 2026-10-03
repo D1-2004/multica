@@ -200,6 +200,15 @@ that principal's source. The projection states its fixed watermark, 24-hour
 window, message/byte bounds, and truncation. It does not claim complete provider
 history, authorize new work, or re-read history during a journal replay.
 
+New Host Persona snapshots additionally freeze chronological interpretation:
+the latest explicit facts/reset replace older assignments for the same objects,
+partial updates retain unaffected facts, and references use the nearest relevant
+exchange. Older assistant output cannot override newer user statements, and past
+requests are not new execution commands. This does not rewrite stored dialogue,
+change the shared BuildPrompt or request profile, or upgrade existing snapshots.
+Assembly/replay tests verify those boundaries; model semantics require real IM
+evidence rather than a canned model answer.
+
 Retired private memory suppresses only its exact scoped message evidence and
 the original job's associated replies in new projections. Audit rows stay intact;
 other messages, including ordinary temporary corrections, remain dialogue.
