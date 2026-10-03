@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:6]"
+const EmployeeLoopReplicaMarker = "[employee-loop:7]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 

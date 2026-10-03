@@ -135,7 +135,7 @@ Entry points:
   running task, or the only one finished within 30 minutes; otherwise it returns
   candidates and the model must name `task_id`. The successor answers the
   correction message (`employee_job_id`/`employee_source_ref` of the new job).
-  The tool requires replica marker `[employee-loop:6]`.
+  The tool requires replica marker `[employee-loop:7]`.
 
 FC sandboxes need no special handling: the post-commit terminal observer runs
 the task-owned stop collection, the acknowledgement launches the successor, and

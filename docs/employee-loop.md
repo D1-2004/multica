@@ -55,6 +55,14 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 通知行新建事务提交后记录 `employee_run_notice_recorded`，包含 `state`（`enqueued` / `suppressed`）、`reason`、执行结果状态及 workspace/agent/scene/job/task/run/queue/action ID。这里的 `task_id` 是 EmployeeTask，`queue_task_id` 是实际执行任务。晚到文件导致已入队通知真正转为抑制时记录 `employee_run_notice_state_changed`；重放和回滚不重复记录成功事件。事件不含正文、请求原句、产物链接或凭据，`enqueued` 仅证明通知意图提交，不等于钉钉送达。
 
 
+## 纠正在途任务（steer）
+
+`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务：Host 选目标，请求者只有一个运行中的任务、或 30 分钟内只结束过一个任务时直接作用于它；有多个候选时把候选列表交回模型，由模型带 `task_id` 再调用或追问请求者，不新建 Task。
+
+执行中的 Run 被取消并挂上退出门闩，进程确认退出后续跑才能被认领；续跑带着全部纠正和原工作包，在同一 runtime 上接回原 provider session 与 workdir。尚未认领的 Run 直接吸收纠正。续跑的结果回复到纠正这条消息；被替换的旧 Run 不发取消通知。前台调用预算不变，一次模型调用即可完成纠正与接单回复。
+
+带结构锚点（continuation、task_finished 任务引用或 `control.targetExternalTaskID`）进入 Employee 的事件仍保持 `employee_continuation_not_ready` held；本工具处理没有这类锚点、由模型判断为纠正的普通消息（包括普通引用回复）。
+
 ## Execution Event 确定性消费
 
 可验证原场域来源的 Employee Direct Run 终态，由现有周期恢复入口补录 `employee.execution` / `execution.terminal` 事件。幂等键是 Run ID；payload 只含原 task/run/queue、goal revision、result_ref、scene、job 和原 receipt 引用，occurred_at 使用 Run 的数据库完成时间。当前 Task revision 只在消费时判定，不进入事实指纹。结果正文保留在原记录中，不重复导出。
@@ -83,7 +91,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:6]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前 `steer_task`、共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:7]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
