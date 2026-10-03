@@ -91,7 +91,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前 `steer_task`、共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:7]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前 `steer_task`、共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:8]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
@@ -119,3 +119,9 @@ lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八�
 新输入快照还冻结记忆回复的表达约束：遵守用户限定的输出格式，只回答目标事实；缺失时简答不知道，不列举无关记录或承诺访问其他场域私有记忆。普通确认不展示 record ID、内部状态及来源字段，忘记后不复述被忘内容；用户明确要求审计细节时例外。该约束仅追加到新快照的 Persona 与工具描述，不修改全局 BuildPrompt、历史快照、权限或调用预算，该表达增量不单独提升 marker。
 
 本批不接 HumanStated、verified Distill、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。
+
+## 前台模型快速请求参数
+
+新计划冻结 `request_profile=employee-fast-v1`，在模型 journal 保存前设置 4096 输出 token 上限并关闭 thinking；DeepSeek Flash 使用原生 `thinking.type=disabled`，不传 `reasoning_effort=none`。保留普通文本首轮直答和 Quiet，不强制工具调用。发送层不得在记录后改写请求，Langfuse input 与实际 HTTP 一致，并记录 profile 元数据。旧计划没有 profile 时保留原请求字节及缓存重放。此增量由 marker 8 保护，不修改全局模型选择。
+
+预发三轮历史验收中，首轮和纠正轮正确送达，但中间指代轮三个配置候选依次超时；准确历史已进入该失败请求。此参数缺口已用真实 HTTP、journal、Langfuse 一致性回归修复，仍须新预发 E2E 复验，不能断言它是所有超时的唯一根因。

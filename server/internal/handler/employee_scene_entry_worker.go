@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:7]"
+const EmployeeLoopReplicaMarker = "[employee-loop:8]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
@@ -471,6 +471,9 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 		}
 		delegate = attempt
 		routeMetadata = map[string]any{"provider": ref.Provider, "upstream_model": ref.Model, "model_ref": ref.String(), "configuration_revision": m.routePlan.Revision, "candidate_index": m.candidate, "provider_configuration_revision": attempt.ConfigurationRevision()}
+		if m.routePlan.RequestProfile != "" {
+			routeMetadata["request_profile"] = m.routePlan.RequestProfile
+		}
 	}
 	if delegate == nil {
 		cancelCall()
