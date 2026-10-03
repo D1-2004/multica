@@ -56,7 +56,10 @@ type MessageFile struct {
 var (
 	ErrMessageFileTooLarge    = errors.New("DWS message file exceeds the size limit")
 	ErrMessageFileUnavailable = errors.New("DWS message file download is unavailable")
-	errMessageUnverified      = errors.New("DWS message resources could not be verified")
+	// ErrMessageUnverified: the provider's record is not the exact message
+	// asked for (identity, conversation, sender or resource list); retrying
+	// the same read does not change that.
+	ErrMessageUnverified = errors.New("DWS message resources could not be verified")
 )
 
 const maxMessageResourceIDBytes = 256
@@ -65,7 +68,7 @@ const maxMessageResourceIDBytes = 256
 // and returns its own structured resources.
 func (c CLI) ReadMessageResources(ctx context.Context, dir, conversationID, messageID string) (MessageResources, error) {
 	if !validResourceToken(conversationID) || !validResourceToken(messageID) {
-		return MessageResources{}, errMessageUnverified
+		return MessageResources{}, ErrMessageUnverified
 	}
 	raw, err := c.messageOp(ctx, dir, []string{"chat", "message", "list-by-ids", "--msg-ids", messageID, "--format", "json"}, func(client *dws.Client) ([]byte, error) {
 		// Not MessagesByIDsOutput: its resourceRefs add IDs parsed from text.
@@ -85,15 +88,15 @@ func (c CLI) ReadMessageResources(ctx context.Context, dir, conversationID, mess
 // response and projects its identity, sender and own resources.
 func ParseMessageResources(raw []byte, conversationID, messageID string) (MessageResources, error) {
 	if !validResourceToken(conversationID) || !validResourceToken(messageID) {
-		return MessageResources{}, errMessageUnverified
+		return MessageResources{}, ErrMessageUnverified
 	}
 	message, err := parseExactMessage(raw, conversationID, messageID)
 	if err != nil {
-		return MessageResources{}, errMessageUnverified
+		return MessageResources{}, ErrMessageUnverified
 	}
 	sender, err := parseMessageSender(raw, conversationID, messageID)
 	if err != nil {
-		return MessageResources{}, errMessageUnverified
+		return MessageResources{}, ErrMessageUnverified
 	}
 	var body struct {
 		Resources []struct {
@@ -110,19 +113,19 @@ func ParseMessageResources(raw []byte, conversationID, messageID string) (Messag
 		} `json:"quotedMessage"`
 	}
 	if json.Unmarshal(message, &body) != nil {
-		return MessageResources{}, errMessageUnverified
+		return MessageResources{}, ErrMessageUnverified
 	}
 	out := MessageResources{MessageID: messageID, ConversationID: conversationID, SenderOpenDingTalkID: sender}
 	seen := map[string]MessageResource{}
 	for _, r := range body.Resources {
 		resource := MessageResource{ID: strings.TrimSpace(r.ID), IDType: strings.TrimSpace(r.IDType), Type: strings.ToLower(strings.TrimSpace(r.Type))}
 		if !validResourceToken(resource.ID) || (resource.IDType != "fileId" && resource.IDType != "mediaId") || !validResourceToken(resource.Type) {
-			return MessageResources{}, errMessageUnverified
+			return MessageResources{}, ErrMessageUnverified
 		}
 		if prior, ok := seen[resource.ID]; ok {
 			if prior != resource {
 				// One ID with two meanings cannot name a single resource.
-				return MessageResources{}, errMessageUnverified
+				return MessageResources{}, ErrMessageUnverified
 			}
 			continue
 		}
@@ -136,7 +139,7 @@ func ParseMessageResources(raw []byte, conversationID, messageID string) (Messag
 			quoted.ConversationID = conversationID
 		}
 		if quoted.ConversationID != conversationID {
-			return MessageResources{}, errMessageUnverified
+			return MessageResources{}, ErrMessageUnverified
 		}
 		if validResourceToken(quoted.MessageID) {
 			out.Quoted = &quoted
