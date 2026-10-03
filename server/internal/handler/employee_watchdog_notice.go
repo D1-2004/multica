@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -15,36 +17,102 @@ import (
 )
 
 // ResolveEmployeeWatchdogTarget implements service.EmployeeWatchdogTargetResolver.
-// The anchor is the accepted source of the execution an episode belongs to:
-// the same conversation, requester, DWS identity and tenant fences the Run's
-// final notice uses (employeeNoticeTarget). It never uses the current mode or
-// a guessed DM recipient. The result is a scene notice: it closes no
-// dispatch, quotes no message and carries no Task, so it is not a Run reply.
-func (h *Handler) ResolveEmployeeWatchdogTarget(ctx context.Context, tx pgx.Tx, ref service.EmployeeWatchdogNoticeRef) (dingtalkresponse.ActionInput, error) {
+// For an execution the anchor is the accepted source of that Run: the same
+// conversation, requester, DWS identity and tenant fences the Run's final
+// notice uses (employeeNoticeTarget). For a goal without an active Run (a
+// lifecycle v2 wait) it is the Task's origin from the TaskOriginRegistry, the
+// same anchor a task wake replies to. It never uses the current mode or a
+// guessed DM recipient. The result is a scene notice: it closes no dispatch,
+// quotes no message and carries no Task, so it is not a Run reply.
+func (h *Handler) ResolveEmployeeWatchdogTarget(ctx context.Context, tx pgx.Tx, ref service.EmployeeWatchdogNoticeRef) (service.EmployeeWatchdogTarget, error) {
 	if h == nil || tx == nil {
-		return dingtalkresponse.ActionInput{}, errors.New("employee watchdog target services are unavailable")
+		return service.EmployeeWatchdogTarget{}, errors.New("employee watchdog target services are unavailable")
+	}
+	if ref.RunID == "" && ref.QueueTaskID == "" {
+		return h.resolveEmployeeWatchdogOrigin(ctx, tx, ref)
 	}
 	if ref.RunID == "" || ref.QueueTaskID == "" {
-		return dingtalkresponse.ActionInput{}, &service.EmployeeWatchdogHold{Reason: "delivery_anchor_unavailable"}
+		return service.EmployeeWatchdogTarget{}, &service.EmployeeWatchdogHold{Reason: "delivery_anchor_unavailable"}
 	}
 	b, err := h.loadEmployeeWatchdogBinding(ctx, tx, ref)
 	if err == nil {
 		var target dingtalkresponse.ActionInput
 		target, _, err = h.employeeNoticeTarget(ctx, tx, b)
 		if err == nil {
-			return dingtalkresponse.ActionInput{
-				WorkspaceID: target.WorkspaceID, AgentID: target.AgentID, DWSUID: target.DWSUID, DWSOrgID: target.DWSOrgID,
-				SceneID: target.SceneID, ConversationID: target.ConversationID, SenderOpenDingTalkID: target.SenderOpenDingTalkID,
-				IsGroup: target.IsGroup, ShowAITag: target.ShowAITag, DWSEnvironment: target.DWSEnvironment,
-			}, nil
+			out := service.EmployeeWatchdogTarget{Input: employeeWatchdogSceneNotice(target)}
+			// The Run's source job admitted the requester's message: its
+			// principal owns the scene dialogue the notice joins.
+			if err = tx.QueryRow(ctx, `SELECT principal_id::text FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&out.HistoryPrincipalID); err != nil {
+				return service.EmployeeWatchdogTarget{}, err
+			}
+			if receipt, _, ok := strings.Cut(b.SourceRef, "/"); ok {
+				if _, perr := util.ParseUUID(receipt); perr == nil {
+					out.OriginReceiptID = receipt
+				}
+			}
+			return out, nil
 		}
 	}
 	var held *employeeNoticeHold
 	if errors.As(err, &held) {
-		return dingtalkresponse.ActionInput{}, &service.EmployeeWatchdogHold{Reason: held.reason}
+		return service.EmployeeWatchdogTarget{}, &service.EmployeeWatchdogHold{Reason: held.reason}
 	}
 	// errEmployeeNoticeSourcePending and database errors are retried later.
-	return dingtalkresponse.ActionInput{}, err
+	return service.EmployeeWatchdogTarget{}, err
+}
+
+// resolveEmployeeWatchdogOrigin addresses a goal without an active Run through
+// its Task origin, re-checking the scene directory, tenant and identity.
+func (h *Handler) resolveEmployeeWatchdogOrigin(ctx context.Context, tx pgx.Tx, ref service.EmployeeWatchdogNoticeRef) (service.EmployeeWatchdogTarget, error) {
+	hold := func(reason string) (service.EmployeeWatchdogTarget, error) {
+		return service.EmployeeWatchdogTarget{}, &service.EmployeeWatchdogHold{Reason: reason}
+	}
+	if h.EmployeeSceneWorker == nil {
+		return hold("task_origin_unavailable")
+	}
+	scope := employeeentry.Scope{WorkspaceID: ref.Scope.WorkspaceID, AgentID: ref.Scope.AgentID, TenantOrgID: ref.Scope.TenantOrgID, SceneID: ref.Scope.Scene.SceneID}
+	origin, err := h.EmployeeSceneWorker.TaskOrigin(ctx, tx, scope, ref.TaskID)
+	var originHold *employeeentry.TaskOriginHold
+	switch {
+	case errors.As(err, &originHold):
+		return hold(originHold.Reason)
+	case errors.Is(err, employeeentry.ErrNotFound), errors.Is(err, employeeentry.ErrInvalid):
+		return hold("task_origin_missing")
+	case errors.Is(err, employeeentry.ErrTaskWakeOrigin):
+		return hold("task_origin_unsupported")
+	case err != nil:
+		return service.EmployeeWatchdogTarget{}, err
+	}
+	if origin.Task.RequesterRef != ref.RequesterRef {
+		return hold("task_origin_requester_changed")
+	}
+	view := &Handler{Queries: db.New(tx)}
+	job := employeeentry.Job{Scope: scope}
+	registered, err := employeeSceneFence(ctx, view, job)
+	if errors.Is(err, scene.ErrNotFound) || errors.Is(err, scene.ErrStaleTenant) || errors.Is(err, scene.ErrUnresolved) {
+		return hold("tenant_revoked")
+	}
+	if err != nil {
+		return service.EmployeeWatchdogTarget{}, err
+	}
+	in, err := employeeTaskWakeDelivery(ctx, view.Queries, job, origin, registered, "")
+	var wakeHold *employeeTaskWakeHold
+	if errors.As(err, &wakeHold) {
+		return hold(wakeHold.reason)
+	}
+	if err != nil {
+		return service.EmployeeWatchdogTarget{}, err
+	}
+	return service.EmployeeWatchdogTarget{Input: employeeWatchdogSceneNotice(in), HistoryPrincipalID: origin.HistoryPrincipalID, OriginReceiptID: origin.ReceiptID}, nil
+}
+
+// employeeWatchdogSceneNotice keeps only the provider address of a target.
+func employeeWatchdogSceneNotice(target dingtalkresponse.ActionInput) dingtalkresponse.ActionInput {
+	return dingtalkresponse.ActionInput{
+		WorkspaceID: target.WorkspaceID, AgentID: target.AgentID, DWSUID: target.DWSUID, DWSOrgID: target.DWSOrgID,
+		SceneID: target.SceneID, ConversationID: target.ConversationID, SenderOpenDingTalkID: target.SenderOpenDingTalkID,
+		IsGroup: target.IsGroup, ShowAITag: target.ShowAITag, DWSEnvironment: target.DWSEnvironment,
+	}
 }
 
 // loadEmployeeWatchdogBinding loads the exact Task/Run/queue binding for an
