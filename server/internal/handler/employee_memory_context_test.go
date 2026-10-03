@@ -27,7 +27,7 @@ func TestEmployeeMemoryGroupSnapshotOmitsPrivateButLookupStillWorks(t *testing.T
 	sharedScope := privateScope
 	sharedScope.Kind = employeememory.ScopeScene
 	sharedScope.PrincipalID = ""
-	if _, err := f.h.EmployeeMemory.Record(ctx, sharedScope, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "shared", Insight: "SCENE_SHARED", Confidence: 4}, employeememory.TrustedEvidence{SourceID: "shared", EvidenceID: "shared", ActorID: source.RequesterRef}); err != nil {
+	if _, err := f.h.EmployeeMemory.Record(ctx, sharedScope, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "shared", Insight: "SCENE_SHARED", Confidence: 4, Source: employeememory.LearningSourceObserved}, employeememory.TrustedEvidence{SourceID: "shared", EvidenceID: "shared", ActorID: source.RequesterRef}); err != nil {
 		t.Fatal(err)
 	}
 	// Wire labels cannot turn an admitted group into a private conversation.
@@ -67,7 +67,7 @@ func TestEmployeeMemoryDMStillAnswersFromFirstRequest(t *testing.T) {
 	f.command.Event.Data.Conversation.Type = "single"
 	host, _, source := employeeMemoryHost(t, f, dc, []DispatchMessage{{OpenMsgID: "dm-query", Text: "What is the project code?", SenderOpenDingTalkID: "requester-open-id"}})
 	ctx := context.Background()
-	if _, err := f.h.EmployeeMemory.Record(ctx, employeeMemoryScope(host, source), employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "project-code", Insight: "DM_CURRENT_VALUE", Confidence: 4}, employeememory.TrustedEvidence{SourceID: "dm-seed", EvidenceID: "dm-seed", ActorID: source.RequesterRef}); err != nil {
+	if _, err := f.h.EmployeeMemory.Record(ctx, employeeMemoryScope(host, source), employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "project-code", Insight: "DM_CURRENT_VALUE", Confidence: 4, Source: employeememory.LearningSourceObserved}, employeememory.TrustedEvidence{SourceID: "dm-seed", EvidenceID: "dm-seed", ActorID: source.RequesterRef}); err != nil {
 		t.Fatal(err)
 	}
 	input, err := host.worker.buildInput(ctx, host.job, host.envelopes, host.envelopes)
