@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +57,7 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 	effective, _ := mergeTaskContext(append([]contextcap.ContextLayer{global}, layers...)...)
 	out := employeeCapabilityContext{Prompt: effective.PromptBlock(), Directory: []string{
 		"Internal execution catalog. Skills/connectors/MCP, including DWS/dws-shortcuts, run in background tasks, not this foreground. Configured entries do not prove access; verify when executing. Missing entries do not prove absence.",
-		"For ordinary capability introductions or link-only requests, use this directory and call describe_capabilities on the first model call. Do not call scene_config_get merely for a more accurate introduction; it cannot verify runtime access. Host appends the link and how long it stays valid; never invent a URL or state its lifetime yourself.",
+		"For ordinary capability introductions or link-only requests, use this directory and call describe_capabilities on the first model call. Do not call scene_config_get merely for a more accurate introduction; it cannot verify runtime access. Host appends the link and how long it stays valid; never invent a URL or state its lifetime yourself. History shows earlier links only as " + employeeOmittedConfigLink + "; never copy or rewrite one: call describe_capabilities again for a fresh link.",
 		"Only use scene_config_get when the user explicitly asks for configuration details (exact switches, stored prompts, or existing routines) not already in context. For explicit configuration questions, preserve exact skill names, switch states, and stored prompt text as requested; answer fully, including when a link is also requested.",
 		"For ordinary introductions, reply like a colleague: normally 1–3 short sentences, not a configuration inventory. Describe useful work, not internal tool names, skill package names, Direct, or configuration fields. Say you can arrange executor work; never claim you can call DWS or shell here. Mention access uncertainty briefly only when material.",
 		employeeForegroundBoundary,
@@ -238,6 +239,69 @@ func (h *employeeSceneHost) capabilityReply(ctx context.Context, tx pgx.Tx, repl
 		label = "本单聊能力配置"
 	}
 	return strings.TrimSpace(reply) + "\n\n[" + label + "](" + result.DingTalkURL + ")（" + strconv.Itoa(int(configLinkValidFor(result)/time.Minute)) + " 分钟内有效）"
+}
+
+// employeeOmittedConfigLink stands in for a configuration link in history the
+// model reads. The redaction placeholder kept the Markdown link shape, and a
+// model copied "[本群能力配置]([configuration link])" into a reply as if it were
+// a link (2026-10-03, Qwen-DWS group).
+const employeeOmittedConfigLink = "[earlier configuration link omitted]"
+
+// employeeCopiedConfigLink is a link whose target was redacted, with the
+// Host's validity suffix when present.
+var employeeCopiedConfigLink = regexp.MustCompile(`\[[^\]\n]*\]\(` + regexp.QuoteMeta(inboundcoord.ConfigLinkPlaceholder) + `\)(?:[（(][^）)\n]*有效[）)])?`)
+
+var employeeBlankLines = regexp.MustCompile(`\n{3,}`)
+
+// employeeHistoryConfigLinks redacts configuration links in history and
+// leaves a marker that does not read as a link.
+func employeeHistoryConfigLinks(text string) string {
+	text = employeeConfigLinksInText(text)
+	if !strings.Contains(text, inboundcoord.ConfigLinkPlaceholder) {
+		return text
+	}
+	text = employeeCopiedConfigLink.ReplaceAllString(text, employeeOmittedConfigLink)
+	return strings.ReplaceAll(text, inboundcoord.ConfigLinkPlaceholder, employeeOmittedConfigLink)
+}
+
+func employeeHasCopiedConfigLink(reply string) bool {
+	return strings.Contains(reply, inboundcoord.ConfigLinkPlaceholder) || strings.Contains(reply, employeeOmittedConfigLink)
+}
+
+// employeeWithoutCopiedConfigLinks removes dead link copies from a reply.
+func employeeWithoutCopiedConfigLinks(reply string) string {
+	reply = employeeCopiedConfigLink.ReplaceAllString(reply, "")
+	reply = strings.ReplaceAll(reply, inboundcoord.ConfigLinkPlaceholder, "")
+	reply = strings.ReplaceAll(reply, employeeOmittedConfigLink, "")
+	return strings.TrimSpace(employeeBlankLines.ReplaceAllString(reply, "\n\n"))
+}
+
+// repairCopiedConfigLinks handles a reply that copied an earlier link from
+// history instead of calling describe_capabilities. The copy points nowhere;
+// the intent was to hand out the link, so the Host mints a fresh one the same
+// way, journaled like a tool so a replay neither mints again nor changes the
+// reply. A reply that already carries a Host-minted link only loses the copy,
+// and a failed mint still removes it.
+func (h *employeeSceneHost) repairCopiedConfigLinks(ctx context.Context, outcome *employeeloop.Outcome) {
+	if outcome.Kind != employeeloop.Reply || !employeeHasCopiedConfigLink(outcome.Reply) {
+		return
+	}
+	reply := employeeWithoutCopiedConfigLinks(outcome.Reply)
+	outcome.Reply = reply
+	if inboundcoord.RedactConfigLinks(reply) != reply || h.worker.store == nil {
+		return
+	}
+	input, err := json.Marshal(map[string]string{"reply": reply})
+	if err != nil {
+		return
+	}
+	raw, err := h.worker.store.ExecuteTool(ctx, h.job, "host:copied-config-link", input, nil, func(tx pgx.Tx) (json.RawMessage, error) {
+		return json.Marshal(h.capabilityReply(ctx, tx, reply))
+	})
+	var minted string
+	if err == nil && json.Unmarshal(raw, &minted) == nil && strings.HasPrefix(minted, reply) {
+		outcome.Reply = minted
+	}
 }
 
 // Attach only the Host suffix after the loop has composed every accepted reply.

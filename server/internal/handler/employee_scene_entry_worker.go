@@ -263,6 +263,7 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 				saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
 				if err == nil {
 					host.attachCapabilityReplies(&saved.Outcome)
+					host.repairCopiedConfigLinks(runCtx, &saved.Outcome)
 				}
 				if err != nil {
 					saved.Failure = err.Error()

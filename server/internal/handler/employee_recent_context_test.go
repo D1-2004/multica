@@ -131,7 +131,7 @@ func TestEmployeeRecentContextHelperFencesAndProjectsConfirmedSources(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"历史原话，小林蓝、小周绿", "[configuration link]", "在，需要我帮你做什么？"} {
+			for _, want := range []string{"历史原话，小林蓝、小周绿", employeeOmittedConfigLink, "在，需要我帮你做什么？"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("recent context lacks %q: %s", want, text)
 				}

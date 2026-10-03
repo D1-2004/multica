@@ -41,7 +41,7 @@ func (w *EmployeeSceneWorker) recentConversation(ctx context.Context, job employ
 		return "", err
 	}
 	for i := range history.Messages {
-		history.Messages[i].Text = employeeConfigLinksInText(history.Messages[i].Text)
+		history.Messages[i].Text = employeeHistoryConfigLinks(history.Messages[i].Text)
 		history.Messages[i].Speaker = employeeConfigLinksInText(history.Messages[i].Speaker)
 		history.Messages[i].SpeakerRef = employeeConfigLinksInText(history.Messages[i].SpeakerRef)
 	}
