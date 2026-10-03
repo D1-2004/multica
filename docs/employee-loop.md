@@ -151,3 +151,64 @@ lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八�
 新输入快照还冻结记忆回复的表达约束：遵守用户限定的输出格式，只回答目标事实；缺失时简答不知道，不列举无关记录或承诺访问其他场域私有记忆。普通确认不展示 record ID、内部状态及来源字段，忘记后不复述被忘内容；用户明确要求审计细节时例外。该约束仅追加到新快照的 Persona 与工具描述，不修改全局 BuildPrompt、历史快照、权限或调用预算，该表达增量不单独提升 marker。
 
 本批不接 HumanStated、verified Distill、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。
+
+## Task 生命周期 v2（读取端，2026-10-03）
+
+`employee_task` 新增三列：`lifecycle_version`（1|2）、`completion_mode`（single_run|explicit_goal）和 `autonomous_rounds`。
+- 旧行和旧二进制写入的行一律为 v1/single_run，不回填。
+- Task 状态新增 `waiting`。数据库约束 v1 不能处于 waiting、v2 不能处于 failed，且 v2 只用于 employee 场域的 Direct Task。Run 的状态集合不变。
+
+所有 Task 状态写入都经过同一个转移入口，按版本和原因校验。拒绝时返回带原因的 `LifecycleError`，`errors.Is` 仍匹配原有错误类型。
+
+v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标：
+- 有未满足的必需等待时进入 waiting，否则进入 ready；
+- Run 失败后目标回到 ready，等待决策，不会自动重试。
+
+**等待事实**
+- 等待事实存于 `employee_task_wait`，kind 取值为 collection / human_input / schedule / task / external。Task 的状态只是这些事实的投影。
+- `task` 用于 blocked_by 依赖：只有上游 Task 真正进入终态才能释放。这一条的接线尚未完成。
+
+**`CompleteGoal` 的条件**
+- 必须同时满足：当前版本、当前 goal_revision、当前输入水位都对得上；没有未满足的必需等待；没有在跑或未确认退出的执行者。
+- 还必须有真实执行或证据引用。零工作量返回 not_ready。
+- 已被人工停止的目标返回 stopped。
+- 同源重放返回同一条 entry；第二个来源返回 already_completed。
+
+**停止与重开**
+- 人工停止对 v2 是终态，同时关闭所有未满足的等待。
+- 目标最近一次 Run 失败，或被取消而非被 steer 中断时，普通纠正不能重试它。
+- 已完成的目标只能通过修正升 goal_revision 才能重开。
+
+**发布约束**
+- 本版只上线读取端，生产代码不会创建 v2 Task。
+- 第一个 v2 producer 必须在全部副本都具备对应的 `[employee-loop:N]` 后才能开启。原因：旧二进制会把 v2 Run 成功当成目标完成。
+
+## 跨场域收集账本（taskinput，读取端）
+
+`internal/taskinput` 保存四类领域事实：collection、invitation、input 和 ready intent。没有外键；按工作区删除。
+
+- **答复绑定**：沿回复链最多 8 跳，到达邀请消息才算强绑定。群里没有引用的消息不算答复；单聊里只有唯一一个待答邀请时才接受无引用答复；同一人有多个待答邀请时返回歧义，不猜。本 Agent 自己、任何 bot、卡片和系统消息一律不计入。
+- **未登记私聊场域的参与者**：对还没有私聊场域的人，邀请以 `pending_scene` 写入，送达回执拿到会话后按 dm 回填场域；不按人造场域。
+- **收齐判定**：最后一个必答槽位填满时，在同一事务里写入唯一的 ready intent。
+- **外发检查**：发送前按最不受信的读者对最终字节做检查。
+
+本版没有接入工具或 producer，线上行为不变。
+
+## Webhook 可信入口（2026-10-03）
+
+**端点绑定**
+- 绑定内容包括：workspace、智能体、场域、租户、创建者、派发方式、签名策略和密钥版本。
+- 只从 PG 读取，冻结在 `webhook_delivery.source_binding`。payload 里的 actor/org/scene/mode 只当数据，不参与路由。
+
+**验签与去重**
+- 验签针对原始字节，并且先于去重执行。
+- 有事件 id 时：同 id、同有效 payload 返回原回执（duplicate）；同 id、内容不同返回 409 conflict，并另记一条 rejected delivery。
+- 没有事件 id 时，按请求逐条受理。
+- 事件 id 超过 255 字节或含控制字符时返回 400。
+
+**输入冻结**
+- receivedAt 统一取 `delivery.received_at`。`source_digest` 冻结有效 payload。
+- 崩溃窗口内重试时：摘要漂移则判为 failed，路由变化则判为 ignored，两种情况都不执行。
+- 已受理的 run 沿用冻结时的输入。
+
+**仍待完成**：Webhook 例行任务目前仍走 Autopilot run_only，Employee producer（F2）要等读取端在全部副本上就绪后才开启。
