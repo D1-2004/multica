@@ -123,26 +123,24 @@ def _step_wakes(loops: list[dict[str, Any]], steps: list[str]) -> list[dict[str,
 
 def _executed(wakes: list[dict[str, Any]], names: set[str] | None = None) -> list[str]:
     """Tools the Host executed (TOOL observations), not merely proposed by the model."""
-    return [x for t in wakes for x in t.get("tools") or [] if names is None or x in names]
+    out = []
+    for trace in wakes:
+        full = trace.get("tools_full") or []
+        actual = [tool["name"] for tool in full if tool.get("level") != "ERROR"] if full else trace.get("tools") or []
+        out.extend(name for name in actual if names is None or name in names)
+    return out
 
 
 def _tool_args(wakes: list[dict[str, Any]], tool: str) -> list[dict[str, Any]]:
-    """Arguments of `tool` calls in these wakes, preferring the executed TOOL input."""
+    """Arguments from non-error Host TOOL input only; proposed calls are not proof."""
     out = []
     for t in wakes:
         for x in t.get("tools_full") or []:
-            if x.get("name") == tool:
+            if x.get("name") == tool and x.get("level") != "ERROR":
                 try:
                     out.append(json.loads(x.get("input") or "{}"))
                 except ValueError:
                     pass
-        if not out:
-            for tc in t.get("tool_calls_full") or []:
-                if tc.get("name") == tool:
-                    try:
-                        out.append(json.loads(tc.get("arguments") or "{}"))
-                    except ValueError:
-                        pass
     return [a if isinstance(a, dict) else {} for a in out]
 
 
@@ -196,6 +194,8 @@ def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any], api: dict[str, 
         wakes = _step_wakes(loops, [check["step"]])
         args = _tool_args(wakes, check["tool"])
         if not args:
+            if _executed(wakes, {check["tool"]}):
+                return _result(check, label, "pending_evidence", "executed TOOL input unavailable; proposed args are not proof")
             if check.get("if_dispatched"):
                 return _result(check, label, "na", f"{check['tool']} was not called at {check['step']}")
             return _result(check, label, "fail", f"{check['tool']} was not called at {check['step']}")

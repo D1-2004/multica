@@ -195,6 +195,17 @@ class EvidenceV2Tests(unittest.TestCase):
         self.assertEqual(self.check(evidence="effect_for_step", step="m1", tools=["dispatch_task"]), "pass")
         self.assertEqual(self.check(evidence="effect_for_step", step="m2", tools=["stop_task"], if_dispatched_at="m2"), "na")
 
+    def test_proposed_args_or_rejected_tool_are_not_accepted_effect_evidence(self) -> None:
+        from el2e import grader_v2
+        ev = self.ev()
+        check = {"evidence": "tool_arg_present", "step": "m2", "tool": "stop_task", "arg": "task_id"}
+        ev["traces"][1]["tool_calls_full"] = [{"name": "stop_task", "arguments": '{"task_id":"T1"}'}]
+        self.assertEqual(grader_v2.evidence_check_v2(check, ev)["status"], "fail")
+        ev["traces"][0]["tools_full"][0]["level"] = "ERROR"
+        self.assertEqual(grader_v2.evidence_check_v2({"evidence": "no_effect_for_step", "step": "m1"}, ev)["status"], "pass")
+        ev["traces"][0]["tools_full"] = []
+        self.assertEqual(grader_v2.evidence_check_v2({"evidence": "tool_arg_present", "step": "m1", "tool": "dispatch_task", "arg": "builds_on"}, ev)["status"], "pending_evidence")
+
     def test_tool_args_and_task_count(self) -> None:
         self.assertEqual(self.check(evidence="tool_arg_present", step="m1", tool="dispatch_task", arg="builds_on"), "pass")
         self.assertEqual(self.check(evidence="tool_arg_present", step="m1", tool="dispatch_task", arg="follow_up_steps"), "fail")

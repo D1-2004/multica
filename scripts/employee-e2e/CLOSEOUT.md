@@ -28,8 +28,8 @@
 
 五笔原提交须按补丁顺序集成：bcb38f580f → cfdd4c5ab6 → c633f2ceed → 7e2f45802c → eb1764ef3e；本次收尾基于这五笔，保护六个原脏文件。新提交不整支 merge。
 
-本轮离线验证：`python3 -m unittest discover -s scripts/employee-e2e/tests -v`，67 项通过；CLI 参数核对只使用 `dws ... --help`，未执行真实写入。原六文件 diff、完整测试日志和含有效开关的 dry-run JSON 保存在 `~/d1/employee-e2e-evidence/CODEX-CLOSEOUT-20261004-HARNESS/`。
+本轮离线验证：`python3 -m unittest discover -s scripts/employee-e2e/tests -v`，68 项通过；CLI 参数核对只使用 `dws ... --help`，未执行真实写入。原六文件 diff、完整测试日志和含有效开关的 dry-run JSON 保存在 `~/d1/employee-e2e-evidence/CODEX-CLOSEOUT-20261004-HARNESS/`。
 
-离线风险反例覆盖：读取失败/分页耗尽不算负证；错误会话不污染 negative_observe；连续发送不吞重复落地；REF-01a真人「停止这个」不把员工「已请求停止这个任务」误认成重复发送；空 LF 不算0调用；人工判定不覆写缺证与硬失败；25小时分段时间门。
+离线风险反例覆盖：读取失败/分页耗尽不算负证；错误会话不污染 negative_observe；连续发送不吞重复落地；REF-01a真人「停止这个」不把员工「已请求停止这个任务」误认成重复发送；空 LF 不算0调用；模型 proposed tool_calls 不替代 Host TOOL input，ERROR工具不算已接受effect；人工判定不覆写缺证与硬失败；25小时分段时间门。
 
 具体函数和生产只读接口映射见 `.agents/skills/tag-eval/references/harness-source-map.md`。真实准入按当前仓库 `docs/employee-delivery-workflow.md` 及当波 manifest；本表中的默认可运行名单不是验收通过名单。
