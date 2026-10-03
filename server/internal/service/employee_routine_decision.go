@@ -158,6 +158,12 @@ func (s *AutopilotService) admitRoutineDecision(ctx context.Context, tx pgx.Tx, 
 		Wake: employeeentry.TaskWake{SchemaVersion: employeeentry.TaskWakeSchemaVersion, Kind: employeeentry.TaskWakeRoutineDecision, TaskID: task.ID,
 			GoalRevision: task.GoalRevision, InputSeq: task.LastEntrySeq, AuthorityRef: "routine:" + adm.routine.ID + "/occurrence:" + occurrenceID, EvidenceRef: "autopilot_run:" + util.UUIDToString(run.ID)},
 	})
+	if refusal := routineDecisionAdmissionRefusal(err); refusal != nil {
+		// A durable refusal of the wake (origin hold, scene fence, gate)
+		// records the occurrence instead of retrying the slot forever.
+		_ = tx.Rollback(ctx)
+		return s.recordRoutineRefusalNewTx(ctx, adm, fire, *refusal)
+	}
 	if err != nil {
 		return nil, dispatch.ReasonInternalError, true, fmt.Errorf("employee routine: admit decision wake: %w", err)
 	}
@@ -177,6 +183,45 @@ func (s *AutopilotService) admitRoutineDecision(ctx context.Context, tx pgx.Tx, 
 	slog.InfoContext(ctx, "employee routine decision admitted", "routine_id", adm.routine.ID, "autopilot_run_id", util.UUIDToString(run.ID),
 		"occurrence_id", occurrenceID, "employee_task_id", task.ID, "job_id", jobID, "planned_at", util.TimestampToString(run.PlannedAt))
 	return &run, "", true, nil
+}
+
+// routineDecisionAdmissionRefusal classifies a wake admission error that will
+// not change on retry.
+func routineDecisionAdmissionRefusal(err error) *routineRefusal {
+	var hold *employeeentry.TaskOriginHold
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &hold):
+		return failRoutine("employee decision refused: " + hold.Reason)
+	case errors.Is(err, employeeentry.ErrTaskWakeOrigin), errors.Is(err, employeeentry.ErrTaskWakeRevoked):
+		return failRoutine("employee decision refused: " + err.Error())
+	case errors.Is(err, employeeentry.ErrTaskWakeNotReady):
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "employee decision is unavailable while a server lacks the routine decision reader")
+	case errors.Is(err, employeeentry.ErrNotFound):
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "the routine's scene is no longer served")
+	}
+	return nil
+}
+
+// recordRoutineRefusalNewTx records a refused occurrence after the admission
+// transaction was rolled back.
+func (s *AutopilotService) recordRoutineRefusalNewTx(ctx context.Context, adm routineAdmission, fire routineFire, refusal routineRefusal) (*db.AutopilotRun, dispatch.ReasonCode, bool, error) {
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, dispatch.ReasonInternalError, true, err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	run, err := s.recordRoutineRefusalTx(ctx, tx, s.Queries.WithTx(tx), adm, fire, refusal)
+	if err != nil {
+		return s.routineSlotConflict(ctx, fire, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return s.routineSlotConflict(ctx, fire, err)
+	}
+	s.touchRoutineLastRun(ctx, adm.ap)
+	s.publishRoutineRefusal(adm.ap, run, refusal)
+	return &run, refusal.code, true, nil
 }
 
 // RoutineDecision is the decision record of one employee_decide occurrence.

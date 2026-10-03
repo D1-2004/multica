@@ -109,6 +109,9 @@ func TestEmployeeRoutineDecisionGateClosedNeverRunsUnconditionally(t *testing.T)
 			f.host.decisionReady = errors.New("a live replica lacks the decision reader")
 		},
 		"admission_fails": func(f *employeeRoutineFixture) { f.host.admitErr = errors.New("wake admission failed") },
+		"origin_held": func(f *employeeRoutineFixture) {
+			f.host.admitErr = &employeeentry.TaskOriginHold{Reason: "scene_endpoint_missing"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newEmployeeRoutineDecisionFixture(t)
@@ -123,8 +126,19 @@ func TestEmployeeRoutineDecisionGateClosedNeverRunsUnconditionally(t *testing.T)
 				}
 				return
 			}
-			if err != nil || run.Status != "skipped" || !strings.Contains(run.FailureReason.String, "decision") {
-				t.Fatalf("gate closed run = %+v err=%v", run, err)
+			want := "skipped"
+			if name == "origin_held" {
+				want = "failed"
+			}
+			if err != nil || run.Status != want || !strings.Contains(run.FailureReason.String, "decision") {
+				t.Fatalf("refused decision run = %+v err=%v", run, err)
+			}
+			if o := f.occurrence(t, run.ID); o.TaskID != "" || o.State == "decision" {
+				t.Fatal("refused decision kept its Task", o)
+			}
+			// The refused slot is recorded once and keeps the cadence.
+			if again := f.fire(t, f.slot(0)); again.ID != run.ID {
+				t.Fatal("refused decision slot retried")
 			}
 			if n := f.count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1::uuid`, f.agent); n != 0 {
 				t.Fatal("decision routine ran unconditionally", n)
