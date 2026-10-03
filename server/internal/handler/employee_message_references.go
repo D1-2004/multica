@@ -100,6 +100,31 @@ SELECT r.task_id::text FROM sandbox_send_receipt s JOIN employee_task_run r ON r
 	if err = rows.Err(); err != nil {
 		return out, err
 	}
+	// A reply sent through the source's completion callback (every native or
+	// Router message): the action answers the consumption whose frozen
+	// response callback it carries, so it anchors that receipt's effects.
+	rows, err = q.Query(ctx, `SELECT c.receipt_id::text,COALESCE(j.tool_journal,'{}'::jsonb) FROM response_action a
+ JOIN employee_event_consumption c ON c.payload#>>'{command,completionCallback,responseUrl}'=a.input->>'callback_url'
+ JOIN employee_scene_job j ON j.id=c.job_id AND j.workspace_id=c.workspace_id AND j.agent_id=c.agent_id AND j.tenant_org_id=c.tenant_org_id AND j.scene_id=c.scene_id
+ WHERE a.workspace_id=$1::uuid AND a.agent_id=$2::uuid AND a.provider_message_id=$5 AND a.provider_conversation_id=$6 AND a.state<>'failed'
+   AND a.input->>'request_id'=a.request_id AND a.request_id LIKE 'multica-terminal:sync-completed:%' AND COALESCE(a.input->>'callback_url','')<>''
+   AND c.workspace_id=$1::uuid AND c.agent_id=$2::uuid AND c.tenant_org_id=$3 AND c.scene_id=$4::uuid AND c.owner_loop='employee'`, args...)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var receipt string
+		var journal []byte
+		if err = rows.Scan(&receipt, &journal); err != nil {
+			rows.Close()
+			return out, err
+		}
+		out.Sent = append(out.Sent, employeeCommittedTaskEffects(journal, receipt+"/")...)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
 	// The requester's own request message: the committed task effects whose
 	// source is exactly that message.
 	rows, err = q.Query(ctx, `SELECT c.receipt_id::text,COALESCE(j.tool_journal,'{}'::jsonb) FROM employee_event_consumption c
@@ -137,7 +162,7 @@ func employeeTaskWakeTaskID(items []byte) string {
 
 // employeeCommittedTaskEffects returns the Tasks a job's journal shows a
 // committed task effect for; sourceRef, when set, keeps only effects of that
-// exact source message.
+// exact source message, or of any message of a receipt when it ends in "/".
 func employeeCommittedTaskEffects(journal []byte, sourceRef string) []string {
 	var entries map[string]struct {
 		Input struct {
@@ -159,7 +184,8 @@ func employeeCommittedTaskEffects(journal []byte, sourceRef string) []string {
 		if entry.Result.Failure != "" || entry.Result.Result.Receipt == "" {
 			continue
 		}
-		if sourceRef != "" && entry.Input.Arguments["source_ref"] != sourceRef {
+		ref, _ := entry.Input.Arguments["source_ref"].(string)
+		if sourceRef != "" && ref != sourceRef && !(strings.HasSuffix(sourceRef, "/") && strings.HasPrefix(ref, sourceRef)) {
 			continue
 		}
 		var content struct {
