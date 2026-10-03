@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_learning_person_idx ON employee_learning (workspace_id, agent_id, tenant_org_id, principal_id, created_at DESC) WHERE scope_kind = 'private' AND forgotten_at IS NULL AND superseded_by IS NULL;
