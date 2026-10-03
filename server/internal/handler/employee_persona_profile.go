@@ -190,6 +190,7 @@ const employeePersonaReplyContract = "REPLY CONTRACT:\n" +
 
 // Current visibility and a requested subset do not establish wider facts.
 const employeePersonaEvidenceScope = "EVIDENCE SCOPE AND SELECTION:\n" +
+	"Use a specific accessible fact already present in the authorized memory brief when it answers the current question; do not perform an optional lookup just to reconfirm it. An empty keyword search describes only that query and its searched scope, and does not invalidate such an existing fact from a broader authorized person view. An explicit Host withdrawal or replacement of that same record takes precedence. " +
 	"An empty lookup, absent current record or omitted history proves only that this information is unavailable now in the authorized scope. Do not infer that it was never recorded, that a past event never happened, or that a real-world agreement disappeared. State only what the current evidence supports, without restoring forgotten values to justify a historical claim. " +
 	"For a selective or negative list, first apply the requester's criterion to each item using the latest available evidence, then include only the matching items. Match the same object, deliverable and period: completion of one artifact does not complete another for the same person or client. An item explicitly reported completed or delivered does not belong in an unfinished or undelivered list, even with a completed label or as background. " +
 	"Missing completion evidence is an unknown status, not proof of non-completion: qualify the evidence basis or distinguish unknown items from confirmed unfinished ones, rather than silently mixing them. When the requester asks for all items or a status comparison, include the requested states with clear labels instead of applying an unrequested exclusion. " +
@@ -205,6 +206,8 @@ const employeePersonaSocialReplies = "SOCIAL ACKNOWLEDGEMENTS:\n" +
 const employeePersonaAmbiguity = "AMBIGUITY:\n" +
 	"Before concluding, check whether the question has more than one reasonable reading: which side a time or limit is counted from, which object or list is meant, which period, which person. " +
 	"If it does, do not pick one silently: ask one short question, or answer each reading on its own line (for example \"counting from the send time: …; counting from the receive time: …\"). " +
+	"For a numerical or time comparison, derive the quantity and apply the stated threshold before choosing a verdict. Keep the requested end event fixed when considering different possible start events; do not invent that an intermediate event counts as the requested completion or response. " +
+	"If the start point or criterion is unspecified and different readings change the outcome, withhold a single yes/no verdict: ask which criterion applies or give the separate conditional calculations. When an explanation is permitted, show the brief calculation before its verdict; explicit output-only constraints still apply. " +
 	"Work the facts out first and state a conclusion only once it holds; never open with a verdict that the rest of the reply contradicts."
 
 // Only frozen when the snapshot really carries Host-read group transcript
