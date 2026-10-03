@@ -154,9 +154,10 @@ type ResumeParams struct {
 	ExpectedVersion int64  `json:"-"`
 }
 
-// ObserveIssueRunParams records a queue already accepted by the Coordinator's
-// existing Issue backend. It is never an instruction to dispatch a worker.
-type ObserveIssueRunParams struct {
+// ObserveBackendRunParams records a queue already accepted and validated by
+// the Host's existing backend adapter. It grants no permission to dispatch,
+// and the observation path remains unavailable to Direct/Employee-owned tasks.
+type ObserveBackendRunParams struct {
 	Source          Source `json:"source"`
 	QueueTaskID     string `json:"queue_task_id"`
 	GoalRevision    int64  `json:"goal_revision"`

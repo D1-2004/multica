@@ -415,10 +415,11 @@ func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRun
 	return s.getRun(ctx, scope, id, e.RunID)
 }
 
-// ObserveIssueRun preserves actual legacy execution facts, including retries.
-// It cannot dispatch, cannot apply to Direct/Employee-owned work, and verifies
-// the queue's authoritative Issue/agent/workspace binding before recording it.
-func (s *Store) ObserveIssueRun(ctx context.Context, scope Scope, id string, p ObserveIssueRunParams) (Run, error) {
+// ObserveBackendRun records execution facts accepted by the existing backend.
+// Following GawkBot's task_ledger boundary (71e82a1809565281cbd0bf8185d3c125b715d934),
+// the ledger owns aggregate invariants; the Host adapter validates external
+// identities in the same transaction. This never dispatches or admits Direct work.
+func (s *Store) ObserveBackendRun(ctx context.Context, scope Scope, id string, p ObserveBackendRunParams) (Run, error) {
 	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) || p.InputSeq <= 0 || p.GoalRevision <= 0 {
 		return Run{}, ErrInvalid
 	}
@@ -435,14 +436,6 @@ func (s *Store) ObserveIssueRun(ctx context.Context, scope Scope, id string, p O
 		}
 		if p.InputSeq > task.LastEntrySeq || p.GoalRevision > task.GoalRevision {
 			return Entry{}, ErrInvalid
-		}
-		var accepted bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue q JOIN issue i ON i.id=q.issue_id WHERE q.id=$1::uuid AND q.agent_id=$2::uuid AND q.issue_id=$3::uuid AND i.workspace_id=$4::uuid)`, p.QueueTaskID, scope.AgentID, task.IssueID, scope.WorkspaceID).Scan(&accepted)
-		if err != nil {
-			return Entry{}, err
-		}
-		if !accepted {
-			return Entry{}, ErrNotFound
 		}
 		run, err := scanRun(tx.QueryRow(ctx, `INSERT INTO employee_task_run(workspace_id,agent_id,tenant_org_id,task_id,queue_task_id,goal_revision,input_seq) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7) RETURNING `+runColumns, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.QueueTaskID, p.GoalRevision, p.InputSeq))
 		if err != nil {

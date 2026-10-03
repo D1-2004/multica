@@ -706,49 +706,90 @@ func TestRunRetainsAcceptedInputBoundary(t *testing.T) {
 	}
 }
 
-func TestObserveIssueRunRejectsDirectAndUnacceptedQueue(t *testing.T) {
+func TestBackendRunLedgerDoesNotRequireIssueOrQueueTables(t *testing.T) {
+	f := database(t)
+	ctx := context.Background()
+	var absent bool
+	if err := f.pool.QueryRow(ctx, `SELECT to_regclass('issue') IS NULL AND to_regclass('agent_task_queue') IS NULL`).Scan(&absent); err != nil || !absent {
+		t.Fatalf("core fixture unexpectedly depends on backend tables: %v %v", absent, err)
+	}
+	f.params.OwnerLoop = LoopCoordinator
+	f.params.DispatchMode = DispatchIssue
+	task := createTask(t, f)
+	task, err := f.store.BindIssue(ctx, task.Scope, task.ID, BindIssueParams{Source: Source{"backend", "binding"}, IssueID: uuid.NewString(), ExpectedVersion: task.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := ObserveBackendRunParams{Source: Source{"backend", "accepted-run"}, QueueTaskID: uuid.NewString(), GoalRevision: task.GoalRevision, InputSeq: task.LastEntrySeq, ExpectedVersion: task.Version}
+	run, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params)
+	if err != nil {
+		t.Fatalf("backend-independent ledger rejected an accepted execution fact: %v", err)
+	}
+	replay, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params)
+	if err != nil || replay.ID != run.ID {
+		t.Fatalf("replayed fact: %+v %v", replay, err)
+	}
+	result := ResultParams{Source: Source{"backend", "terminal"}, RunID: run.ID, State: StateSucceeded, Result: "BACKEND_FACT", ResultRef: "backend-result:test"}
+	finished, _, err := f.store.RecordResult(ctx, task.Scope, task.ID, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := f.store.RecordResult(ctx, task.Scope, task.ID, result)
+	if err != nil || again.Version != finished.Version || again.State != StateSucceeded {
+		t.Fatalf("terminal replay: %+v %v", again, err)
+	}
+	if _, err := f.store.ReadEntries(ctx, task.Scope, task.ID, 0, 20); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestObserveBackendRunRetainsAggregateGuards(t *testing.T) {
 	f := database(t)
 	ctx := context.Background()
 	direct := createTask(t, f)
-	params := ObserveIssueRunParams{Source: Source{"legacy", "observed"}, QueueTaskID: uuid.NewString(), GoalRevision: 1, InputSeq: 1, ExpectedVersion: direct.Version}
-	if _, err := f.store.ObserveIssueRun(ctx, direct.Scope, direct.ID, params); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("Direct accepted legacy observation: %v", err)
-	}
-	if _, err := f.pool.Exec(ctx, `CREATE TABLE issue(id uuid,workspace_id uuid);CREATE TABLE agent_task_queue(id uuid,issue_id uuid,agent_id uuid)`); err != nil {
-		t.Fatal(err)
+	params := ObserveBackendRunParams{Source: Source{"backend", "observed"}, QueueTaskID: uuid.NewString(), GoalRevision: 1, InputSeq: 1, ExpectedVersion: direct.Version}
+	if _, err := f.store.ObserveBackendRun(ctx, direct.Scope, direct.ID, params); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Direct accepted backend observation: %v", err)
 	}
 	f.params.Source.Key = "coordinator-goal"
 	f.params.OwnerLoop = LoopCoordinator
 	f.params.DispatchMode = DispatchIssue
 	task := createTask(t, f)
-	issueID := uuid.NewString()
-	task, err := f.store.BindIssue(ctx, task.Scope, task.ID, BindIssueParams{Source: Source{"host", "issue"}, IssueID: issueID, ExpectedVersion: task.Version})
+	if _, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unbound task accepted backend observation: %v", err)
+	}
+	task, err := f.store.BindIssue(ctx, task.Scope, task.ID, BindIssueParams{Source: Source{"host", "issue"}, IssueID: uuid.NewString(), ExpectedVersion: task.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
 	params.ExpectedVersion = task.Version
-	if _, err = f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unaccepted queue observed: %v", err)
+	future := params
+	future.InputSeq = task.LastEntrySeq + 1
+	if _, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, future); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("future input admitted: %v", err)
 	}
-	if _, err = f.pool.Exec(ctx, `INSERT INTO issue VALUES($1,$2)`, issueID, task.Scope.WorkspaceID); err != nil {
-		t.Fatal(err)
+	future = params
+	future.GoalRevision = task.GoalRevision + 1
+	if _, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, future); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("future revision admitted: %v", err)
 	}
-	if _, err = f.pool.Exec(ctx, `INSERT INTO agent_task_queue VALUES($1,$2,$3)`, params.QueueTaskID, issueID, uuid.NewString()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("foreign queue observed: %v", err)
-	}
-	if _, err = f.pool.Exec(ctx, `UPDATE agent_task_queue SET agent_id=$1 WHERE id=$2`, task.Scope.AgentID, params.QueueTaskID); err != nil {
-		t.Fatal(err)
-	}
-	observed, err := f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params)
+	observed, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params)
 	if err != nil || observed.QueueTaskID != params.QueueTaskID {
-		t.Fatalf("accepted queue observation: %+v %v", observed, err)
+		t.Fatalf("accepted backend observation: %+v %v", observed, err)
 	}
-	again, err := f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params)
+	again, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params)
 	if err != nil || again.ID != observed.ID {
 		t.Fatalf("observation replay: %+v %v", again, err)
+	}
+	current, err := f.store.Get(ctx, task.Scope, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params.Source.Key = "second-run"
+	params.QueueTaskID = uuid.NewString()
+	params.ExpectedVersion = current.Version
+	if _, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrActiveRun) {
+		t.Fatalf("second writer admitted: %v", err)
 	}
 }
 
@@ -795,6 +836,9 @@ func TestDirectStartRetainsRunnerFenceAcrossCorrectionsAndLateResults(t *testing
 				}
 				if _, err = f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "second"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); !errors.Is(err, ErrRunNotReady) {
 					t.Fatalf("new Direct writer admitted after %s and correction: %v", terminal, err)
+				}
+				if _, err := f.store.ObserveBackendRun(ctx, task.Scope, task.ID, ObserveBackendRunParams{Source: Source{"backend", "bypass-stop"}, QueueTaskID: uuid.NewString(), GoalRevision: task.GoalRevision, InputSeq: task.LastEntrySeq, ExpectedVersion: task.Version}); !errors.Is(err, ErrInvalid) {
+					t.Fatalf("Direct stop fence bypassed through backend observation: %v", err)
 				}
 				replay, err := f.store.StartRun(ctx, task.Scope, task.ID, firstStart)
 				if err != nil || replay.ID != first.ID {
