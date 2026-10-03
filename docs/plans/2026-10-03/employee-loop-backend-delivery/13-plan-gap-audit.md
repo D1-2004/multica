@@ -2,6 +2,8 @@
 
 日期：2026-10-03（Asia/Shanghai）。用途：回答原设计承诺怎样演进、现有交付覆盖到哪里、哪些还不能算完成；本报告不修改 PRI-78、生产配置或新增功能范围。
 
+**阅读时点：**初次审查固定 `727a7e38f`；同步期间目标又推进到 `26fdabc60`，已补做 [第11节更新](#11-同步期间新增实现已改变的判断26fdabc60)。第3节的PRI-78记录与第7节的Golden基线不因新代码自动变成通过；第4–8节明确描述初次快照，当前实现进展优先看第11节，避免重复开发已补的功能。
+
 ## 1. 核对来源与证据边界
 
 - 用户指定工作树 `/Users/mac-m3/.codex/worktrees/0156/dt-fde-multica`，HEAD `843d918328fce7587a47990f6a4a5b62ade0ad00`：
@@ -9,7 +11,7 @@
   - [R5 十三任务实施拆解](../../2026-10-01/employee-loop-delivery-plan.md)。
   - 两份文件与本次目标分支上的同路径文件字节一致。它们仍保留历史“未实施”标签，不能据此推断今天的实现状态。
 - 已交付规划包：本目录 [总控](README.md)、[Step 0](00-step-0-environment.md)、[交付标准](10-delivery-standard.md) 及 P/A/B/F/C/D/G/I-Q 文档。
-- 最新目标代码冻结在 `origin/feat/tag-multitenant@727a7e38f89d0cb4e0ab4a0367e4114bc932f119`。本轮fetch发现它比上次文档提交 `99d733db9` 多了一波生命周期、typed wake、routine、watchdog、资源和验证实现，已按新代码更新判断；后续提交不自动包含在本报告内。
+- 初次目标代码冻结在 `origin/feat/tag-multitenant@727a7e38f89d0cb4e0ab4a0367e4114bc932f119`，比上次文档提交 `99d733db9` 多了一波生命周期、typed wake、routine、watchdog、资源和验证实现。之后增量更新固定 `26fdabc60`，见第11节；再后的实现不自动包含在本报告内。
 - [PRI-78「Employee 架构设计」](https://fde-workbench.dingtalk.com/private/issues/PRI-78)：通过当前账号只读API读正文、28条评论，状态 `in_review`，updated_at `2026-10-02T13:57:24+08:00`。另读取并核验平台hash的四份附件：`employee-review.md`、`employee-source-mapping.md`、`event-scene-router-research.md`、`s3-current-result.md`。没有声称读完其全部34个附件或原始共享GPT逐字会话。
 - 最新实施/测试记录：[执行板](11-execution-board.md)、[GoldenCase-20](../employee-loop-golden20-baseline.md)、[当前实现合同](../../../employee-loop.md)、[先前Qwen-DWS真实验收](../employee-loop-e2e-results.md)。
 
@@ -37,7 +39,7 @@ PRI-78另外留下默认本机库恢复缺少可验证事前备份的问题。�
 
 建议在Step 0/Q登记PRI-78原有路由验收依赖：正确的预发MessageRouter输入、真实新receipt/replay/conflict/unmapped探针、非作者复核，以及原库恢复责任；不绕过环境保护或伪造provider事实。
 
-## 4. R5十三任务逐项映射
+## 4. R5十三任务逐项映射（初次727快照）
 
 状态说明：**已覆盖**表示主要实现及既有证据可定位；**部分**表示只覆盖其中一些语义；**待接线**表示库/reader已有但产品链未完整；**遗漏/弱覆盖**表示新任务包没有清楚的端到端承接。都不等同本轮独立复测通过。
 
@@ -69,7 +71,7 @@ PRI-78另外留下默认本机库恢复缺少可验证事前备份的问题。�
 
 这些是设计演进，不应作为“偏离原方案”机械否定；但旧承诺减少/延期的部分应显式登记，不能默默算完成。
 
-## 6. 最新一波确实补了什么，还没补什么
+## 6. 第一波确实补了什么，还没补什么（727快照）
 
 已合入的主要实现：
 
@@ -91,7 +93,7 @@ PRI-78另外留下默认本机库恢复缺少可验证事前备份的问题。�
 
 执行板第二波已把Task关系、其他场域只读事项、工作包历史、自动化origin、首次私聊pending_scene列出；这补了新Plan早期弱覆盖。但Capsule、通用SceneNotice、广义DWS资源事件、资源冲突lane仍缺清晰承接。
 
-## 7. 最新真实体验记录：必须优先修复的缺口
+## 7. Golden真实体验记录与待复测缺口
 
 [GoldenCase-20记录](../employee-loop-golden20-baseline.md)报告20条通过10条；52次Employee唤醒共59次请求、单wake最多3次。它是最新提交中的验收报告，本次没有独立复跑其原始Langfuse或IM。
 
@@ -107,7 +109,7 @@ PRI-78另外留下默认本机库恢复缺少可验证事前备份的问题。�
 
 非@观察与主动工作分别处理：观察可以提供已授权材料，不自动形成执行授权；主动参与仍由当前配置和Host资格判断。平台未暴露某事件时，核验可用订阅/历史读取，不伪造key，也不把DWS整个产品都判定为无能力。
 
-## 8. 新Plan建议补齐的承接与最终验收
+## 8. 初次建议补齐的承接与最终验收（新增实现见第11节）
 
 以下是本次审查建议，尚未新增生产实现或替用户批准扩大范围：
 
@@ -135,8 +137,34 @@ R5 §9已经说明：后台进程取消不等于此前HTTP动作没有发生，�
 - 新板第一/第二波迁移号段已登记9900–9989与9800–9899；旧Step 0的“由I分配”需以实际执行板更新，不各代理另占同号。
 - 执行板第二批还写部署中，Golden报告已有19:09 marker12记录；必须按实际pipeline/运行副本/用例窗口重建版本，不能只用其中一份文档当实时状态。
 
-## 10. 本次结论
+## 10. 初次审查结论
 
 架构方向没有反转；基础链路比R5时已前进很多，新一波也补了waiting/wake等关键地基。完整持续员工能力仍取决于真实上下文、语义交互、Task目标推进和运行现场/通知闭环。
 
 本次最需要更新的是**需求→设计→代码→部署→真实证据的逐项映射**。PRI-78的未完成事件验收、R5尚未兑现的Capsule/中间通知、多源上下文，以及Golden真实失败，应分别登记；不能合成一句“基本一致/基本完成”。
+
+## 11. 同步期间新增实现：已改变的判断（26fdabc60）
+
+目标在本报告首次提交后又新增一批生产代码。本次已静态检查增量提交及相应入口，没有重跑本批测试或真实E2E。以下项目不能再对当前HEAD说“没有实现”，也不能仅因合入就改成“线上已验”。
+
+| 初次缺口 | 新增提交 / 代码 | 当前判断 |
+| --- | --- | --- |
+| taskinput仅领域，跨场域未接线 | `cddef203c` / `6ac2773b7` / `2b978759c`；`employee_collection*.go`，Host注册create_collection/accept_collection_input/read_collection | 跨场域端到端接线、邀请outbox与发送门禁已合入；收齐、歧义、撤权与三actor实际效果仍需当前版本E2E |
+| typed wake只reply/quiet，不能后续工作 | `23b091210` / `705a48ccf` / `26fdabc60`；`employeeplan/`、`employee_task_plan.go`、task_wake的continue_plan | work plan/后续决策/执行推进已合入，marker13；普通collection汇总与plan工具按wake类型分开，避免无授权通用派发 |
+| autonomous_rounds只有字段，无生产治理 | `705a48ccf`；worker调用noteTaskWakeRound→NoteAutonomousRound并在上限后等待人类输入 | 计数/governor接线已有代码；跨重启/重放/人类输入重置与上限后效果需对应测试/真实验收 |
+| blocked_by只预留，Task之间无关系 | `2849ecf52` / `a206aae2f` / `dd2e36549`；task link、builds_on工作包和终态依赖释放 | 关系/材料/依赖释放已合入，不再算未实现；不能由此推导已有跨Task资源写冲突lane |
+| Webhook只有F1入口，没走Employee Direct | `284042456` / `543b3ac2f` / `9b5db2c28` | Employee routine Webhook接受路径冻结、worker和Direct来源已合入；decision与实际新Task/通知/重复拒绝要单独验 |
+| Task只读API未接 | `9ed016b4c` / `27a95f8d0` | 只读Task API和路由已有，不因名称存在就跳过参与者/管理者/执行凭据权限回归 |
+| 钉钉真实文件未进入Host验证 | `beb7188bb` / `6bed328a8` | 原生文件证据回读/内容验证已接入；真实下一Task复用和共享promotion仍未等于完成 |
+| source_ref坏参数后吞回复 | `3d3f5f495` / `a1ae7e5b8` | 冻结引用错误提示/受控修复和addressed turn工具错误不静默的修复已合入；DS-12/BASE-TASK原失败必须复测，不继续列为“未修” |
+
+还存在或仍需明确承接的结果缺口：
+
+1. **群观察和广义DWS资源事件**：截至此增量，未@群材料进入可信历史、主动参与的数据与资格闭环仍未由上述修复证明；OA/Todo/日程/文档的正式源接入需独立范围与验收。
+2. **通用SceneNotice / HumanQuestion**：collection邀请/答复与watchdog已有各自闭环，仍不能替代任意长Run的milestone/needs_input/blocked→实时通知→原Run答案应用。
+3. **Capsule / 完整执行现场恢复**：本批没有完整checkpoint manifest、workspace delta、统一留删和期限前恢复交付；现有产物保存不能直接算完整Capsule。
+4. **跨Task资源冲突和跨principal隔离**：builds_on/blocked_by不等于共写资源锁；同Task退出屏障不证明所有共享sandbox文件/session/credential负向隔离。
+5. **进化最后一段与真实质量**：验证/Distill继续前进，但受控共享晋级/撤回及新Task真实复用仍要单独验证。DS-01过派、DS-03矛盾及群材料失败未被这批源码证明已解决。
+6. **PRI-78原验收记录**：S3第三路、S4和默认库恢复仍应按原单记录收尾；新Employee功能合入不是原单完成证明。
+
+最终结论：核心工程已经从“地基+领域库”推进到“多条新生产接线待当版验收”。接下来先统一部署版本与E2E证据，复测已修的Golden问题；剩余原设计缺口再由主代理按Step 0资源和结果标准拆解，而不是把本报告初次快照当现状重写一遍。
