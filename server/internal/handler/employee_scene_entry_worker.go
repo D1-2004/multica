@@ -68,6 +68,12 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 					slog.WarnContext(ctx, "employee run reconciliation failed", "error", err)
 				}
 			}
+			// Routine-origin executions whose AutopilotRun missed its task event.
+			routineCtx, routineCancel := context.WithTimeout(ctx, 5*time.Second)
+			if _, err := w.handler.ReconcileEmployeeRoutineRuns(routineCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee routine run reconciliation failed", "error", err)
+			}
+			routineCancel()
 			if w.handler.TaskService != nil {
 				stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
 				if _, err := w.handler.TaskService.ReconcileEmployeeTaskStops(stopCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
