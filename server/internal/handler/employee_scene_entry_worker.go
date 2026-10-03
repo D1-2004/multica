@@ -60,6 +60,9 @@ type EmployeeSceneWorker struct {
 	// nil reuses the Coordinator's DWS history loader.
 	SceneTranscript employeeSceneTranscriptLoader
 
+	// MemoryToolsReady reports whether every live replica supports
+	// EmployeeMemoryReplicaMarker; nil keeps new inputs on memory tools v1.
+	MemoryToolsReady func(context.Context) (bool, error)
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -528,7 +531,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if len(window) > 256<<10 {
 		return employeeSavedInput{}, errEmployeeWindowTooLarge
 	}
-	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: employeeSceneTools()}}
+	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: w.newInputTools(ctx)}}
 	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
