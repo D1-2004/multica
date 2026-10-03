@@ -103,6 +103,10 @@ type RuntimeConfig struct {
 	// is decoded strictly (unknown keys rejected) by the server, which owns the
 	// schema; absent keeps the built-in defaults.
 	EmployeeWatchdog json.RawMessage `json:"employee_watchdog,omitempty"`
+	// EmployeeVision lists the probe-verified background vision executors
+	// (runtime provider + agent model). Raw here and decoded strictly by the
+	// server; absent keeps images unsupported.
+	EmployeeVision json.RawMessage `json:"employee_vision,omitempty"`
 }
 
 // EventSceneRouterConfig selects exact tenant/agent targets, never a wildcard.
