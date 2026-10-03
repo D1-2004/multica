@@ -170,15 +170,19 @@ type routineAdmission struct {
 // routineOccurrenceInput is the frozen, secret-free snapshot of an accepted
 // occurrence. Replays read it back; they never recompute it.
 type routineOccurrenceInput struct {
-	Schema           string              `json:"schema"`
-	RoutineID        string              `json:"routine_id"`
-	AutopilotID      string              `json:"autopilot_id"`
-	TriggerID        string              `json:"trigger_id,omitempty"`
-	WorkspaceID      string              `json:"workspace_id"`
-	AgentID          string              `json:"agent_id"`
-	TenantOrgID      string              `json:"tenant_org_id"`
-	SceneID          string              `json:"scene_id"`
-	SceneKind        string              `json:"scene_kind"`
+	Schema      string `json:"schema"`
+	RoutineID   string `json:"routine_id"`
+	AutopilotID string `json:"autopilot_id"`
+	TriggerID   string `json:"trigger_id,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	TenantOrgID string `json:"tenant_org_id"`
+	SceneID     string `json:"scene_id"`
+	SceneKind   string `json:"scene_kind"`
+	// ConversationID is the scene's provider conversation, read from the
+	// scene directory when the occurrence was accepted, so the run can read
+	// the scene it belongs to. It is never a scene_id.
+	ConversationID   string              `json:"conversation_id,omitempty"`
 	Source           string              `json:"source"`
 	EventID          string              `json:"event_id"`
 	PlannedAt        string              `json:"planned_at,omitempty"`
@@ -865,7 +869,8 @@ func (s *AutopilotService) routineOccurrenceInput(adm routineAdmission, fire rou
 	in := routineOccurrenceInput{
 		Schema: routineOccurrenceSchema, RoutineID: adm.routine.ID, AutopilotID: util.UUIDToString(adm.ap.ID), TriggerID: util.UUIDToString(fire.TriggerID),
 		WorkspaceID: adm.routine.WorkspaceID, AgentID: adm.routine.AgentID, TenantOrgID: adm.routine.TenantOrgID, SceneID: adm.routine.SceneID, SceneKind: adm.routine.SceneKind,
-		Source: fire.source(), EventID: eventID, Timezone: adm.timezone, Cron: adm.cron, Creator: adm.creator, Principal: adm.principal,
+		ConversationID: adm.scene.ExternalSceneID,
+		Source:         fire.source(), EventID: eventID, Timezone: adm.timezone, Cron: adm.cron, Creator: adm.creator, Principal: adm.principal,
 		ConfigRevision: adm.configRevision, AuthorizationRef: routineAuthorizationRef(adm, fire), DispatchMode: routineDispatchModeEmployeeDirect,
 		Title: strings.TrimSpace(adm.ap.Title), Instructions: strings.TrimSpace(adm.ap.Description.String),
 	}
@@ -893,6 +898,9 @@ func compileRoutinePacket(scope employeetask.Scope, in routineOccurrenceInput) (
 		fmt.Fprintf(&body, "- Planned at: %s %s (%s)\n", in.PlannedLocal, in.Timezone, in.PlannedAt)
 	} else {
 		body.WriteString("- Trigger: run now (manual)\n")
+	}
+	if in.ConversationID != "" {
+		fmt.Fprintf(&body, "- Scene conversation: %s chat, openConversationId %s (use it to read this scene's messages; the Host posts the result here)\n", in.SceneKind, in.ConversationID)
 	}
 	fmt.Fprintf(&body, "- Requester: routine:%s, an automation with no human requester\n", in.RoutineID)
 	fmt.Fprintf(&body, "- Configured by: %s %s\n", in.Creator.Kind, in.Creator.ID)

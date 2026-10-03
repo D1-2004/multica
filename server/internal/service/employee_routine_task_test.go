@@ -298,7 +298,8 @@ func TestEmployeeRoutineScheduleAcceptsFrozenDirectExecution(t *testing.T) {
 	if !ok || direct.AutomationOrigin == nil || direct.AutomationOrigin.ReceiptID != o.ID || direct.EmployeeTaskID != o.TaskID || direct.PrincipalID != "" || direct.OriginatorUserID != "" {
 		t.Fatalf("direct = %+v ok=%v", direct, ok)
 	}
-	if !strings.Contains(direct.Prompt, "FROZEN_INSTRUCTIONS_V1") || !strings.Contains(direct.Prompt, "routine:"+f.routine.ID) || !strings.Contains(direct.Prompt, "2026-10-03 10:00 Asia/Shanghai") {
+	if !strings.Contains(direct.Prompt, "FROZEN_INSTRUCTIONS_V1") || !strings.Contains(direct.Prompt, "routine:"+f.routine.ID) || !strings.Contains(direct.Prompt, "2026-10-03 10:00 Asia/Shanghai") ||
+		!strings.Contains(direct.Prompt, "openConversationId "+f.cid) || strings.Contains(direct.Prompt, "openConversationId "+f.sceneID) {
 		t.Fatalf("prompt = %s", direct.Prompt)
 	}
 	var ctxFields map[string]json.RawMessage
