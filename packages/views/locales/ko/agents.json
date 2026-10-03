@@ -2371,6 +2371,8 @@
     "install_all": "모든 저장소",
     "install_selected": "지정한 저장소",
     "install_settings": "저장소 변경",
+    "install_repo_private": "비공개",
+    "install_repos_truncated": "저장소가 더 있습니다. 「저장소 변경」에서 GitHub로 확인하세요.",
     "install_truncated": "설치가 많아 여기에는 일부만 표시합니다.",
     "returned_connected": "{{name}}을(를) 승인했습니다.",
     "returned_denied": "인증을 취소했습니다.",

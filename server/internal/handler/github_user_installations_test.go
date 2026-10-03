@@ -228,3 +228,49 @@ func TestListGitHubUserInstallationsWritesZeroCounts(t *testing.T) {
 		t.Fatalf("json %s", encoded)
 	}
 }
+
+func TestParseGitHubInstallationRepositoriesDropsUnsafeNames(t *testing.T) {
+	repos, total, raw, err := parseGitHubInstallationRepositories([]byte(`{"total_count":4,"repositories":[
+		{"full_name":"acme/one","private":false},
+		{"full_name":"acme/two","private":true},
+		{"full_name":"acme/three","private":false},
+		{"full_name":"javascript:alert(1)","private":true},
+		{"full_name":"../secret","private":true}
+	]}`))
+	if err != nil || total == nil || *total != 4 || raw != 5 || len(repos) != 3 {
+		t.Fatalf("parsed %+v total %v raw %d err %v", repos, total, raw, err)
+	}
+	if repos[0].FullName != "acme/one" || repos[1].FullName != "acme/two" || !repos[1].Private || repos[2].FullName != "acme/three" {
+		t.Fatalf("repos %+v", repos)
+	}
+}
+
+func TestAttachGitHubInstallationRepositoriesLeavesAFailedRowEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Authorization"), "Bearer ghu_test") {
+			t.Errorf("authorization %q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/user/installations/7/repositories":
+			_, _ = w.Write([]byte(`{"total_count":3,"repositories":[
+				{"full_name":"acme/one","private":false},
+				{"full_name":"acme/two","private":true},
+				{"full_name":"acme/three","private":false}
+			]}`))
+		default:
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+	oldBase := githubAPIBase
+	t.Cleanup(func() { githubAPIBase = oldBase })
+	githubAPIBase = srv.URL
+	views := []githubUserInstallationView{{ID: 7, Repositories: emptyGitHubRepos()}, {ID: 8, Repositories: emptyGitHubRepos()}}
+	attachGitHubInstallationRepositories(t.Context(), "ghu_test", views)
+	if views[0].RepositoryCount != 3 || views[0].RepositoriesTruncated || len(views[0].Repositories) != 3 || views[0].Repositories[1].FullName != "acme/two" {
+		t.Fatalf("selected %+v", views[0])
+	}
+	if views[1].RepositoryCount != 0 || len(views[1].Repositories) != 0 {
+		t.Fatalf("failed row %+v", views[1])
+	}
+}

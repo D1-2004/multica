@@ -982,6 +982,13 @@ describe("ContextConfigPage", () => {
             accountType: "Organization",
             repositorySelection: "selected",
             settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+            repositories: [
+              { fullName: "acme/one", private: false },
+              { fullName: "acme/two", private: true },
+              { fullName: "acme/three", private: false },
+            ],
+            repositoryCount: 3,
+            repositoriesTruncated: false,
           },
         ],
         error: "",
@@ -1004,6 +1011,10 @@ describe("ContextConfigPage", () => {
       expect(dialog).toHaveTextContent(copy.install_org);
       expect(dialog).toHaveTextContent(copy.install_all);
       expect(dialog).toHaveTextContent(copy.install_selected);
+      expect(dialog).toHaveTextContent("acme/one");
+      expect(dialog).toHaveTextContent("acme/two");
+      expect(dialog).toHaveTextContent("acme/three");
+      expect(dialog).toHaveTextContent(copy.install_repo_private);
       expect(
         within(dialog)
           .getAllByRole("link", { name: copy.install_settings })

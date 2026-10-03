@@ -43,14 +43,25 @@ var (
 
 var githubAccountLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 
+// githubInstallationRepository is one repository an installation covers.
+// full_name is owner/name. It never carries an id the page could treat as a
+// second allow-list: add and remove stay on GitHub's installation settings.
+type githubInstallationRepository struct {
+	FullName string `json:"full_name"`
+	Private  bool   `json:"private"`
+}
+
 // githubUserInstallationView is one installation the stored token can use.
 // It never carries a token, an installation access token, or a permissions blob.
 type githubUserInstallationView struct {
-	ID                  int64  `json:"id"`
-	AccountLogin        string `json:"account_login"`
-	AccountType         string `json:"account_type"`
-	RepositorySelection string `json:"repository_selection"`
-	SettingsURL         string `json:"settings_url"`
+	ID                    int64                          `json:"id"`
+	AccountLogin          string                         `json:"account_login"`
+	AccountType           string                         `json:"account_type"`
+	RepositorySelection   string                         `json:"repository_selection"`
+	SettingsURL           string                         `json:"settings_url"`
+	Repositories          []githubInstallationRepository `json:"repositories"`
+	RepositoryCount       int                            `json:"repository_count"`
+	RepositoriesTruncated bool                           `json:"repositories_truncated,omitempty"`
 }
 
 type githubUserInstallationsResponse struct {
@@ -180,6 +191,9 @@ func (h *Handler) respondGitHubUserInstallations(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadGateway, "could not list GitHub App installations")
 		return
 	}
+	if listed.Error == "" {
+		attachGitHubInstallationRepositories(ctx, secret.Bearer, listed.Installations)
+	}
 	writeJSON(w, http.StatusOK, listed)
 }
 
@@ -298,6 +312,7 @@ func parseGitHubUserInstallations(body []byte) (parsedGitHubUserInstallations, e
 			AccountType:         githubAccountType(item.Account.Type),
 			RepositorySelection: githubRepositorySelection(item.RepositorySelection),
 			SettingsURL:         safeGitHubSettingsURL(item.HTMLURL),
+			Repositories:        emptyGitHubRepos(),
 		})
 	}
 	return parsedGitHubUserInstallations{
@@ -335,4 +350,120 @@ func safeGitHubSettingsURL(raw string) string {
 	}
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// Page size and cap for one installation's repositories. Three pages is
+// enough to show a selected set; a larger installation says it was cut.
+const (
+	githubInstallationRepoPageSize = 100
+	githubInstallationRepoPageCap  = 3
+)
+
+var githubFullNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[\w.-]{1,100}$`)
+
+func emptyGitHubRepos() []githubInstallationRepository {
+	return []githubInstallationRepository{}
+}
+
+// attachGitHubInstallationRepositories fills each installation with the
+// repositories that token can see. One installation's failure leaves that
+// row's list empty and does not fail the account list. The fetches share
+// one timeout so a long account list cannot hang the page.
+func attachGitHubInstallationRepositories(ctx context.Context, token string, views []githubUserInstallationView) {
+	if len(views) == 0 || !contextcap.ValidBearer(token) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	for i := range views {
+		repos, count, truncated, err := listGitHubInstallationRepositories(ctx, client, token, views[i].ID)
+		if err != nil {
+			slog.ErrorContext(ctx, "github installations: repository list failed", "installation_id", views[i].ID, "error", err)
+			views[i].Repositories = emptyGitHubRepos()
+			continue
+		}
+		views[i].Repositories = repos
+		views[i].RepositoryCount = count
+		views[i].RepositoriesTruncated = truncated
+	}
+}
+
+func listGitHubInstallationRepositories(ctx context.Context, client *http.Client, token string, installationID int64) ([]githubInstallationRepository, int, bool, error) {
+	if installationID <= 0 {
+		return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+	}
+	all := emptyGitHubRepos()
+	var total *int
+	truncated := false
+	for page := 1; page <= githubInstallationRepoPageCap; page++ {
+		if ctx.Err() != nil {
+			return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+		}
+		endpoint := fmt.Sprintf("%s/user/installations/%d/repositories?per_page=%d&page=%d", strings.TrimRight(githubAPIBase, "/"), installationID, githubInstallationRepoPageSize, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, githubAPIResponseLimit))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || readErr != nil {
+			return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+		}
+		repos, pageTotal, raw, err := parseGitHubInstallationRepositories(body)
+		if err != nil {
+			return emptyGitHubRepos(), 0, false, errors.New("GitHub repository list failed")
+		}
+		if page == 1 {
+			total = pageTotal
+		}
+		all = append(all, repos...)
+		if raw < githubInstallationRepoPageSize {
+			break
+		}
+		if page == githubInstallationRepoPageCap {
+			truncated = true
+		}
+	}
+	count := len(all)
+	if total != nil {
+		count = *total
+		if *total > len(all) {
+			truncated = true
+		}
+	}
+	return all, count, truncated, nil
+}
+
+func parseGitHubInstallationRepositories(body []byte) ([]githubInstallationRepository, *int, int, error) {
+	var payload struct {
+		TotalCount   *int `json:"total_count"`
+		Repositories []struct {
+			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, nil, 0, err
+	}
+	repos := emptyGitHubRepos()
+	for _, item := range payload.Repositories {
+		name := strings.TrimSpace(item.FullName)
+		if !githubFullNamePattern.MatchString(name) {
+			continue
+		}
+		repos = append(repos, githubInstallationRepository{FullName: name, Private: item.Private})
+	}
+	return repos, payload.TotalCount, len(payload.Repositories), nil
 }

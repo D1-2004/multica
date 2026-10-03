@@ -33,12 +33,20 @@ package handler
 // sealed state records the nonce's hash; the callback refuses a state whose
 // cookie is missing or different. Without it, anyone who may start a
 // connect could send the provider authorize URL to a colleague, and the
-// colleague's account would be stored in the sender's scope. Every start
-// (workspace, scene and person scopes) binds the browser this way; there is
-// no link that binds whichever browser opens it. The desktop app, whose API
-// responses land in its own cookie jar, therefore never starts a connect: it
-// opens the web connectors page in the system browser, and the admin
-// connects there.
+// colleague's account would be stored in the sender's scope. Workspace
+// connects and every DCR connect bind the browser this way. The desktop
+// app, whose API responses land in its own cookie jar, therefore never
+// starts a connect: it opens the web connectors page in the system browser,
+// and the admin connects there.
+//
+// Scene and person GitHub App installs are the exception (Shareable). The
+// authorize link is meant to be opened on a phone that did not start it,
+// including by sharing the link. The state is still 32 random bytes, stored
+// only as a SHA-256 hash, single use, and valid for 10 minutes, and it
+// names the digital employee, tenant and scene on the server. Whoever
+// finishes it attaches their GitHub account to that scene. The callback
+// then returns to that scene's configure page with a signed, expiring
+// scene session so the page opens without a DingTalk login.
 
 import (
 	"context"
@@ -58,6 +66,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
@@ -217,6 +226,10 @@ type connectorOAuthOutcome struct {
 	// RedirectURL (the user authorization page) and the binding cookie
 	// stays, because the same state still has to complete.
 	Continue bool
+	// SceneSession is the signed configure-page token for a scene or person
+	// connect that finished. The callback sets it as a cookie and also puts
+	// it on the redirect. It is not logged.
+	SceneSession string
 }
 
 // startConnectorOAuth checks that in.UserID may connect an account for the
@@ -387,6 +400,14 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		return connectorOAuthStarted{}, internalErr
 	}
 	payload.BrowserHash = hashConnectorOAuthState(nonce)
+	// A scene or person GitHub App install can be finished on a phone that
+	// did not start it. The reseal onto the user-authorization hop keeps
+	// this flag. Workspace installs and every DCR connect stay bound to the
+	// starting browser.
+	if payload.AuthFlow == connectorOAuthFlowInstall && payload.Via == connectorOAuthViaGitHub &&
+		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson) {
+		payload.Shareable = true
+	}
 	// The cookie belongs to this deployment's own origin (where the start
 	// response is served and a forwarded callback lands), never to the
 	// production callback origin a pre-release sends providers.
@@ -609,6 +630,9 @@ func (h *Handler) connectorOAuthReturnTo(ctx context.Context, raw string, scope 
 			}
 			return origin + path, nil
 		}
+		if scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson {
+			return sceneConfigureURL(origin, scope), nil
+		}
 		return origin + "/dingtalk/configure?agent=" + url.QueryEscape(scope.AgentID), nil
 	}
 	if len(raw) > connectorOAuthMaxReturnTo || strings.ContainsAny(raw, "\r\n\x00\\") {
@@ -637,6 +661,64 @@ func (h *Handler) connectorOAuthReturnTo(ctx context.Context, raw string, scope 
 
 // withOAuthResult sets one result parameter (connected / connect_error) on
 // a validated destination, dropping any earlier result parameters.
+// sceneConfigureURL is the configure page of one scene or person, including
+// the scope, so a phone that finishes GitHub has nothing in sessionStorage
+// and still lands on the chat that started the connect.
+func sceneConfigureURL(origin string, scope connectorOAuthScope) string {
+	query := url.Values{}
+	query.Set("agent", scope.AgentID)
+	if scope.OrgID != "" {
+		query.Set("org", scope.OrgID)
+	}
+	query.Set("scope_type", scope.ScopeType)
+	query.Set("scope_key", scope.ScopeKey)
+	return origin + "/dingtalk/configure?" + query.Encode()
+}
+
+// ensureScopeOnConfigureReturn fills a configure-page return that has no
+// scope_key with the scope the state stored. An existing scope_key is left
+// as the page sent it. Workspace and internal-connectors returns are left
+// alone.
+func ensureScopeOnConfigureReturn(destination string, scope connectorOAuthScope) string {
+	if (scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson) || scope.ScopeKey == "" || scope.AgentID == "" {
+		return destination
+	}
+	parsed, err := url.Parse(destination)
+	if err != nil || !strings.HasSuffix(parsed.Path, "/dingtalk/configure") {
+		return destination
+	}
+	query := parsed.Query()
+	if query.Get("scope_key") != "" {
+		return destination
+	}
+	if query.Get("agent") == "" {
+		query.Set("agent", scope.AgentID)
+	}
+	if query.Get("org") == "" && scope.OrgID != "" {
+		query.Set("org", scope.OrgID)
+	}
+	if query.Get("scope_type") == "" {
+		query.Set("scope_type", scope.ScopeType)
+	}
+	query.Set("scope_key", scope.ScopeKey)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func withSceneSession(destination, token string) string {
+	if token == "" {
+		return destination
+	}
+	parsed, err := url.Parse(destination)
+	if err != nil {
+		return destination
+	}
+	query := parsed.Query()
+	query.Set("scene_session", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
 func withOAuthResult(destination, key, value string) string {
 	u, err := url.Parse(destination)
 	if err != nil {
@@ -648,6 +730,61 @@ func withOAuthResult(destination, key, value string) string {
 	query.Set(key, value)
 	u.RawQuery = query.Encode()
 	return u.String()
+}
+
+// connectorOAuthShareable reports whether this state may finish in a browser
+// that did not start it. The flag alone is not enough: the scope stored on
+// the row has to be a scene or a person, and the route has to be the GitHub
+// App callback.
+func connectorOAuthShareable(verifier connectorSealedVerifier, scope connectorOAuthScope) bool {
+	return verifier.Shareable && verifier.Via == connectorOAuthViaGitHub &&
+		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson)
+}
+
+// finishSceneConnectReturn sends a finished scene or person connect back to
+// its configure page and issues the signed page session. Workspace connects
+// get the connected parameter and no session.
+func (h *Handler) finishSceneConnectReturn(ctx context.Context, scope connectorOAuthScope, destination, slug string) (string, string) {
+	destination = ensureScopeOnConfigureReturn(destination, scope)
+	destination = withOAuthResult(destination, "connected", slug)
+	token := h.issueSceneConfigSession(ctx, scope)
+	if token == "" {
+		return destination, ""
+	}
+	return withSceneSession(destination, token), token
+}
+
+// issueSceneConfigSession grants the initiating user the scene or person for
+// the page TTL (a longer grant is kept) and signs the page session. The
+// token is the page opener; the OAuth state stays single use.
+func (h *Handler) issueSceneConfigSession(ctx context.Context, scope connectorOAuthScope) string {
+	if h == nil || h.DB == nil || (scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson) {
+		return ""
+	}
+	ttl := contextcap.LinkTTL(scope.ScopeType)
+	title := ""
+	if scope.ScopeType == contextcap.ScopeScene {
+		if loaded, err := contextcap.GetScene(ctx, h.DB, scope.WorkspaceID, scope.AgentID, scope.OrgID, scope.ScopeKey); err == nil {
+			title = agentSceneTitle(loaded)
+		}
+	}
+	if _, err := contextcap.UpsertGrant(ctx, h.DB, contextcap.Grant{
+		UserID: scope.UserID, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID,
+		ScopeType: scope.ScopeType, OrgID: scope.OrgID, ScopeKey: scope.ScopeKey, ScopeTitle: title,
+		Source: contextcap.GrantSourceAgentLink,
+	}, ttl); err != nil {
+		slog.WarnContext(ctx, "scene configure session: grant not stored", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "error", err)
+	}
+	token, err := auth.SignSceneSession(auth.SceneSession{
+		WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, OrgID: scope.OrgID,
+		ScopeType: scope.ScopeType, ScopeKey: scope.ScopeKey, UserID: scope.UserID,
+		ExpiresAt: time.Now().Add(auth.SceneSessionTTL).Unix(),
+	}, time.Now())
+	if err != nil {
+		slog.WarnContext(ctx, "scene configure session: could not sign", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "error", err)
+		return ""
+	}
+	return token
 }
 
 func randomOAuthValue() (string, error) {
@@ -741,6 +878,11 @@ type connectorSealedVerifier struct {
 	// connectorOAuthFlowInstall (exchange the installation code without
 	// PKCE) or connectorOAuthFlowUser (the second hop, with PKCE).
 	AuthFlow string `json:"auth_flow,omitempty"`
+	// Shareable is set only for a scene or person GitHub App install. That
+	// callback may finish in a browser that did not start it. Workspace
+	// connects and DCR connects leave it false and still require the
+	// browser binding cookie.
+	Shareable bool `json:"shareable,omitempty"`
 }
 
 func (h *Handler) sealConnectorOAuthVerifier(payload connectorSealedVerifier) ([]byte, error) {
@@ -913,7 +1055,7 @@ func (h *Handler) continueGitHubInstall(ctx context.Context, state consumedConne
 			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
 		}
 		out.ErrorCode = ""
-		out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
+		out.RedirectURL, out.SceneSession = h.finishSceneConnectReturn(ctx, scope, state.returnTo, app.Slug)
 		slog.InfoContext(ctx, "github install callback refreshed an existing connection", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "installation_id", in.InstallationID, "setup_action", in.SetupAction)
 		return out
 	}
@@ -1027,11 +1169,14 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if _, err := normalizeConnectorOAuthScope(scope); err != nil {
 		return burn(connectOAuthErrInvalidState)
 	}
-	// Only the browser that started the connect may complete it: the code
-	// must never land in another scope.
-	if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
-		!hmac.Equal([]byte(hashConnectorOAuthState(in.BrowserNonce)), []byte(verifier.BrowserHash)) {
-		return burn(connectOAuthErrBrowserMismatch)
+	// Only the browser that started the connect may complete it, except a
+	// scene or person GitHub App install, which is shareable on purpose.
+	// The state is still single use and expires.
+	if !connectorOAuthShareable(verifier, scope) {
+		if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
+			!hmac.Equal([]byte(hashConnectorOAuthState(in.BrowserNonce)), []byte(verifier.BrowserHash)) {
+			return burn(connectOAuthErrBrowserMismatch)
+		}
 	}
 	if in.Error == "access_denied" {
 		return burn(connectOAuthErrAccessDenied)
@@ -1113,7 +1258,7 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 		out.Discovered = result.Discovered
 	}
 	out.ErrorCode = ""
-	out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
+	out.RedirectURL, out.SceneSession = h.finishSceneConnectReturn(ctx, scope, state.returnTo, app.Slug)
 	// A token of a scene's own application serves that scene only; the
 	// workspace's authorization instances hold the workspace client's.
 	if !endpoint.scene {

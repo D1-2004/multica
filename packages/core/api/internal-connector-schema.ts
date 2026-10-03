@@ -209,6 +209,12 @@ export const ConnectorAuthorizeUrlSchema = z
   .transform((value) => safeExternalUrl(value.authorize_url))
   .pipe(z.string().min(1));
 
+/** One repository covered by a GitHub App installation. */
+export interface ContextGitHubRepository {
+  fullName: string;
+  private: boolean;
+}
+
 /** One GitHub App installation covered by a stored connector user token. */
 export interface ContextGitHubInstallation {
   id: number;
@@ -216,6 +222,9 @@ export interface ContextGitHubInstallation {
   accountType: string;
   repositorySelection: string;
   settingsUrl: string;
+  repositories: ContextGitHubRepository[];
+  repositoryCount: number;
+  repositoriesTruncated: boolean;
 }
 
 /** Installations of the GitHub App for one scene, org, or person credential. */
@@ -251,6 +260,17 @@ export const ContextGitHubInstallationsSchema = z
           account_type: z.string(),
           repository_selection: z.string(),
           settings_url: z.string(),
+          repositories: z
+            .array(
+              z.object({
+                full_name: z.string(),
+                private: z.boolean().optional().default(false),
+              }),
+            )
+            .optional()
+            .default([]),
+          repository_count: z.number().int().nonnegative().optional().default(0),
+          repositories_truncated: z.boolean().optional().default(false),
         }),
       )
       .default([]),
@@ -268,6 +288,13 @@ export const ContextGitHubInstallationsSchema = z
         accountType: item.account_type,
         repositorySelection: item.repository_selection,
         settingsUrl: safeExternalUrl(item.settings_url),
+        repositories: item.repositories.flatMap((repo) =>
+          repo.full_name.includes(" ") || repo.full_name === ""
+            ? []
+            : [{ fullName: repo.full_name, private: repo.private }],
+        ),
+        repositoryCount: item.repository_count,
+        repositoriesTruncated: item.repositories_truncated,
       })),
       error: value.error,
       truncated: value.truncated,

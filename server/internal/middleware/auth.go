@@ -51,6 +51,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 
 			tokenString, fromCookie := extractToken(r)
 			if tokenString == "" {
+				if sess, ok := sceneConfigSession(r); ok {
+					r.Header.Set("X-User-ID", sess.UserID)
+					r.Header.Set("X-Auth-Method", auth.SceneSessionAuthMethod)
+					next.ServeHTTP(w, r.WithContext(auth.WithSceneSession(r.Context(), sess)))
+					return
+				}
 				slog.Debug("auth: no token found", "path", r.URL.Path)
 				http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 				return
@@ -389,6 +395,17 @@ func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.Ge
 	}); err != nil {
 		slog.Warn("auth: failed to audit workspace access request", "token_id", uuidToString(row.ID), "error", err)
 	}
+}
+
+// sceneConfigSession accepts the configure-page cookie only on the context
+// capability API, and only when the request has no other credential. A
+// DingTalk JWT therefore still wins.
+func sceneConfigSession(r *http.Request) (auth.SceneSession, bool) {
+	path := r.URL.Path
+	if path != "/api/context-capabilities" && !strings.HasPrefix(path, "/api/context-capabilities/") {
+		return auth.SceneSession{}, false
+	}
+	return auth.SceneSessionFromRequest(r, time.Now())
 }
 
 // extractToken returns the bearer token and whether it came from a cookie.
