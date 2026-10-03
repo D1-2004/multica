@@ -20,7 +20,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
-	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -678,20 +677,8 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if identity, e := h.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID}); e == nil {
 		input.Config.Persona.Name = identity.AccountDisplayName
 	}
-	if h.EmployeeMemory != nil {
-		memoryScope := employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopeScene}
-		if brief, e := h.EmployeeMemory.Brief(ctx, memoryScope, "", 8); e == nil {
-			input.Input.Memory = brief
-		} else {
-			input.Input.Memory = "Scene memory unavailable."
-		}
-		// Requester-private context only in a 1:1 scene with that requester.
-		if requester := origin.Anchor.RequesterRef; registered.SceneKind == scene.KindDM && requester != "" && requester == origin.Task.RequesterRef {
-			memoryScope.Kind, memoryScope.PrincipalID = employeememory.ScopePrivate, requester
-			if private, e := h.EmployeeMemory.Brief(ctx, memoryScope, "", 4); e == nil && private != "" {
-				input.Input.Memory += "\nRequester-private background context for this Task's requester only; do not disclose it to other participants.\n" + private
-			}
-		}
+	if err = w.employeeTaskWakeMemory(job, registered, origin, current.Task.Definition.Goal).freeze(ctx, &input); err != nil {
+		return employeeSavedInput{}, err
 	}
 	return input, nil
 }

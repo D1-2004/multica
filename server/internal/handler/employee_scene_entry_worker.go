@@ -19,7 +19,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
-	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	openai "github.com/openai/openai-go/v3"
 )
@@ -276,7 +275,10 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 	trace := employeeTraceStart(ctx, w.Langfuse, job)
 	employeeTraceWake(trace, job)
 	ctx = langfuse.ContextWithTrace(ctx, trace)
-	defer func() { employeeTraceFinish(trace, saved, committed, returnErr) }()
+	defer func() {
+		w.employeeMemoryAfterWake(ctx, job, saved, committed)
+		employeeTraceFinish(trace, saved, committed, returnErr)
+	}()
 	var err error
 	h := w.handler
 	agent, agentErr := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseUUID(job.Scope.AgentID), WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
@@ -491,6 +493,8 @@ func (w *EmployeeSceneWorker) retryPersisted(ctx context.Context, job employeeen
 }
 
 func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.Job, envelopes, originalEnvelopes []employeeDispatchEnvelope) (employeeSavedInput, error) {
+	memory := w.employeeChatMemory(ctx, job, envelopes, originalEnvelopes)
+	defer memory.release()
 	messages := []employeeSourceMessage{}
 	for i, item := range job.Items {
 		for _, message := range employeeSourceMessages(item, envelopes[i]) {
@@ -594,27 +598,8 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if identity, e := w.handler.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID}); e == nil {
 		input.Config.Persona.Name = identity.AccountDisplayName
 	}
-	if w.handler.EmployeeMemory != nil {
-		brief, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopeScene}, "", 8)
-		if e == nil {
-			input.Input.Memory = brief
-		} else {
-			input.Input.Memory = "Scene memory unavailable."
-		}
-		originalMessages := []employeeSourceMessage{}
-		for i, item := range job.Items {
-			originalMessages = append(originalMessages, employeeSourceMessages(item, originalEnvelopes[i])...)
-		}
-		registered, e := employeeSceneFence(ctx, w.handler, job)
-		if e != nil {
-			return employeeSavedInput{}, e
-		}
-		if requester, unique := employeeAutomaticPrivateRequester(registered, originalMessages); unique {
-			private, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopePrivate, PrincipalID: requester}, "", 4)
-			if e == nil && private != "" {
-				input.Input.Memory += "\nRequester-private background context for this source only; do not disclose it to other participants.\n" + private
-			}
-		}
+	if err = memory.freeze(ctx, &input); err != nil {
+		return employeeSavedInput{}, err
 	}
 	return input, nil
 }
