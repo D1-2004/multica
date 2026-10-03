@@ -1,0 +1,2936 @@
+{
+ "schema": "el2e.cases.v2",
+ "suite": "EmployeeLoop 真人感回归 v2 · T 办事与持续推进",
+ "source": "cases-v2/SUITE.md；由 GoldenCase-20、08 §5 验收 ID 与 GawkBot 对照改写，经写手与真人感、可行性两轮评审修订",
+ "category": {
+  "code": "T",
+  "name": "办事与持续推进",
+  "file": "T.json",
+  "focus": "问与办、派活与进度、运行中纠正与停止、续接与 builds_on、文件交付、停滞提示、例行任务、Webhook、跨场域收集、计划续行"
+ },
+ "notes": [
+  "人类台词里 Director 叫「D总」，冬翔叫「东翔」，员工叫「小Q」；硬检查用 {=别名} 正则，不依赖字面写法。",
+  "正文没有可见测试标记：每次发送带不可见 --uuid，员工回复按引用 messageId 归属；变量行让每轮的客户名、金额、人名、编号自然不同。",
+  "DEAP 演员（黛玉、凤姐、宝钗）不能 @、不能私聊员工，只能引用员工消息点名；人类发送一律 --ai-tag=false。",
+  "字段说明见 harness-gaps.md §0；世界设定见 world.json。"
+ ],
+ "defaults": {
+  "wait": {
+   "reply": {
+    "timeout_s": 180,
+    "settle_s": 25
+   },
+   "silence": {
+    "window_s": 60
+   },
+   "optional": {
+    "window_s": 45,
+    "settle_s": 15
+   },
+   "none": {
+    "pause_s": 5
+   }
+  },
+  "human_send": {
+   "ai_tag": false
+  },
+  "world": "world.json",
+  "templating": "先替换 var_sets 选中行的 {VAR}，再展开 {=ALIAS}；var 名不得与 driver.gen_vars 的键重名（加载时报错）",
+  "pattern_sets": {
+   "EN": "(?i)\\b(I don't|I'm|I have no|Standing by|Got it|Sure,|Let me|Here is|Here's)\\b|[A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,}",
+   "SERVICE": "以下是|很高兴为|正在为您|请问还有什么|收到您的|亲[，,！!]|作为(一个)?\\s*AI",
+   "RESEND": "(再|重新)发(一下|一遍|下)|发我(一下|看看)|贴(一下|过来|出来)|没看到.{0,8}(消息|材料|记录|内容)|麻烦.{0,6}(发|贴)",
+   "INTERNAL": "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|memory_(capture|lookup|forget)|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])",
+   "CONTACT": "[A-Za-z0-9._-]+@[A-Za-z0-9-]+\\.[A-Za-z]{2,}|(?<!\\d)1[3-9]\\d{9}(?!\\d)",
+   "MDTABLE": "\\|\\s*:?-{3,}"
+  },
+  "aliases": {
+   "DONGXIANG": "(?:[冬东]翔|夏东翔)",
+   "DZONG": "(?:D总|Director)",
+   "FENGJIE": "(?:凤姐|王熙凤)",
+   "DAIYU": "(?:黛玉|林黛玉)",
+   "BAOCHAI": "(?:宝钗|薛宝钗)"
+  },
+  "grading": {
+   "tier": "缺省 = 硬检查；tier=target 只决定 pass 与 degraded（硬检查全过、目标档未过 = degraded）",
+   "requires": "能力未具备时该检查记 vacuous、不计分；以 ! 开头表示仅在该能力未具备时适用；a+b 表示同时需要",
+   "only_if": "条件不满足时该检查记 n/a",
+   "observe": "observe 步骤未匹配 = 硬检查失败（optional:true 除外）",
+   "sentinel": "scope=case_span：只扫本用例时间窗",
+   "unknown_keys": "grader / driver 遇到未知键直接报错，不得静默跳过"
+  }
+ },
+ "cases": [
+  {
+   "id": "T-01",
+   "title": "报销汇总表：派活 → 过两分钟催进度 → 出结果 → 同一件事再按类别出一份 → 道谢（BASE-TASK 真人版）",
+   "focus": [
+    "F5",
+    "F3"
+   ],
+   "maps_to": [
+    "BASE-TASK"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "x_run_window": {
+    "from": "10:30",
+    "to": "13:30",
+    "why": "「我两点前要给王雪」"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑（start 的 settle=150 用来让「催进度」晚两分多钟发出）"
+   },
+   "steps": [
+    {
+     "id": "start",
+     "actor": "D总",
+     "text": "9月出差那几笔帮我弄个报销汇总表，按人汇总，最后给个总数，我下午要转给王雪。弄成 Excel 或 CSV 发我都行\n9/03 东翔 高铁 杭州东-上海虹桥 73\n9/03 东翔 打车 46\n9/04 东翔 住宿 全季 1晚 389\n9/05 东翔 高铁 上海虹桥-杭州东 73\n9/03 周明 打车 58\n9/04 周明 住宿 亚朵 1晚 412\n9/04 周明 餐补 35\n9/05 周明 打车 96\n9/10 林晓 机票改签费 128\n9/10 林晓 住宿 如家 1晚 389\n9/11 林晓 打车 64\n9/11 林晓 餐补 115",
+     "match_key": "9月出差那几笔帮我弄个报销汇总表",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 150
+     }
+    },
+    {
+     "id": "urge",
+     "actor": "D总",
+     "text": "好了没？我两点前要给王雪",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "done1",
+     "observe": {
+      "until_regex": "1,?878",
+      "timeout_s": 480,
+      "since_step": "start"
+     }
+    },
+    {
+     "id": "more",
+     "actor": "D总",
+     "text": "再按类别出一份：交通、住宿、餐补各多少，跟刚才那张放一个文件里",
+     "match_key": "再按类别出一份",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "done2",
+     "observe": {
+      "until_regex": "1,?190",
+      "timeout_s": 480,
+      "since_step": "more"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "D总",
+     "text": "可以，谢了",
+     "wait": {
+      "mode": "silence",
+      "window_s": 60
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "分人 581/601/696、合计 1878；类别 交通538/住宿1190/餐补150；催进度不编百分比或 ETA；续接为同一 Task 新 Run；致谢零派发。",
+    "checks": [
+     {
+      "steps": [
+       "start"
+      ],
+      "replies": [
+       1,
+       2
+      ]
+     },
+     {
+      "steps": [
+       "urge"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "\\d{1,3}\\s*%",
+       "预计.{0,8}\\d+\\s*(分钟|秒)"
+      ]
+     },
+     {
+      "steps": [
+       "start",
+       "urge",
+       "done1"
+      ],
+      "include_all": [
+       "581",
+       "601",
+       "696"
+      ]
+     },
+     {
+      "steps": [
+       "more",
+       "done2"
+      ],
+      "include_all": [
+       "538",
+       "150"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 30
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "urge"
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 2
+     }
+    ],
+    "semantic": [
+     "接单不冒称已开始或已完成，口吻像同事",
+     "进度来自实时任务状态，不编百分比或 ETA",
+     "改签费、打车归入交通，口径合理",
+     "续接沿用同一 Task 新 Run",
+     "致谢不展开、不派发"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。月初报销季，D总把 12 笔差旅流水贴给员工，要一份能直接转给财务王雪的表；过两分钟催进度，拿到表后再要一个维度，最后道谢。",
+    "人物": "D总；小Q；王雪（财务）、冬翔、周明、林晓（流水里的人名）。",
+    "上下文": "对应 BASE-TASK。数字固定：冬翔 581、周明 601、林晓 696，合计 1878；交通 538、住宿 1190、餐补 150。",
+    "应该怎么做": "start 派后台、自然接单；urge 实时读状态如实说，不编百分比；结果分人小计与合计；more 同一 Task 新 Run；thanks 不回或一句。",
+    "怎么判": "数字都对、进度诚实、续接同一 Task、致谢零派发，就通过。",
+    "依赖": "existing。",
+    "当前预期": "大概率部分通过：Qwen-Real 上续接曾新建 Task（same_task_runs 风险）。",
+    "真人感": "催进度挪到接单后约两分钟（真人不会 10 秒就催）；流水里 D总那几笔换成同事周明，避免把 D总写进报销单。"
+   }
+  },
+  {
+   "id": "T-02",
+   "title": "问 vs 办：能当场答的直接答，短文案直接写，要动钉盘才派活",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "BASE-TASK(反例)"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "冬翔",
+     "text": "上周项目组团建的几笔你帮我看下，人均超没超 300：\n场地 2400\n大巴 1100\n午餐 1860\n饮料零食 386\n一共 18 个人",
+     "match_key": "上周项目组团建的几笔你帮我看下",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "note",
+     "actor": "冬翔",
+     "text": "超了啊…那帮我写两句超标说明，我贴报销单备注里，别太长",
+     "match_key": "那帮我写两句超标说明",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "work",
+     "actor": "冬翔",
+     "text": "行。另外在钉盘「行政/团建报销」下面建个文档，把这几笔和人均记上，回头财务要查",
+     "match_key": "下面建个文档，把这几笔和人均记上",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "workdone",
+     "observe": {
+      "until_regex": "文档|钉盘|权限|没能|失败|没有建",
+      "timeout_s": 480,
+      "since_step": "work"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "好嘞",
+     "match_key": "好嘞",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "问题当场答（人均约 319，超标），短文案直接写，建文档才派后台并如实汇报结果，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "319"
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "ask"
+     },
+     {
+      "steps": [
+       "note"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "max_chars": 200
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "note"
+     },
+     {
+      "steps": [
+       "work",
+       "workdone"
+      ],
+      "replies": [
+       1,
+       3
+      ],
+      "exclude": [
+       "没有(这个|相关)?工具|找管理员|联系管理员"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 20
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "第一问直接给结论和依据，没派活也没说「我去查」",
+     "超标说明两三句、能直接粘贴",
+     "建文档派了后台，接单自然",
+     "结果如实：成功给位置，失败说原因"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "effect_for_step",
+     "step": "work",
+     "tools": [
+      "dispatch_task"
+     ],
+     "why": "正向断言第 3 步确实派了任务"
+    }
+   ],
+   "doc": {
+    "情境": "东翔单聊。东翔把团建费用贴过来问人均超没超，接着要两句超标说明，再让员工在钉盘建文档。",
+    "人物": "冬翔/东翔（项目负责人，组织了组内团建）；小Q。",
+    "上下文": "对照 GawkBot Rule Zero：问题当场答，只有动外部系统才开事项。合计 5746、18 人，人均约 319。",
+    "应该怎么做": "ask 当场答超了、人均约 319；note 直接写两三句；work 派后台，接单一句，结果如实；thanks 不回或一句。",
+    "怎么判": "前两问零派发、第三问派发且如实，就通过。",
+    "依赖": "existing。",
+    "当前预期": "预计通过。",
+    "真人感": "真人常把「问一下」和「顺手办一下」混着说；与 T-01 构成相邻反例。"
+   }
+  },
+  {
+   "id": "T-03",
+   "title": "群里排值班，运行中补一句「周明那几天出差别排他」（BASE-STEER 真人版）",
+   "focus": [
+    "F5",
+    "F1"
+   ],
+   "maps_to": [
+    "BASE-STEER"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑；时序门槛待补（P1）"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "冬翔",
+     "text": "帮我排下 10 月 19 号到 30 号华信现场支持的值班：我、林晓、周明、小周四个人轮，工作日每天一个人，周末不排。排好直接发群里，按日期一行一行列",
+     "at": [
+      "employee"
+     ],
+     "match_key": "帮我排下 10 月 19 号到 30 号华信现场支持的值班",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "fix",
+     "actor": "冬翔",
+     "text": "哦对了 周明 20 号到 24 号在北京出差，那几天别排他",
+     "at": [
+      "employee"
+     ],
+     "match_key": "周明 20 号到 24 号在北京出差",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "done",
+     "observe": {
+      "until_regex": "^(?=(?:[^\\n]*\\n){6})(?=[\\s\\S]*林晓)(?=[\\s\\S]*周明)",
+      "timeout_s": 480,
+      "since_step": "ask"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "行 就按这个来",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "silence",
+      "window_s": 60
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "群里只有一份值班表、10/20–10/23 没有周明；纠正走同一 Task，旧表不补发，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "ask",
+       "fix"
+      ],
+      "replies": [
+       3,
+       3
+      ],
+      "exclude": [
+       "(?<!\\d)(10[/.-]|10月)?2[0-3](?!\\d)\\s*[日号]?[^\\n]{0,15}周明"
+      ],
+      "note": "接单 + 纠正确认 + 唯一一份结果，合并计数避免归属错位"
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 30
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 2
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "补充条件被当成对同一件事的纠正",
+     "纠正确认是一句人话",
+     "20–23 号没有周明，周末不排，四人大致均衡",
+     "群里只有一份表（或明确的更正版）"
+    ]
+   },
+   "pending_checks": [
+    {
+     "check": "send_within_s",
+     "step": "fix",
+     "max_s": 30,
+     "why": "纠正必须在旧 Run 结束前送到，否则判 invalid_timing 重跑"
+    }
+   ],
+   "doc": {
+    "情境": "交付二组·项目推进群。东翔 @小Q 排华信现场支持值班；接单后十几秒想起漏了条件，补一句。",
+    "人物": "冬翔/东翔（发起人）；D总（旁观）；小Q。林晓、周明、小周是材料里的人名。",
+    "上下文": "对应 BASE-STEER。10/19（周一）到 10/30 共 10 个工作日；周明 20–24 号出差，工作日里是 20–23 号。",
+    "应该怎么做": "ask 派后台接单；fix 识别为纠正，一句确认；群里最后只有一份表，20–23 号没有周明；thanks 不回或一句。",
+    "怎么判": "只有一份表且纠正生效、同一 Task，就通过。",
+    "依赖": "existing。",
+    "当前预期": "预计通过或接近通过（Qwen-DWS 同构通过）。",
+    "真人感": "轮班名单换成东翔的组员，不再把上级 D总排进值班。"
+   }
+  },
+  {
+   "id": "T-04",
+   "title": "回放脚本跑着：别停 → 算了停了吧 → 停干净没 → 辛苦（BASE-STOP 真人版）",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "BASE-STOP"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑"
+   },
+   "steps": [
+    {
+     "id": "start",
+     "actor": "冬翔",
+     "text": "帮我在你那边跑下这个延迟数据回放脚本，大概四分钟，跑完把 P99 告诉我，我对一下昨天压测的数\nimport random, time\nrandom.seed(20261003)\nlat = []\nfor i in range(240):\n    time.sleep(1)\n    lat.append(random.gauss(118, 25))\nlat.sort()\nprint('P99=%.1f ms' % lat[int(len(lat) * 0.99)])",
+     "match_key": "帮我在你那边跑下这个延迟数据回放脚本",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "check",
+     "actor": "冬翔",
+     "text": "跑上了没",
+     "match_key": "跑上了没",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 90,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "nostop",
+     "actor": "冬翔",
+     "text": "跑着就行，别停啊，我就问问",
+     "wait": {
+      "mode": "optional",
+      "window_s": 45,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "stop",
+     "actor": "冬翔",
+     "text": "算了算了，停了吧，客户说今天先不对了",
+     "match_key": "停了吧，客户说今天先不对了",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "verify",
+     "actor": "冬翔",
+     "text": "停干净了没？别一会儿又冒个结果出来",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "行 辛苦",
+     "wait": {
+      "mode": "silence",
+      "window_s": 300
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "否定句零控制；停止后真实退出才说停干净；越过原定结束时刻也没有 P99 数值，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "start"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "check"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "\\d{1,3}\\s*%"
+      ]
+     },
+     {
+      "steps": [
+       "nostop"
+      ],
+      "replies": [
+       0,
+       1
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "check"
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "nostop"
+     },
+     {
+      "steps": [
+       "stop"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "verify"
+      ],
+      "replies": [
+       1,
+       2
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "verify"
+     },
+     {
+      "steps": [
+       "start",
+       "check",
+       "nostop",
+       "stop",
+       "verify",
+       "thanks"
+      ],
+      "exclude": [
+       "P99\\s*[=＝:：]\\s*\\d"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 20
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "「别停」没被当成停止",
+     "停止回复不冒称已停干净",
+     "「停干净没」的说法与 process_exit_confirmed 一致",
+     "没补发旧结果，也没新开任务"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "effect_for_step",
+     "step": "stop",
+     "tools": [
+      "stop_task"
+     ]
+    },
+    {
+     "evidence": "process_exit_confirmed",
+     "step": "verify",
+     "why": "第 5 步的说法要和真实退出状态一致"
+    }
+   ],
+   "doc": {
+    "情境": "东翔单聊。让员工跑一个四分钟的延迟数据回放脚本；先问跑上没、说一句「别停」，再真的要求停止，最后追问停干净没。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "对应 BASE-STOP。脚本 240 秒，最后才打印 P99。",
+    "应该怎么做": "start 派后台；check 实时读状态如实答；nostop 零控制，最多一句；stop 执行停止、回「已经让它停了」，不说已停干净；verify 按真实退出状态说；全程不出现 P99 数值；thanks 不回或一句。",
+    "怎么判": "否定句零控制、停止诚实、无旧结果，就通过。",
+    "依赖": "existing。",
+    "当前预期": "预计通过（Qwen-DWS 同构通过）。",
+    "真人感": "「压测脚本」改称「延迟数据回放脚本」，sleep + 随机数的写法对工程师不再显得假。"
+   }
+  },
+  {
+   "id": "T-05",
+   "title": "先出拜访统计，再「基于刚才这个」写复盘（builds_on：新工作建立在旧结果上）",
+   "focus": [
+    "F5",
+    "F3"
+   ],
+   "maps_to": [
+    "G5-builds_on",
+    "BASE-TASK"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "grader_v2",
+     "evidence_v2"
+    ],
+    "platform": [],
+    "release": [
+     "marker13"
+    ],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready_partial",
+    "reason": "builds_on 参数未上预发（marker 13）；现在只能靠前台把结果抄进 prompt 碰巧通过"
+   },
+   "known_gap": "G5 builds_on 未上预发",
+   "steps": [
+    {
+     "id": "visits",
+     "actor": "冬翔",
+     "text": "9 月客户拜访记录我贴下面了，帮我按客户归一下：每家去了几次、最近一次哪天、谁去的。弄成表发我\n9/02 宏远 东翔 需求澄清\n9/05 中拓 D总 演示\n9/09 宏远 东翔+林晓 POC 启动\n9/12 安澜 D总 商务沟通\n9/16 宏远 林晓 POC 周会\n9/19 中拓 东翔 技术答疑\n9/23 安澜 D总 报价\n9/26 宏远 东翔 中期汇报\n9/29 中拓 D总 合同",
+     "match_key": "9 月客户拜访记录我贴下面了",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "table",
+     "observe": {
+      "until_regex": "宏远[^\\n]{0,30}4",
+      "timeout_s": 480,
+      "since_step": "visits"
+     }
+    },
+    {
+     "id": "recap",
+     "actor": "冬翔",
+     "text": "基于刚才这个统计，帮我写一页周会用的复盘，做成文档发我。三五句话就行，重点说下个月该往哪家多投人",
+     "match_key": "基于刚才这个统计，帮我写一页周会用的复盘",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "recapdone",
+     "observe": {
+      "until_regex": "(宏远|中拓|安澜)[\\s\\S]{0,300}(投|人力|倾斜|重点)|\\.(docx|md|pdf)",
+      "timeout_s": 480,
+      "since_step": "recap"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "好 我周一用",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "统计 宏远4/9-26、中拓3/9-29、安澜2/9-23；复盘基于该结果（builds_on 新 Task），不回头要数据、不编，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "visits"
+      ],
+      "replies": [
+       2,
+       2
+      ],
+      "include_all": [
+       "宏远",
+       "中拓",
+       "安澜"
+      ]
+     },
+     {
+      "steps": [
+       "recap"
+      ],
+      "replies": [
+       2,
+       2
+      ],
+      "exclude": [
+       "哪个统计|把(数据|记录)(再)?(发|贴)"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 20
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     },
+     {
+      "evidence": "tool_arg_present",
+      "step": "recap",
+      "tool": "dispatch_task",
+      "arg": "builds_on",
+      "tier": "target",
+      "requires": "marker13"
+     },
+     {
+      "evidence": "task_count",
+      "min": 2,
+      "max": 2,
+      "tier": "target",
+      "requires": "marker13"
+     }
+    ],
+    "semantic": [
+     "第二件事是引用第一件结果的新任务，不是对第一件的 continue",
+     "没反问「哪个统计」，没要求重贴数据",
+     "复盘数字与第一张表一致，没编拜访",
+     "建议有依据（频次、阶段）"
+    ]
+   },
+   "doc": {
+    "情境": "东翔单聊。先让员工把 9 月拜访记录按客户归类出表，再让它「基于刚才这个统计」写一页复盘。",
+    "人物": "冬翔/东翔；小Q；D总、林晓（记录里的人名）。",
+    "上下文": "宏远 4 次（最近 9/26，东翔）；中拓 3 次（9/29，D总）；安澜 2 次（9/23，D总）。",
+    "应该怎么做": "visits 出表；recap 新建任务并 builds_on 第一个任务，不 continue，不反问，复盘引用真实数字给投入建议；thanks 不回或一句。",
+    "怎么判": "复盘基于真实结果、不回头要数据，就通过。",
+    "依赖": "wave2:G5（marker 13）。",
+    "当前预期": "现在预计失败或部分失败；marker 13 上预发后预计通过。",
+    "真人感": "客户换成客户池，避免把核心客户华信写成「POC 启动」与世界设定冲突。"
+   }
+  },
+  {
+   "id": "T-06",
+   "title": "申领单「只要文件」→ 漏一条补上再发一版（BASE-FILE 真人版）",
+   "focus": [
+    "F5",
+    "F3"
+   ],
+   "maps_to": [
+    "BASE-FILE"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "requires": {
+    "harness": [
+     "file_download"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "可跑；文件内容核对在 file_download（P1）前记 needs_review"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "10 月办公用品申领我汇总好了，帮我弄成 CSV 发我，只要文件，别再给我写一遍总结了\n行政部 A4纸 5箱\n行政部 签字笔 2盒\n研发部 白板笔 3盒\n研发部 HDMI转接头 4个\n销售部 名片 6盒",
+     "match_key": "10 月办公用品申领我汇总好了",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "file1",
+     "observe": {
+      "until_regex": "\\.csv",
+      "timeout_s": 480,
+      "since_step": "ask"
+     }
+    },
+    {
+     "id": "add",
+     "actor": "D总",
+     "text": "漏了一条：财务部 订书钉 3 盒，加上再发我一版",
+     "match_key": "财务部 订书钉 3 盒",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "file2",
+     "observe": {
+      "until_regex": "\\.csv",
+      "timeout_s": 480,
+      "since_step": "add"
+     }
+    },
+    {
+     "id": "ok",
+     "actor": "D总",
+     "text": "收到👌",
+     "match_key": "收到👌",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "两次只发 CSV 不总结；第二版多「财务部,订书钉,3」；同一 Task 两个 Run，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       2,
+       2
+      ],
+      "exclude": [
+       "合计|共计|一共\\s*\\d|汇总如下|如下[:：]"
+      ]
+     },
+     {
+      "steps": [
+       "add"
+      ],
+      "replies": [
+       2,
+       2
+      ],
+      "exclude": [
+       "合计|共计|一共\\s*\\d|汇总如下|如下[:：]"
+      ]
+     },
+     {
+      "steps": [
+       "ok"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 20
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "ok"
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 2
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "接单一句，不复述清单",
+     "两份都是钉钉原生文件，不是正文贴表",
+     "第二份继承只发文件，没补总结",
+     "第二份多出订书钉一行"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "file_download",
+     "steps": [
+      "file1",
+      "file2"
+     ],
+     "why": "下载两份文件核对 UTF-8、行数、hash，第二份含「财务部,订书钉,3」"
+    }
+   ],
+   "doc": {
+    "情境": "D总单聊。行政采购：D总把申领汇总贴给员工，只要 CSV 文件、不要总结；随后补一行再要一版。",
+    "人物": "D总；小Q。",
+    "上下文": "对应 BASE-FILE：completion_notice_policy=if_not_delivered，续接继承「只要文件」。",
+    "应该怎么做": "ask 接单一句后只收到一个 CSV；add 续同一 Task，第二版 6 行；ok 不回或一句。",
+    "怎么判": "两次只发文件、内容对、同一 Task，就通过。",
+    "依赖": "existing。",
+    "当前预期": "Qwen-DWS 上已通过；Qwen-Real 若没装配钉钉文件工具会改成贴正文，判失败。",
+    "真人感": "「只要文件，别再给我写一遍总结了」是真人对啰嗦机器人的典型抱怨。"
+   }
+  },
+  {
+   "id": "T-07",
+   "title": "二十分钟的模拟跑批：停滞时如实提示一次，问「还要多久」不瞎报，插一个急问题照样秒答（WD-01/02）",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "WD-01",
+    "WD-02"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "requires": {
+    "harness": [
+     "grader_v2",
+     "config_snapshot"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "watchdog_override",
+     "deploy_freeze"
+    ]
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "需要在预发 Diamond 给 Qwen-Real 把 watchdog running 阈值调到 300s（运维动作需授权）；约 25 分钟窗口需部署冻结"
+   },
+   "steps": [
+    {
+     "id": "run",
+     "actor": "D总",
+     "text": "这个是回归的模拟跑批，慢，二十分钟左右，跑完把挂的用例名发我，不用盯着\nimport time\ncases = ['login', 'order', 'refund', 'invoice', 'export', 'audit']\nfailed = []\nfor c in cases:\n    time.sleep(200)\n    if c in ('refund', 'export'):\n        failed.append(c)\nprint('FAILED:', ', '.join(failed))",
+     "match_key": "这个是回归的模拟跑批",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "stall",
+     "observe": {
+      "until_regex": "没有新的可观测输出|排队等待执行环境|无法回报进展|执行环境目前离线",
+      "timeout_s": 900,
+      "since_step": "run"
+     }
+    },
+    {
+     "id": "howlong",
+     "actor": "D总",
+     "text": "那大概还要多久？",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "insert",
+     "actor": "D总",
+     "text": "另外插个急的：宏远合同 37.5 万，按 3:4:3 分三期付，每期各多少？",
+     "match_key": "按 3:4:3 分三期付",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 90,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "ans",
+     "observe": {
+      "until_regex": "11\\.25\\s*万|112,?500",
+      "timeout_s": 90,
+      "since_step": "insert"
+     }
+    },
+    {
+     "id": "result",
+     "observe": {
+      "until_regex": "refund[\\s\\S]{0,60}export|export[\\s\\S]{0,60}refund",
+      "timeout_s": 1500,
+      "since_step": "run"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "D总",
+     "text": "好嘞 辛苦",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "停滞提示恰好一条且如实；问多久不编；插问当场答对且不影响原任务；结果 refund、export，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "run",
+       "howlong",
+       "insert",
+       "thanks"
+      ],
+      "replies": [
+       5,
+       6
+      ],
+      "note": "接单 + 停滞提示 + 多久 + 插问 + 结果（结果可能归到 thanks）"
+     },
+     {
+      "steps": [
+       "run",
+       "howlong",
+       "insert",
+       "thanks"
+      ],
+      "match_count": {
+       "regex": "没有新的可观测输出",
+       "range": [
+        1,
+        1
+       ]
+      }
+     },
+     {
+      "steps": [
+       "howlong"
+      ],
+      "exclude": [
+       "\\d{1,3}\\s*%",
+       "卡住"
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "howlong"
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "insert"
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "max_chars": 200
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "停滞提示只有一条、如实，没有百分比、ETA 或「卡住」",
+     "「还要多久」以实时状态和对方给的二十分钟为依据",
+     "插问当场给出 11.25/15/11.25 万，没当成对跑批的纠正",
+     "结果只发一次，refund 和 export 都在"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。D总在开会，顺手让员工跑一个约二十分钟、无中间输出的模拟跑批；中间问还要多久，又插问一个合同分期。",
+    "人物": "D总；小Q。",
+    "上下文": "对应 WD-01/02。停滞提示是 Host 的确定性文案；问进展不算进展。插问：37.5 万按 3:4:3，每期 11.25 / 15 / 11.25 万。",
+    "应该怎么做": "run 接单；到阈值 Host 发唯一一条停滞提示；howlong 实时读状态、以二十分钟为依据、不编；insert 当场答，不影响跑批；result 一次；thanks 不回或一句。",
+    "怎么判": "提示一条且诚实、插问答对、结果对，就通过。",
+    "依赖": "existing（C1 停滞提示已随 marker 12）＋ 运维阈值覆盖。",
+    "当前预期": "阈值覆盖前跑不了；覆盖后未知（执行器轮询输出可能被算作进展）。",
+    "真人感": "合同分期客户换成客户池宏远，不与华信 128 万的设定冲突。"
+   }
+  },
+  {
+   "id": "T-08",
+   "title": "群里定「每周五四点提醒更新客户台账」→ 这周先手动发一次 → 下周不用了删掉（CRON-01 手动运行分支）",
+   "focus": [
+    "F5",
+    "F1"
+   ],
+   "maps_to": [
+    "CRON-01"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "group_t 不登记为例行任务会话，避免 grader 把平台消息当噪音"
+   },
+   "steps": [
+    {
+     "id": "create",
+     "actor": "D总",
+     "text": "以后每周五下午四点在群里提醒大家更新客户台账，就说：客户台账今天下班前更新，表在钉盘「客户台账/2026Q4」里",
+     "at": [
+      "employee"
+     ],
+     "match_key": "以后每周五下午四点在群里提醒大家更新客户台账",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "created",
+     "observe": {
+      "until_regex": "例行任务「[^」]+」[\\s\\S]{0,120}(周五|星期五|16:00)",
+      "timeout_s": 480,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "runnow",
+     "actor": "D总",
+     "text": "这周的先手动发一次吧，我看看效果",
+     "at": [
+      "employee"
+     ],
+     "match_key": "这周的先手动发一次吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "fired",
+     "observe": {
+      "until_regex": "例行任务「[^」]+」已完成",
+      "timeout_s": 600,
+      "since_step": "runnow"
+     }
+    },
+    {
+     "id": "remove",
+     "actor": "D总",
+     "text": "效果可以。不过下周起台账改用 AI 表格自动同步了，这个提醒先删了吧",
+     "at": [
+      "employee"
+     ],
+     "match_key": "这个提醒先删了吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "removed",
+     "observe": {
+      "until_regex": "删除|已删|移除|删掉了",
+      "timeout_s": 480,
+      "since_step": "remove"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "建成周五 16:00 提醒；手动运行在群里真实发出含 2026Q4 的提醒；删除确认；无内部术语，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "create",
+       "created"
+      ],
+      "replies": [
+       2,
+       2
+      ]
+     },
+     {
+      "steps": [
+       "runnow",
+       "fired"
+      ],
+      "replies": [
+       2,
+       4
+      ],
+      "include_all": [
+       "2026Q4"
+      ]
+     },
+     {
+      "steps": [
+       "remove",
+       "removed"
+      ],
+      "replies": [
+       1,
+       3
+      ]
+     },
+     {
+      "steps": [
+       "create",
+       "runnow",
+       "remove"
+      ],
+      "exclude": [
+       "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])",
+       "https?://\\S*(webhook|hook)"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "新建确认是人话：周五 16:00、下次运行日期",
+     "手动运行走了例行任务（平台开始/完成消息），员工没另发一遍提醒",
+     "删除确认清楚",
+     "全程无内部术语"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组·项目推进群。D总让员工每周五提醒更新客户台账；这周先手动发一次看效果；随后说下周改自动同步，删掉。",
+    "人物": "D总；冬翔/东翔（在群里）；小Q。",
+    "上下文": "例行任务的增删改和运行都经后台调用场域配置 MCP；立即运行时平台在群里依次发「开始执行…（手动运行）」和「…已完成」。",
+    "应该怎么做": "create 用人话确认周五 16:00 与下次运行日；runnow 走立即运行，完成内容是那句提醒；remove 确认已删；不出现内部词或 Webhook 地址。",
+    "怎么判": "建、跑、删都对且无内部词，就通过。",
+    "依赖": "existing。",
+    "当前预期": "预计通过；风险是「手动发一次」被理解成直接在群里说一句。",
+    "真人感": "提醒内容改为客户台账，组内周报规矩只保留 G-15 一套，避免世界设定冲突。"
+   }
+  },
+  {
+   "id": "T-09",
+   "title": "发版下午：每 15 分钟提醒过灰度检查单 → 改文案 → 推迟暂停 → 恢复 → 发完删除（CRON-01/02/03，约 95 分钟）",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "CRON-01",
+    "CRON-02",
+    "CRON-03"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "x_run_window": {
+    "from": "13:00",
+    "to": "18:30",
+    "why": "「今天下午发版…五点了」"
+   },
+   "x_long_running": true,
+   "requires": {
+    "harness": [
+     "grader_v2",
+     "negative_observe",
+     "segments",
+     "pg_read"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "deploy_freeze"
+    ]
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "约 95 分钟窗口几乎必撞部署，需在部署冻结窗口跑或按段判有效性；暂停段要负向观察"
+   },
+   "steps": [
+    {
+     "id": "create",
+     "actor": "冬翔",
+     "text": "今天下午发版，接下来每 15 分钟在群里提醒一下大家过一遍灰度检查单（钉盘「发版/灰度检查单-Q4」），等我说停再停",
+     "at": [
+      "employee"
+     ],
+     "match_key": "接下来每 15 分钟在群里提醒一下大家过一遍灰度检查单",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "created",
+     "observe": {
+      "until_regex": "例行任务「[^」]+」",
+      "timeout_s": 480,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "due1",
+     "observe": {
+      "until_regex": "开始执行例行任务「[^」]+」（定时触发",
+      "timeout_s": 1080,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "end1",
+     "observe": {
+      "until_regex": "例行任务「[^」]+」已完成",
+      "timeout_s": 600,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "edit",
+     "actor": "冬翔",
+     "text": "提醒里加一句：有异常直接 @我，别在群里干等",
+     "at": [
+      "employee"
+     ],
+     "match_key": "提醒里加一句：有异常直接",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "edited",
+     "observe": {
+      "until_regex": "已更新|已修改|改好|更新了",
+      "timeout_s": 480,
+      "since_step": "edit"
+     }
+    },
+    {
+     "id": "due2",
+     "observe": {
+      "until_regex": "已完成[\\s\\S]{0,400}(异常|东翔|冬翔)",
+      "timeout_s": 1200,
+      "since_step": "edit"
+     }
+    },
+    {
+     "id": "pause",
+     "actor": "冬翔",
+     "text": "发版推迟到五点了，提醒先停一下，别删",
+     "at": [
+      "employee"
+     ],
+     "match_key": "提醒先停一下，别删",
+     "wait": {
+      "mode": "silence",
+      "window_s": 1080
+     }
+    },
+    {
+     "id": "resume",
+     "actor": "冬翔",
+     "text": "好了 五点了，接着提醒吧",
+     "at": [
+      "employee"
+     ],
+     "match_key": "五点了，接着提醒吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "due3",
+     "observe": {
+      "until_regex": "开始执行例行任务「[^」]+」（定时触发",
+      "timeout_s": 1080,
+      "since_step": "resume"
+     }
+    },
+    {
+     "id": "stop",
+     "actor": "冬翔",
+     "text": "发完了，提醒删了吧，辛苦",
+     "at": [
+      "employee"
+     ],
+     "match_key": "发完了，提醒删了吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "stopped",
+     "observe": {
+      "until_regex": "删除|已删|移除|删掉了",
+      "timeout_s": 480,
+      "since_step": "stop"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "真实到点执行；改文案从下一次生效；暂停期间零执行、恢复后按时执行；删除后不再触发，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "pause"
+      ],
+      "exclude": [
+       "开始执行例行任务"
+      ]
+     },
+     {
+      "steps": [
+       "create",
+       "edit",
+       "pause",
+       "resume",
+       "stop"
+      ],
+      "exclude": [
+       "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])",
+       "\\*/15|cron"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "新建确认含下次运行时间",
+     "due1 用旧文案，due2 起带「有异常直接找东翔」",
+     "暂停期间越过计划时点零执行",
+     "恢复后下一合法时点执行",
+     "删除后不再触发"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "negative_observe",
+     "between": [
+      "pause",
+      "resume"
+     ],
+     "regex": "开始执行例行任务",
+     "count": 0
+    },
+    {
+     "evidence": "pg_occurrence",
+     "why": "核对 occurrence 的 planned_at 与 skipped 原因"
+    }
+   ],
+   "doc": {
+    "情境": "交付二组·项目推进群。发版日下午，东翔让员工每 15 分钟提醒一次，中途改文案、推迟暂停、恢复、发完删除。",
+    "人物": "冬翔/东翔（发版负责人）；D总（旁观）；小Q。",
+    "上下文": "对应 CRON-01/02/03。系统最小间隔 15 分钟。开始消息形如「开始执行例行任务「…」（定时触发 · 计划 HH:MM）」。",
+    "应该怎么做": "建出每 15 分钟一次；到点平台发开始与完成；改文案只影响之后；暂停期间零执行；恢复后下一时点执行；删除后不再触发；员工回复都是人话。",
+    "怎么判": "到点、改文案、暂停恢复、删除都对，就通过。",
+    "依赖": "existing。",
+    "当前预期": "代码层面预计通过；实际跑基本会因部署判 invalid_env。",
+    "真人感": "唯一刻意设计的长时 case；全程只靠平台固定文案观察，没有可见标记。"
+   }
+  },
+  {
+   "id": "T-10",
+   "title": "条件型例行任务：每 15 分钟看一眼问题登记表，有新登记才吭声（CRON-04 decision）",
+   "focus": [
+    "F5",
+    "F1"
+   ],
+   "maps_to": [
+    "CRON-04"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "aitable_insert",
+     "grader_v2",
+     "pg_read"
+    ],
+    "platform": [],
+    "release": [
+     "B3_decision"
+    ],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "decision 模式（B3）未交付；harness 缺写表步骤"
+   },
+   "steps": [
+    {
+     "id": "create",
+     "actor": "冬翔",
+     "text": "发版这两个小时，每 15 分钟帮我看一眼「Q4发版问题登记」那张表，有新登记的问题就在群里说一声是谁登的、啥问题，没有新的就别吭声",
+     "at": [
+      "employee"
+     ],
+     "match_key": "每 15 分钟帮我看一眼「Q4发版问题登记」那张表",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "created",
+     "observe": {
+      "until_regex": "例行任务「[^」]+」",
+      "timeout_s": 480,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "quiet",
+     "actor": "D总",
+     "text": "表我建好了，现在是空的，大家有问题往里登",
+     "match_key": "表我建好了，现在是空的",
+     "wait": {
+      "mode": "silence",
+      "window_s": 1080
+     }
+    },
+    {
+     "id": "inject",
+     "kind": "aitable_insert",
+     "actor": "D总",
+     "table": "Q4发版问题登记",
+     "record": {
+      "问题": "订单导出超时，偶发 504",
+      "登记人": "D总"
+     }
+    },
+    {
+     "id": "mention",
+     "actor": "D总",
+     "text": "我在表里登了个导出超时的",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "hit",
+     "observe": {
+      "until_regex": "导出超时",
+      "timeout_s": 1080,
+      "since_step": "mention"
+     }
+    },
+    {
+     "id": "remove",
+     "actor": "冬翔",
+     "text": "发完了，这个检查也撤了吧",
+     "at": [
+      "employee"
+     ],
+     "match_key": "这个检查也撤了吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "removed",
+     "observe": {
+      "until_regex": "删除|已删|撤了|移除",
+      "timeout_s": 480,
+      "since_step": "remove"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "空表那次零消息；新登记那次恰好一条且含登记人与问题；删除确认，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "quiet"
+      ],
+      "replies": [
+       0,
+       0
+      ]
+     },
+     {
+      "steps": [
+       "create",
+       "remove"
+      ],
+      "exclude": [
+       "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "条件不满足时完全安静（不发开始/结束噪音、不说「暂无新问题」）",
+     "条件满足时一条消息，写清谁登记了什么",
+     "不重复报已报过的行"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "per_occurrence_calls",
+     "max": 3
+    }
+   ],
+   "doc": {
+    "情境": "交付二组·项目推进群。东翔让员工发版期间每 15 分钟看一眼问题登记表，有新登记才说话；D总中途往表里登记一条。",
+    "人物": "冬翔/东翔；D总；小Q。",
+    "上下文": "需事先建好 AI 表格并授权员工后台可读。对应 CRON-04。",
+    "应该怎么做": "空表那次完全安静；新登记那次一条，写明 D总登记了导出超时；删除确认一次。",
+    "怎么判": "安静与说话都对，就通过。",
+    "依赖": "wave2:B3（decision）。",
+    "当前预期": "现在跑不了：run_only 每次都会发开始/结束消息。",
+    "真人感": "「有就说，没有别吭声」是群里对机器人最常见的要求。"
+   }
+  },
+  {
+   "id": "T-11",
+   "title": "CI 挂了自动在群里通报：Webhook 例行任务（合法 / 重投 / 改内容 / 错签 / 绿灯安静）（HOOK-01..04）",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "HOOK-01",
+    "HOOK-02",
+    "HOOK-03",
+    "HOOK-04"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "webhook",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [
+     "F2_webhook",
+     "B3_decision"
+    ],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 没有 Webhook 发送器（P2）；绿灯安静依赖 decision（B3）；走 Employee 依赖 F2"
+   },
+   "steps": [
+    {
+     "id": "create",
+     "actor": "D总",
+     "text": "以后咱们 huaxin-api 的流水线挂了，让它通过 webhook 自动在群里通报一下：哪个阶段挂的、最近一次提交是谁的。绿的就别发了",
+     "at": [
+      "employee"
+     ],
+     "match_key": "huaxin-api 的流水线挂了",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "created",
+     "observe": {
+      "until_regex": "Webhook|配置页",
+      "timeout_s": 480,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "hook1",
+     "kind": "webhook",
+     "delivery_id": "ci-1003-0412",
+     "body": {
+      "pipeline": "huaxin-api",
+      "status": "failed",
+      "stage": "集成测试",
+      "commit": "8c3991a",
+      "author": "周明"
+     },
+     "expect_http": 200
+    },
+    {
+     "id": "fired",
+     "observe": {
+      "until_regex": "（Webhook 触发）",
+      "timeout_s": 300,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "report",
+     "observe": {
+      "until_regex": "集成测试",
+      "timeout_s": 480,
+      "since_step": "create"
+     }
+    },
+    {
+     "id": "dup",
+     "kind": "webhook",
+     "delivery_id": "ci-1003-0412",
+     "body": {
+      "pipeline": "huaxin-api",
+      "status": "failed",
+      "stage": "集成测试",
+      "commit": "8c3991a",
+      "author": "周明"
+     },
+     "expect_http": [
+      200,
+      202,
+      409
+     ],
+     "quiet_window_s": 120
+    },
+    {
+     "id": "conflict",
+     "kind": "webhook",
+     "delivery_id": "ci-1003-0412",
+     "body": {
+      "pipeline": "huaxin-api",
+      "status": "failed",
+      "stage": "部署",
+      "commit": "8c3991a",
+      "author": "周明"
+     },
+     "expect_http": 409,
+     "quiet_window_s": 120
+    },
+    {
+     "id": "badsig",
+     "kind": "webhook",
+     "delivery_id": "ci-1003-0419",
+     "body": {
+      "pipeline": "huaxin-api",
+      "status": "failed",
+      "stage": "单测",
+      "commit": "9d0a7be",
+      "author": "林晓"
+     },
+     "signature": "wrong",
+     "expect_http": 401,
+     "quiet_window_s": 120
+    },
+    {
+     "id": "green",
+     "kind": "webhook",
+     "delivery_id": "ci-1003-0433",
+     "body": {
+      "pipeline": "huaxin-api",
+      "status": "success",
+      "stage": "全部",
+      "commit": "9d0a7be",
+      "author": "林晓"
+     },
+     "expect_http": 200,
+     "quiet_window_s": 300
+    },
+    {
+     "id": "off",
+     "actor": "D总",
+     "text": "CI 这块先关了吧，等迁完流水线再开",
+     "at": [
+      "employee"
+     ],
+     "match_key": "CI 这块先关了吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "offdone",
+     "observe": {
+      "until_regex": "暂停|停用|关了|删除|已删",
+      "timeout_s": 480,
+      "since_step": "off"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "合法投递一条正确通报（集成测试、周明）；重投/冲突/错签/绿灯零消息；地址不进会话；关闭确认，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "create",
+       "off"
+      ],
+      "exclude": [
+       "https?://\\S*(webhook|hook)|token=",
+       "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "新建回复说明去配置页取地址，没贴地址",
+     "通报一次，写清阶段与提交人",
+     "重投/冲突/错签零执行",
+     "绿灯安静",
+     "payload 里的 author 只作数据，不被当成授权人"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "match_once",
+     "regex": "（Webhook 触发）",
+     "count": 1
+    },
+    {
+     "evidence": "quiet_windows",
+     "steps": [
+      "dup",
+      "conflict",
+      "badsig",
+      "green"
+     ]
+    }
+   ],
+   "doc": {
+    "情境": "交付二组·项目推进群。D总让流水线失败时自动在群里通报，绿的别发；管理员在配置页拿 Webhook 地址；harness 以 CI 身份投递。",
+    "人物": "D总；冬翔/东翔；小Q；CI（harness 扮演）。",
+    "上下文": "对应 HOOK-01..04。地址存在本地 0600 文件，不进聊天。",
+    "应该怎么做": "create 派后台新建并说明地址去配置页取；合法投递一条通报（集成测试、周明）；重投/冲突/错签零消息；绿灯安静；off 确认一次。",
+    "怎么判": "只有一次正确通报、其余安静、地址不外泄，就通过。",
+    "依赖": "wave2:F2 + B3。",
+    "当前预期": "现在跑不了；create 那一步今天可跑。",
+    "真人感": "「流水线挂了自动通报，绿的别发」是研发群的真实诉求。"
+   }
+  },
+  {
+   "id": "T-12",
+   "title": "D总让员工私下收周报素材：问东翔工时、问黛玉回归 → 中途问进度 → 收齐只给 D总汇总（COL-01）",
+   "focus": [
+    "F5",
+    "F4"
+   ],
+   "maps_to": [
+    "COL-01"
+   ],
+   "scene": "dm+dm+group",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "黛玉": "daiyu"
+   },
+   "requires": {
+    "harness": [
+     "quote_reply",
+     "deap_multi",
+     "grader_v2",
+     "pg_read"
+    ],
+    "platform": [],
+    "release": [
+     "marker13"
+    ],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "跨场域收集（A2，marker 13）未上预发；黛玉是 DEAP，邀请落点按本题约定在 group_de_probe"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "帮我收下这周华信的周报素材：东翔报下现场投了多少小时，黛玉报下回归跑了几轮、还剩几个 P1。收齐了给我汇总，别把一方的数告诉另一方",
+     "match_key": "帮我收下这周华信的周报素材",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "invite_zj",
+     "observe": {
+      "until_regex": "小时|工时|现场",
+      "timeout_s": 300,
+      "since_step": "ask"
+     },
+     "conversation": "dm_zhujue"
+    },
+    {
+     "id": "zj_answer",
+     "actor": "冬翔",
+     "text": "这周华信我现场差不多 12.5 个小时，周三全天在客户那",
+     "conversation": "dm_zhujue",
+     "match_key": "这周华信我现场差不多 12.5 个小时",
+     "wait": {
+      "mode": "optional",
+      "window_s": 60,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "progress",
+     "actor": "D总",
+     "text": "周报素材收得怎么样了？",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "invite_dy",
+     "observe": {
+      "until_regex": "回归|P1|几轮",
+      "timeout_s": 300,
+      "since_step": "ask"
+     },
+     "conversation": "group_de_probe"
+    },
+    {
+     "id": "dy_answer",
+     "actor": "黛玉",
+     "text": "回归跑了 4 轮，还剩 2 个 P1",
+     "conversation": "group_de_probe",
+     "reply_to": {
+      "observed": "invite_dy"
+     },
+     "wait": {
+      "mode": "optional",
+      "window_s": 60,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "summary",
+     "observe": {
+      "until_regex": "12\\.5[\\s\\S]{0,200}(4\\s*轮|2\\s*个\\s*P1)|(4\\s*轮|2\\s*个\\s*P1)[\\s\\S]{0,200}12\\.5",
+      "timeout_s": 300,
+      "since_step": "progress"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "D总",
+     "text": "好 谢了",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "进度确切 1/2（东翔 12.5 小时已回）；一次汇总含两方数据；参与者互不可见对方的数，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "progress"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "12.5"
+      ]
+     },
+     {
+      "sentinel": "4 轮",
+      "conversation": "dm_zhujue",
+      "scope": "case_span"
+     },
+     {
+      "sentinel": "2 个 P1",
+      "conversation": "dm_zhujue",
+      "scope": "case_span"
+     },
+     {
+      "sentinel": "12.5",
+      "conversation": "group_de_probe",
+      "scope": "case_span"
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 20
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "邀请措辞自然、每人一次",
+     "进度是确切的 1/2，没编",
+     "汇总只发一次到原场域，两方数据都在",
+     "参与者看不到彼此的数",
+     "如果黛玉无法私聊（DE↔DE），员工在 group_de_probe 问她，或如实告诉 D总，不偷偷在别的群公开问"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "pg_collection",
+     "why": "collection/invitation/input 计数、一次原场域汇总"
+    }
+   ],
+   "doc": {
+    "情境": "D总单聊。D总让员工私下收这周华信的周报素材：东翔的现场工时、黛玉的回归进度；中途问进度；收齐后只给 D总汇总。",
+    "人物": "D总（发起）；冬翔/东翔（真人参与者，在自己单聊答）；黛玉（DEAP 测试数字员工，在 EL-E2E-1003-DE 群里引用邀请作答）；小Q。",
+    "上下文": "对应 COL-01，顺带测隐私：参与者互相看不到对方的数，只有发起人看到汇总。数字员工之间没有私聊场域，黛玉的邀请落点约定在 group_de_probe。",
+    "应该怎么做": "ask 接单一句；邀请自然、每人一次；progress 确切 1/2（东翔 12.5 小时已回，还差黛玉）；黛玉答后原场域一次汇总；各参与者场域里看不到对方的数。",
+    "怎么判": "进度确切、汇总一次、互不可见，就通过。",
+    "依赖": "wave2:A2（marker 13）。",
+    "当前预期": "blocked。",
+    "真人感": "收「工时」改成收周报素材：工时问真人东翔，回归进度问测试数字员工黛玉，不再让数字员工报工时。"
+   }
+  },
+  {
+   "id": "T-13",
+   "title": "预授权三步走：工时按项目汇总 → 算占比 → 写结论，中间不用问（FOLLOW-01）",
+   "focus": [
+    "F5"
+   ],
+   "maps_to": [
+    "FOLLOW-01"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "grader_v2",
+     "evidence_v2"
+    ],
+    "platform": [],
+    "release": [
+     "marker13"
+    ],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready_partial",
+    "reason": "follow_up_steps 未上预发（marker 13）；现在员工可能一次做完三步（结果对但 Run 数不对）"
+   },
+   "known_gap": "P3 follow_up_steps 未上预发",
+   "steps": [
+    {
+     "id": "plan",
+     "actor": "冬翔",
+     "text": "帮我分三步弄下 9 月工时：第一步把下面的记录按项目汇总；汇总完接着算各项目人力占比；最后写两三句结论发我。一步做完直接接下一步，中间不用问我\n林晓 华信 62\n林晓 睿博 18\n周明 华信 40\n周明 启明 36\n东翔 华信 50\n东翔 睿博 30\nD总 启明 24\nD总 睿博 20",
+     "match_key": "帮我分三步弄下 9 月工时",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "s1",
+     "observe": {
+      "until_regex": "152",
+      "timeout_s": 480,
+      "since_step": "plan"
+     }
+    },
+    {
+     "id": "s2",
+     "observe": {
+      "until_regex": "54\\.3\\s*%",
+      "timeout_s": 600,
+      "since_step": "plan"
+     }
+    },
+    {
+     "id": "s3",
+     "observe": {
+      "until_regex": "(华信)[\\s\\S]{0,120}(过半|一半以上|超过一半|重心|主力|最多)",
+      "timeout_s": 600,
+      "since_step": "plan"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "好 辛苦",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "同一 Task 三个 Run 自动推进；152/68/60；54.3/24.3/21.4%；结论有依据；中途不问人，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "plan",
+       "thanks"
+      ],
+      "replies": [
+       4,
+       5
+      ],
+      "include_all": [
+       "152",
+       "68",
+       "60"
+      ],
+      "exclude": [
+       "要(我)?继续吗|需要继续吗|是否继续"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "max_chars": 200
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 3,
+      "tier": "target"
+     },
+     {
+      "evidence": "tool_arg_present",
+      "step": "plan",
+      "tool": "dispatch_task",
+      "arg": "follow_up_steps",
+      "tier": "target",
+      "requires": "marker13"
+     }
+    ],
+    "semantic": [
+     "按预授权自动接下一步，没中途问人",
+     "每步结果各一次、数字正确",
+     "结论基于占比，没额外编造",
+     "没多出第 4 步"
+    ]
+   },
+   "doc": {
+    "情境": "东翔单聊。东翔要分三步处理 9 月工时，并明确预授权「一步做完直接接下一步」。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "对应 FOLLOW-01：同一 Task，后一步由 Host 确定性派发。华信 152、睿博 68、启明 60；占比 54.3% / 24.3% / 21.4%。",
+    "应该怎么做": "接单说明会三步依次做完；同一 Task 依次 3 个 Run，每步结果各一次；不反复问要不要继续；thanks 不回或一句。",
+    "怎么判": "三步自动推进、数字对，就通过。",
+    "依赖": "wave2:P3（marker 13）。",
+    "当前预期": "现在预计 Run 数不对；一次做完三步的语义是否可接受需冬翔定口径。",
+    "真人感": "「分三步」「中间不用问我」是真人授权多步工作的说法。"
+   }
+  },
+  {
+   "id": "T-14",
+   "title": "两件模拟在跑，「那个先停了吧」→ 先问是哪个 → 「对账那个」→ 只停对账，导出照常出",
+   "focus": [
+    "F5",
+    "F3"
+   ],
+   "maps_to": [
+    "BASE-STOP",
+    "REF-01"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑"
+   },
+   "steps": [
+    {
+     "id": "a",
+     "actor": "冬翔",
+     "text": "帮我跑下这个对账模拟，三分钟左右：\nimport time\ntime.sleep(180)\nprint('对账差异 3 笔：A1029、A1047、A1102')",
+     "match_key": "帮我跑下这个对账模拟",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "b",
+     "actor": "冬翔",
+     "text": "还有这个导出模拟也跑一下，俩不冲突：\nimport time\ntime.sleep(200)\nprint('导出完成，共 1286 行')",
+     "match_key": "还有这个导出模拟也跑一下",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "vague",
+     "actor": "冬翔",
+     "text": "那个先停了吧",
+     "match_key": "那个先停了吧",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 90,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "which",
+     "actor": "冬翔",
+     "text": "对账那个，数据源换了，跑了也白跑",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "exported",
+     "observe": {
+      "until_regex": "1,?286",
+      "timeout_s": 600,
+      "since_step": "b"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "导出的收到了，谢谢",
+     "wait": {
+      "mode": "silence",
+      "window_s": 120
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "「那个」先澄清不动手；只停对账；导出照常一次；对账单号从未出现，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "vague"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "vague"
+     },
+     {
+      "steps": [
+       "which"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "a",
+       "b",
+       "vague",
+       "which",
+       "thanks"
+      ],
+      "exclude": [
+       "A1029|A1047|A1102"
+      ]
+     },
+     {
+      "steps": [
+       "b",
+       "which",
+       "thanks"
+      ],
+      "include_all": [
+       "1286"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "max_chars": 120
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "「那个」被识别为有歧义，用一句话反问",
+     "只停对账，导出不受影响",
+     "停止回复不冒称已停干净",
+     "导出结果只发一次"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "effect_for_step",
+     "step": "which",
+     "tools": [
+      "stop_task"
+     ],
+     "target_task": "a"
+    }
+   ],
+   "doc": {
+    "情境": "东翔单聊。一口气让员工跑两个模拟脚本，随后说「那个先停了吧」，再指明是对账那个。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "合同：多个可能事项时先澄清，不能把最近一个当成当前事项。对账 180 秒，导出 200 秒。",
+    "应该怎么做": "vague 不动手，一句反问；which 只停对账，不说已停干净；导出照常完成、只发一次；对账单号永不出现；thanks 不回或一句。",
+    "怎么判": "澄清、精确停止、导出正常，就通过。",
+    "依赖": "existing。",
+    "当前预期": "可能通过；风险是直接停最近的导出，或两任务串行导致导出更晚（超时已放到 600 秒）。",
+    "真人感": "脚本称「模拟」，不再假装是真对账、真导出。"
+   }
+  },
+  {
+   "id": "T-15",
+   "title": "引用比价表「这个再加一列」续接；D总引用指出数错了，员工不擅改、等东翔拍板（REF-01）",
+   "focus": [
+    "F5",
+    "F4",
+    "F2"
+   ],
+   "maps_to": [
+    "REF-01"
+   ],
+   "scene": "group",
+   "conversation": "group_t",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [
+     "quote_reply",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "引用续接靠模型对上候选事项；确定性定位（D3）在第二波"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "冬翔",
+     "text": "把这三家供应商的报价按总价从低到高排一下（软件+实施+一年维保算总价），列个表发群里，周一跟采购过\n云图：软件 18 万，实施 9.5 万，年维保 3 万\n数衡：软件 22 万，实施 8 万，年维保 2.5 万\n北辰：软件 16 万，实施 12 万，年维保 4 万",
+     "at": [
+      "employee"
+     ],
+     "match_key": "把这三家供应商的报价按总价从低到高排一下",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "r1",
+     "observe": {
+      "until_regex": "30\\.5",
+      "timeout_s": 480,
+      "since_step": "ask"
+     }
+    },
+    {
+     "id": "more",
+     "actor": "冬翔",
+     "text": "这个再加一列，按三年维保算的总价",
+     "reply_to": {
+      "observed": "r1"
+     },
+     "match_key": "这个再加一列，按三年维保算的总价",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "r2",
+     "observe": {
+      "until_regex": "36\\.5[\\s\\S]{0,300}40|40[\\s\\S]{0,300}36\\.5",
+      "timeout_s": 480,
+      "since_step": "more"
+     }
+    },
+    {
+     "id": "dfix",
+     "actor": "D总",
+     "text": "数衡实施费是 8.8 万，不是 8 万，你这写错了",
+     "reply_to": {
+      "observed": "r2"
+     },
+     "match_key": "数衡实施费是 8.8 万",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 10
+     }
+    },
+    {
+     "id": "zconfirm",
+     "actor": "冬翔",
+     "text": "对，以 D总说的为准，改一下",
+     "at": [
+      "employee"
+     ],
+     "match_key": "以 D总说的为准",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 8
+     }
+    },
+    {
+     "id": "r3",
+     "observe": {
+      "until_regex": "38\\.3",
+      "timeout_s": 480,
+      "since_step": "zconfirm"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "冬翔",
+     "text": "行 周一就用这版",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "silence",
+      "window_s": 60
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "引用续接同一 Task；D总指错时不擅改、请东翔确认；东翔确认后 33.3/38.3，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       2,
+       2
+      ]
+     },
+     {
+      "steps": [
+       "more"
+      ],
+      "replies": [
+       2,
+       2
+      ]
+     },
+     {
+      "steps": [
+       "dfix"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "已(经)?(改|更新|修改)"
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "dfix"
+     },
+     {
+      "steps": [
+       "zconfirm"
+      ],
+      "replies": [
+       2,
+       2
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 30
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 3
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "「这个再加一列」理解为同一张表的续接",
+     "D总指错时说明数是东翔给的并 @东翔 确认，没擅改",
+     "东翔确认后改对、排序复核",
+     "群里没有两版矛盾又不说明的表"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组·项目推进群。东翔要三家供应商比价表；引用结果要再加一列；D总引用新结果指出一个数错了；东翔确认后再改。",
+    "人物": "冬翔/东翔（选型负责人）；D总（指错的人，不是这件事的请求者）；小Q。",
+    "上下文": "首年总价 云图 30.5 < 北辰 32 < 数衡 32.5；三年 36.5 / 40 / 37.5；数衡实施改 8.8 后首年 33.3、三年 38.3。D总不是请求者，不能直接纠正东翔的任务。",
+    "应该怎么做": "ask 派后台按首年排序；more 同一 Task 新 Run；dfix 不擅改，说明 8 万是东翔给的，@东翔 确认；zconfirm 后改对；thanks 不回或一句。",
+    "怎么判": "续接不另建、他人指错不擅改、确认后改对，就通过。",
+    "依赖": "existing ＋ wave2:D3（引用确定性定位）。",
+    "当前预期": "harness 侧需引用回复；产品侧未知：D总指错这一步可能被派成 D总自己的新任务。",
+    "真人感": "比价对象从核心客户（华信、睿博、启明）改为供应商，避免把客户写成报价方；题面写明总价口径。"
+   }
+  },
+  {
+   "id": "T-16",
+   "title": "先贴会议结论，过一会儿「按刚才的结论出个准备清单」（办事要带上前文）",
+   "focus": [
+    "F5",
+    "F3"
+   ],
+   "maps_to": [
+    "BASE-TASK",
+    "G3"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "现有 harness 即可跑"
+   },
+   "steps": [
+    {
+     "id": "notes",
+     "actor": "D总",
+     "text": "刚开完会，结论贴你这：\n1. 睿博演示定在 10/14 下午两点，他们 CTO 会来\n2. 演示脚本用东翔那版，东翔 10/12 前再过一遍\n3. 物料我来弄：宣传册 30 份、样机 2 台，10/13 前到位\n4. 场地还没定，林晓 10/9 前问行政\n5. 会后要给陈总发会议纪要，10/15 前",
+     "match_key": "刚开完会，结论贴你这",
+     "wait": {
+      "mode": "optional",
+      "window_s": 60,
+      "settle_s": 15
+     }
+    },
+    {
+     "id": "make",
+     "actor": "D总",
+     "text": "按刚才的会议结论帮我出个演示准备清单，每项带负责人和截止日期，排好版直接发我，我贴到站会文档里",
+     "match_key": "按刚才的会议结论帮我出个演示准备清单",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "list",
+     "observe": {
+      "until_regex": "^(?=[\\s\\S]*林晓)(?=[\\s\\S]*东翔)(?=[\\s\\S]*宣传册)",
+      "timeout_s": 480,
+      "since_step": "make"
+     }
+    },
+    {
+     "id": "thanks",
+     "actor": "D总",
+     "text": "可以 谢谢",
+     "wait": {
+      "mode": "silence",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "五项齐全、负责人和日期与结论一致；纪要负责人标待定不编；不回头要材料，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "notes"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 120
+     },
+     {
+      "steps": [
+       "make",
+       "thanks"
+      ],
+      "include_all": [
+       "东翔",
+       "林晓",
+       "宣传册"
+      ],
+      "exclude": [
+       "负责人[:：]?\\s*陈总",
+       "哪个会|什么会议|请把会议"
+      ]
+     },
+     {
+      "steps": [
+       "thanks"
+      ],
+      "max_chars": 200
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "thanks"
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "收到会议结论时简短回应",
+     "清单五项齐全，负责人和日期准确",
+     "纪要负责人标待定，没把陈总写成负责人",
+     "若派后台，prompt 带全五条，执行器没回头问"
+    ]
+   },
+   "pending_checks": [
+    {
+     "evidence": "tool_arg_contains",
+     "step": "make",
+     "tool": "dispatch_task",
+     "arg": "prompt",
+     "values": [
+      "10/14",
+      "10/12",
+      "宣传册",
+      "林晓",
+      "10/15"
+     ],
+     "if_dispatched": true
+    }
+   ],
+   "doc": {
+    "情境": "D总单聊。刚开完睿博演示的准备会，D总把结论贴过来；过一会儿再让员工按结论出准备清单。",
+    "人物": "D总；小Q；东翔、林晓（结论里的负责人）；陈总（睿博，纪要收件人）。",
+    "上下文": "派后台时执行器工作包历史显示 unavailable（缺口 G3），前台必须把五条写进 prompt；前台直接回复也可以。",
+    "应该怎么做": "notes 简短回应；make 五项：脚本—东翔—10/12；物料—D总—10/13；场地—林晓—10/9；演示 10/14 14:00；纪要—负责人待定—10/15。不漏不编。",
+    "怎么判": "五项齐全、不编负责人、不回头要材料，就通过。",
+    "依赖": "existing；wave2:G3 会更稳。",
+    "当前预期": "大概率通过；纪要负责人编造是独立风险点。",
+    "真人感": "演示改为睿博（核心客户里在走合同的那家），纪要发陈总，与世界设定一致。"
+   }
+  }
+ ]
+}

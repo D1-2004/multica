@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -124,14 +125,39 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 	if turn.HistoryBefore.IsZero() {
 		return nil, errors.New("DWS history requires a fixed window cutoff")
 	}
+	raw, err := l.list(ctx, coordinatorHistoryRead, turn.AgentID, uid, orgID, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+	if err != nil {
+		return nil, err
+	}
+	return parseDWSHistory(raw, turn)
+}
 
-	dir, cleanup, err := l.openSession(ctx, turn, uid, orgID)
+// dwsHistoryRead names one reader of provider history in the identity audit
+// and its isolated directory. Each caller keeps its own constant purpose.
+type dwsHistoryRead struct {
+	requestPrefix  string
+	reason         string
+	identitySource string
+	dirPrefix      string
+}
+
+var coordinatorHistoryRead = dwsHistoryRead{
+	requestPrefix:  "inbound-dws-",
+	reason:         "Multica inbound coordinator DingTalk history",
+	identitySource: "inbound_dws_history",
+	dirPrefix:      "multica-inbound-dws-",
+}
+
+// list authenticates as the agent's DWS identity and reads one page older than
+// before. An authorized cross-org denial is renewed and retried exactly once.
+func (l *dwsHistoryLoader) list(ctx context.Context, purpose dwsHistoryRead, agentID pgtype.UUID, uid, orgID, conversationID string, before time.Time, limit int) ([]byte, error) {
+	dir, cleanup, err := l.openSession(ctx, purpose, agentID, uid, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	raw, err := l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
-	if err != nil && l.crossOrgRenewAgentIDs[util.UUIDToString(turn.AgentID)] && dwsclient.IsCrossOrgPermissionDenied(err) {
+	raw, err := l.cli.ListMessages(ctx, dir, conversationID, before, limit)
+	if err != nil && l.crossOrgRenewAgentIDs[util.UUIDToString(agentID)] && dwsclient.IsCrossOrgPermissionDenied(err) {
 		renewer, ok := l.cli.(interface {
 			RenewCrossOrgRead(context.Context, string) error
 		})
@@ -142,21 +168,21 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 			return nil, grantErr
 		}
 		// Retry this exact scoped read once. A second rejection remains a failure.
-		raw, err = l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+		raw, err = l.cli.ListMessages(ctx, dir, conversationID, before, limit)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return parseDWSHistory(raw, turn)
+	return raw, nil
 }
 
-// openSession authenticates as the turn's DWS identity: on the identity's
+// openSession authenticates as the agent's DWS identity: on the identity's
 // shared SDK client when the SDK transport is selected (minting only when
 // no shared token exists), else with a credential exchanged for this call.
-func (l *dwsHistoryLoader) openSession(ctx context.Context, turn Turn, uid, orgID string) (string, func(), error) {
-	identity := dwsclient.Identity{AgentID: util.UUIDToString(turn.AgentID), UID: uid, OrgID: orgID}
+func (l *dwsHistoryLoader) openSession(ctx context.Context, purpose dwsHistoryRead, agentID pgtype.UUID, uid, orgID string) (string, func(), error) {
+	identity := dwsclient.Identity{AgentID: util.UUIDToString(agentID), UID: uid, OrgID: orgID}
 	mint := func(ctx context.Context, id dwsclient.Identity) (dwsclient.Credential, error) {
-		c, err := l.mint(ctx, turn, id.UID, id.OrgID)
+		c, err := l.mint(ctx, purpose, agentID, id.UID, id.OrgID)
 		return dwsclient.Credential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}, err
 	}
 	var credential dwsCredential
@@ -171,13 +197,13 @@ func (l *dwsHistoryLoader) openSession(ctx context.Context, turn Turn, uid, orgI
 		}
 		credential = dwsCredential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}
 	} else {
-		c, err := l.mint(ctx, turn, uid, orgID)
+		c, err := l.mint(ctx, purpose, agentID, uid, orgID)
 		if err != nil {
 			return "", nil, err
 		}
 		credential = c
 	}
-	dir, err := l.mkdir("", "multica-inbound-dws-")
+	dir, err := l.mkdir("", purpose.dirPrefix)
 	if err != nil {
 		return "", nil, errors.New("create isolated DWS history directory")
 	}
@@ -194,18 +220,18 @@ func (l *dwsHistoryLoader) openSession(ctx context.Context, turn Turn, uid, orgI
 }
 
 // mint issues an Agent Identity context for this read and redeems it.
-func (l *dwsHistoryLoader) mint(ctx context.Context, turn Turn, uid, orgID string) (dwsCredential, error) {
-	runID := "inbound-dws-" + uuid.NewString()
+func (l *dwsHistoryLoader) mint(ctx context.Context, purpose dwsHistoryRead, agentID pgtype.UUID, uid, orgID string) (dwsCredential, error) {
+	runID := purpose.requestPrefix + uuid.NewString()
 	issued, err := l.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
 		RequestID:   runID,
 		TaskID:      runID,
-		AgentID:     util.UUIDToString(turn.AgentID),
+		AgentID:     util.UUIDToString(agentID),
 		RuntimeType: "SERVER",
 		RuntimeID:   runID,
-		Reason:      "Multica inbound coordinator DingTalk history",
+		Reason:      purpose.reason,
 		Source: map[string]string{
 			"app":             "dt-fde-multica",
-			"identity_source": "inbound_dws_history",
+			"identity_source": purpose.identitySource,
 		},
 		UID:        uid,
 		OrgID:      orgID,

@@ -89,11 +89,15 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_task_follow_up":         workspaceDelete,
 	"employee_learning":               workspaceDelete,
 	"employee_learning_consumption":   workspaceDelete,
+	"employee_routine_decision":       workspaceDelete,
 	"employee_routine_occurrence":     workspaceDelete,
 	"employee_webhook_occurrence":     workspaceDelete,
 	"employee_memory_state":           workspaceDelete,
 	"employee_message_resource":       workspaceDelete,
 	"employee_run_notice":             workspaceDelete,
+	"employee_scene_digest_run":       workspaceDelete,
+	"employee_scene_digest_state":     workspaceDelete,
+	"employee_scene_ledger":           workspaceDelete,
 	"employee_task_artifact":          workspaceDeleteSettle,
 	"employee_task_verification":      workspaceDelete,
 	"employee_task_verification_spec": workspaceDelete,
@@ -174,6 +178,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_task_verification_attempt":       workspaceDelete,
 	"employee_task_invitation_reminder":        workspaceDelete,
 	"employee_task_invitation_reminder_policy": workspaceDelete,
+	"employee_agent_profile_fact":              workspaceDelete,
+	"employee_scene_member_roster":             workspaceDelete,
+	"employee_scene_message":                   workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {

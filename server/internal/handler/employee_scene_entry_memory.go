@@ -62,7 +62,8 @@ func (w *EmployeeSceneWorker) memoryCommands(ctx context.Context, job employeeen
 					}
 					ws, agent := parseUUID(job.Scope.WorkspaceID), parseUUID(job.Scope.AgentID)
 					ref := scene.Ref{SceneID: job.Scope.SceneID}
-					if _, err := fencedScene(ctx, db.New(tx), &ref, scene.Owner{WorkspaceID: ws, AgentID: agent}, job.Scope.TenantOrgID); err != nil {
+					registered, err := fencedScene(ctx, db.New(tx), &ref, scene.Owner{WorkspaceID: ws, AgentID: agent}, job.Scope.TenantOrgID)
+					if err != nil {
 						return nil, err
 					}
 					permissionView := &Handler{Queries: db.New(tx)}
@@ -70,15 +71,28 @@ func (w *EmployeeSceneWorker) memoryCommands(ctx context.Context, job employeeen
 						return nil, err
 					}
 					scope := employeememory.Scope{WorkspaceID: ws, AgentID: agent, TenantOrgID: job.Scope.TenantOrgID, Scene: ref, Kind: employeememory.ScopeScene}
-					if _, err := w.handler.EmployeeMemory.ResetSceneTx(ctx, tx, scope, nil); err != nil {
-						return nil, err
+					if registered.SceneKind == scene.KindDM {
+						if _, err := w.handler.EmployeeMemory.ResetSceneTx(ctx, tx, scope, nil); err != nil {
+							return nil, err
+						}
+						result.Reply = "已清理本会话的 Employee 共享记忆，以及该指令发送者在这里的个人记忆。"
+					} else {
+						// Decision D3: outside a 1:1 chat a member clears only what they
+						// recorded themselves. Clearing everyone's shared memory is the
+						// owner's action on the management page.
+						if _, err := w.handler.EmployeeMemory.ForgetSceneByAuthorTx(ctx, tx, scope, source.RequesterRef); err != nil {
+							return nil, err
+						}
+						result.Reply = "已清理你在这里的个人记忆和你记下的共享记忆；其他人记下的共享记忆需负责人在管理页清理。"
+						if registered.SceneKind == scene.KindGroup {
+							result.Reply = "已清理你在本群的个人记忆和你记下的群约定；其他人记下的共享记忆需负责人在管理页清理。"
+						}
 					}
 					scope.Kind = employeememory.ScopePrivate
 					scope.PrincipalID = source.RequesterRef
 					if err := w.handler.EmployeeMemory.ResetPrivateTx(ctx, tx, scope); err != nil {
 						return nil, err
 					}
-					result.Reply = "已清理本会话的 Employee 共享记忆，以及该指令发送者在这里的个人记忆。"
 				}
 				return json.Marshal(result)
 			})

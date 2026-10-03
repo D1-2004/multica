@@ -23,7 +23,16 @@ type RecentConversationRequest struct {
 	PrincipalID                      string
 	Before                           time.Time
 	ExcludeReceipts, ExcludeMessages []string
+	// MemoryPrincipal is the unique DM requester's org-qualified memory
+	// principal. Its private reset also bounds the history; leave it empty
+	// in groups, where a personal reset never hides shared dialogue.
+	MemoryPrincipal string
 }
+
+// RecentConversationCoverage names what a snapshot can contain: admitted user
+// text, provider-confirmed replies linked to this principal's sources, and
+// Host sends into the scene that carry no source linkage (routine notices).
+const RecentConversationCoverage = "admitted_user_text_and_verified_host_replies;scene_host_sends"
 
 // RecentConversation is bounded dialogue evidence, never durable memory or an
 // authorization source. Coverage deliberately excludes unobserved provider history.
@@ -57,11 +66,22 @@ type RecentConversationMessage struct {
 // The caller must fence the current scene and invocation principal before use.
 // Neither model output nor a callback/outbox acknowledgement proves a reply.
 func (s *Store) RecentConversation(ctx context.Context, request RecentConversationRequest) (RecentConversation, error) {
-	if s == nil || s.db == nil || !validScope(request.Scope) || !validID(request.PrincipalID) || request.Before.IsZero() || len(request.ExcludeReceipts) > MaxWindowItems || len(request.ExcludeMessages) > MaxWindowMessages {
+	if s == nil || s.db == nil || !validScope(request.Scope) || !validID(request.PrincipalID) || request.Before.IsZero() || len(request.ExcludeReceipts) > MaxWindowItems || len(request.ExcludeMessages) > MaxWindowMessages || len(request.MemoryPrincipal) > 256 || strings.TrimSpace(request.MemoryPrincipal) != request.MemoryPrincipal {
 		return RecentConversation{}, ErrInvalid
 	}
-	before := request.Before.UTC()
-	out := RecentConversation{Coverage: "admitted_user_text_and_verified_host_replies", Since: before.Add(-RecentConversationWindow), Before: before, MaxMessages: RecentConversationMessageLimit, MaxBytes: RecentConversationByteLimit, Messages: []RecentConversationMessage{}}
+	// Host timestamps reach the model as Asia/Shanghai with an explicit offset;
+	// a bare UTC clock was read as local time ("ends around 11:34" for 19:34).
+	before := HostTime(request.Before)
+	out := RecentConversation{Coverage: RecentConversationCoverage, Since: before.Add(-RecentConversationWindow), Before: before, MaxMessages: RecentConversationMessageLimit, MaxBytes: RecentConversationByteLimit, Messages: []RecentConversationMessage{}}
+	resetAt, err := s.memoryResetAt(ctx, request.Scope, request.MemoryPrincipal)
+	if err != nil {
+		return RecentConversation{}, err
+	}
+	if resetAt.After(out.Since) {
+		// A memory reset starts a new conversation: earlier dialogue is not
+		// replayed into later wakes, even inside the 24-hour window.
+		out.Since = HostTime(resetAt)
+	}
 	excludedReceipts := append([]string{}, request.ExcludeReceipts...)
 	excludedMessages := append([]string{}, request.ExcludeMessages...)
 	const candidates = RecentConversationMessageLimit * 2
@@ -122,7 +142,7 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	if err != nil {
 		return RecentConversation{}, err
 	}
-	if len(withdrawn.sources) > 0 {
+	if len(withdrawn.sources) > 0 || withdrawn.replies {
 		out.WithdrawnMemoryEvidenceOmitted = true
 		kept := out.Messages[:0]
 		for _, message := range out.Messages {
@@ -134,6 +154,8 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	}
 	// A send must link to this principal's admitted sources: a foreground
 	// scene notice, the original response callback, or a persisted Run notice.
+	// A Host send that carries no source linkage at all (a routine notice) was
+	// posted to the whole scene and is history for every principal of it.
 	callbackJSON, _ := json.Marshal(callbacks)
 	withdrawnCallbackJSON, _ := json.Marshal(withdrawn.callbacks)
 	// Host-initiated notices (task wakes, invitations, watchdog) join through
@@ -149,7 +171,9 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
  AND ((a.input->>'dws_uid'=ANY($10::text[]) AND (a.input->>'scene_notice_id'=ANY($7::text[]) OR (a.input->>'request_id'=a.request_id AND $8::jsonb @> jsonb_build_array(jsonb_build_object('url',a.input->>'callback_url','request_id',a.request_id))) OR EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid AND n.job_id::text=ANY($9::text[]) AND n.state='enqueued')))
   OR EXISTS(SELECT 1 FROM employee_host_notice h WHERE h.action_id=a.id AND h.workspace_id=a.workspace_id AND h.agent_id=a.agent_id AND h.tenant_org_id=$3 AND h.scene_id=$4::uuid AND h.principal_id=$16::uuid
    AND NOT EXISTS(SELECT 1 FROM employee_learning l WHERE l.workspace_id=h.workspace_id AND l.agent_id=h.agent_id AND l.tenant_org_id=h.tenant_org_id AND l.scene_id=h.scene_id AND l.scope_kind='private'
-    AND (l.superseded_by IS NOT NULL OR l.forgotten_at IS NOT NULL) AND l.record->>'source_id'='employee-message:'||h.origin_receipt_id::text)))
+    AND (l.superseded_by IS NOT NULL OR l.forgotten_at IS NOT NULL) AND l.record->>'source_id'='employee-message:'||h.origin_receipt_id::text))
+  OR (COALESCE(a.input->>'scene_notice_id','')='' AND COALESCE(a.input->>'callback_url','')='' AND COALESCE(a.input->>'employee_run_notice_id','')='' AND COALESCE(a.input->>'invitation_action_id','')='' AND COALESCE(a.input->>'coordinator_wait_job_id','')=''
+   AND NOT EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id) AND NOT EXISTS(SELECT 1 FROM employee_host_notice h WHERE h.action_id=a.id)))
  AND NOT(COALESCE(a.input->>'scene_notice_id'=ANY($13::text[]),false) OR $14::jsonb @> jsonb_build_array(jsonb_build_object('url',a.input->>'callback_url','request_id',a.request_id)) OR EXISTS(SELECT 1 FROM employee_run_notice n WHERE n.action_id=a.id AND n.workspace_id=a.workspace_id AND n.agent_id=a.agent_id AND n.tenant_org_id=$3 AND n.scene_id=$4::uuid AND n.job_id::text=ANY($15::text[])))
  ORDER BY a.updated_at DESC,a.id DESC LIMIT $11`, args...)
 	if err != nil {
@@ -211,10 +235,24 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	return out, nil
 }
 
+// memoryResetAt is the latest reset of the scene memory and, for a DM
+// requester, of that requester's private memory. Zero when never reset.
+func (s *Store) memoryResetAt(ctx context.Context, scope Scope, memoryPrincipal string) (time.Time, error) {
+	var resetAt *time.Time
+	err := s.db.QueryRow(ctx, `SELECT max(reset_at) FROM employee_memory_state WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid
+ AND ((scope_kind='scene' AND principal_id='') OR ($5<>'' AND scope_kind='private' AND principal_id=$5))`, append(scopeArgs(scope), memoryPrincipal)...).Scan(&resetAt)
+	if err != nil || resetAt == nil {
+		return time.Time{}, err
+	}
+	return resetAt.UTC(), nil
+}
+
 type recentWithdrawals struct {
 	sources       map[string]bool
 	notices, jobs []string
 	callbacks     []recentCallback
+	// replies is set when a capture's own confirmation was withdrawn.
+	replies bool
 }
 
 // Only exact, scoped memory_capture evidence withdraws dialogue. Never inspect
@@ -240,22 +278,53 @@ func (s *Store) withdrawnRecentEvidence(ctx context.Context, request RecentConve
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var receipt, job, message, replyReceipt, callback string
 		if err := rows.Scan(&receipt, &job, &message, &replyReceipt, &callback); err != nil {
+			rows.Close()
 			return out, err
 		}
 		out.sources[receipt+"/"+message] = true
-		if validID(job) {
-			out.jobs = append(out.jobs, job)
-			out.notices = append(out.notices, job, uuid.NewSHA1(uuid.MustParse(job), []byte("receipt:"+replyReceipt)).String())
+		out.withdrawReplies(job, replyReceipt, callback)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	// A capture grounded in other evidence (an overheard group line) names the
+	// admitted message that requested it. Its withdrawal hides that job's
+	// confirmation reply, which may repeat the value, but not the request.
+	rows, err = s.db.Query(ctx, `SELECT DISTINCT COALESCE(c.job_id::text,''),COALESCE(other.receipt_id::text,c.receipt_id::text),COALESCE(other.payload#>>'{command,completionCallback,responseUrl}',c.payload#>>'{command,completionCallback,responseUrl}','')
+ FROM employee_event_consumption c
+ JOIN employee_learning l ON l.workspace_id=c.workspace_id AND l.agent_id=c.agent_id AND l.tenant_org_id=c.tenant_org_id AND l.scene_id=c.scene_id
+ AND (l.superseded_by IS NOT NULL OR l.forgotten_at IS NOT NULL) AND l.record->>'capture_source_id'='employee-message:'||c.receipt_id::text
+ LEFT JOIN employee_event_consumption other ON other.job_id=c.job_id AND other.workspace_id=c.workspace_id AND other.agent_id=c.agent_id AND other.tenant_org_id=c.tenant_org_id AND other.scene_id=c.scene_id AND other.principal_id=c.principal_id
+ WHERE c.workspace_id=$1::uuid AND c.agent_id=$2::uuid AND c.tenant_org_id=$3 AND c.scene_id=$4::uuid AND c.principal_id=$5::uuid
+ AND (c.receipt_id::text=ANY($6::text[]) OR c.job_id::text=ANY($7::text[]))`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var job, replyReceipt, callback string
+		if err := rows.Scan(&job, &replyReceipt, &callback); err != nil {
+			return out, err
 		}
-		if pair, ok := recentReplyCallback(callback); ok {
-			out.callbacks = append(out.callbacks, pair)
-		}
+		out.replies = true
+		out.withdrawReplies(job, replyReceipt, callback)
 	}
 	return out, rows.Err()
+}
+
+func (w *recentWithdrawals) withdrawReplies(job, replyReceipt, callback string) {
+	if validID(job) {
+		w.jobs = append(w.jobs, job)
+		w.notices = append(w.notices, job, uuid.NewSHA1(uuid.MustParse(job), []byte("receipt:"+replyReceipt)).String())
+	}
+	if pair, ok := recentReplyCallback(callback); ok {
+		w.callbacks = append(w.callbacks, pair)
+	}
 }
 
 type recentCallback struct {
@@ -276,7 +345,7 @@ func recentReplyCallback(url string) (recentCallback, bool) {
 }
 
 func boundRecentMessage(message *RecentConversationMessage) {
-	message.At = message.At.UTC()
+	message.At = HostTime(message.At)
 	message.Text = clipRecentText(message.Text, 2048)
 	message.Speaker = clipRecentText(message.Speaker, 128)
 	message.Truncated = message.OriginalBytes > len(message.Text)

@@ -23,7 +23,13 @@ DIGITS = "23456789"
 
 
 def gen_vars(seed: str) -> dict[str, str]:
-    """Per-case random codes (GoldenCase: '题里的编号只是示例，每次运行随机生成')."""
+    """GoldenCase codes plus the memory-case values (v1 and memory suites)."""
+    return {**code_vars(seed), **memory_vars(seed)}
+
+
+def code_vars(seed: str) -> dict[str, str]:
+    """Per-case random codes (GoldenCase: '题里的编号只是示例，每次运行随机生成').
+    cases-v2 merges only these with its own var_sets rows."""
     rng = random.Random(seed)
     letters = rng.sample(LETTERS, 9)
     first = sorted(letters[:3])
@@ -51,6 +57,34 @@ def gen_vars(seed: str) -> dict[str, str]:
         "X": "P" + "".join(rng.choice(DIGITS) for _ in range(3)),
         "SECRET": f"{secret_a}-{secret_b}", "SECRET_A": secret_a, "SECRET_B": secret_b,
         "MARK": "EL" + "".join(rng.choice(LETTERS + DIGITS) for _ in range(4)),
+    }
+
+
+WEEKDAYS = ["周一", "周二", "周三", "周四", "周五"]
+FORMATS = ["表格", "要点列表", "三段式"]
+TABLES = ["销量", "订单", "线索", "库存"]
+COLUMNS = ["x,y", "id,name", "date,amount"]
+BUILDINGS = ["A", "B", "C", "D"]
+
+
+def memory_vars(seed: str) -> dict[str, str]:
+    """Natural randomized values for memory cases (a separate stream, so the
+    GoldenCase codes above keep their values for the same seed)."""
+    rng = random.Random(seed + ":memory")
+    day, alt_day = rng.sample(WEEKDAYS, 2)
+    fmt_, fmt_alt = rng.sample(FORMATS, 2)
+    tables = rng.sample(TABLES, 4)
+    rooms = rng.sample([f"{b}座{f}-{r:02d}" for b in BUILDINGS for f in range(3, 19) for r in range(1, 21)], 2)
+    rows = rng.choice(["3", "4", "5"])
+    return {
+        "WEEKDAY": day, "ALT_WEEKDAY": alt_day, "HOUR": rng.choice(["17", "18", "19"]),
+        "FMT": fmt_, "FMT_ALT": fmt_alt,
+        "PHONE": "3" + "".join(rng.choice(DIGITS) for _ in range(4)),
+        "CODENAME": rng.choice(LETTERS) + rng.choice(DIGITS) + rng.choice(LETTERS),
+        "ROOM": rooms[0], "ROOM_ALT": rooms[1],
+        "ROWS": rows, "ROWS_MORE": str(int(rows) + 1), "COLS": rng.choice(COLUMNS),
+        "FILE_A": tables[0] + "_a.csv", "FILE_B": tables[1] + "_b.csv", "FILE_C": tables[2] + "_c.csv",
+        "FILE_D": tables[3] + "_d.csv",
     }
 
 
@@ -106,26 +140,100 @@ def at_ids(reg: dict[str, Any], roles: dict[str, str], sender: str, names: list[
     return ids
 
 
+def precondition(case: dict[str, Any], reg: dict[str, Any], *, max_idle_wait_s: int, log=print) -> str | None:
+    """Return a non-running status when the case cannot start cleanly.
+
+    - A role mapped to null needs an actor the registry does not have yet
+      (for example a third human): the whole case is `pending_actor`.
+    - A conversation without a cid must be created first (`e2e.py conv new-group`).
+    - `idle_before_min` asks for a quiet gap in each DM before the case, so the
+      Host's segmentation (>=30 min idle starts a new segment) separates it from
+      older cases instead of a visible marker. Wait up to max_idle_wait_s, else
+      `deferred_idle`.
+    """
+    if any(actor is None for actor in case["roles"].values()):
+        return "pending_actor"
+    convs = {case["conversation"]} | {s.get("conversation") for s in case["steps"] + case.get("teardown", []) if s.get("conversation")}
+    for name in sorted(convs):
+        conv = reg["conversations"].get(name)
+        if conv is None or (conv.get("kind") == "group" and not conv.get("cid")):
+            log(f"[{case['id']}] conversation {name} has no cid; create it with `e2e.py conv new-group {name}`")
+            return "missing_conversation"
+    need = int(case.get("idle_before_min") or 0) * 60
+    if not need:
+        return None
+    for name in sorted(convs):
+        conv = reg["conversations"][name]
+        if conv.get("kind") != "dm" or not conv.get("cid"):
+            continue
+        snap = im.read_messages(reg["actors"][conv["readers"][0]]["profile"], conv["cid"], limit=5)
+        if not snap["messages"]:
+            continue
+        idle = (now() - parse_dws_time(snap["messages"][-1]["createTime"])).total_seconds()
+        if idle >= need:
+            continue
+        remaining = need - idle
+        if remaining > max_idle_wait_s:
+            log(f"[{case['id']}] {name} idle {int(idle)}s < {need}s; deferring")
+            return "deferred_idle"
+        log(f"[{case['id']}] waiting {int(remaining)}s for {name} to go idle")
+        time.sleep(remaining + 5)
+    return None
+
+
+def quoted_target(step: dict[str, Any], rec: dict[str, Any], landed_by_step: dict[str, dict[str, Any]]) -> str | None:
+    """Message id a `reply_to` step quotes: the human line of a step, or the
+    employee's first reply to it (how a colleague points at what it said)."""
+    target = step.get("reply_to")
+    if not target:
+        return None
+    if target.get("employee_reply"):
+        for prior in rec["steps"]:
+            if prior["id"] == target["step"]:
+                replies = (prior.get("poll") or {}).get("replies") or []
+                quoted = [r for r in replies if r.get("quotes_source")] or replies
+                return quoted[0]["messageId"] if quoted else None
+        return None
+    landed = landed_by_step.get(target["step"])
+    return landed["messageId"] if landed else None
+
+
 def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, *, skip_gate: bool,
-             log=print) -> dict[str, Any]:
+             max_idle_wait_s: int = 0, log=print) -> dict[str, Any]:
     reg = registry()
     cases_dir = rd / "cases"
     cases_dir.mkdir(parents=True, exist_ok=True)
     attempt = next_attempt(cases_dir, case["id"])
     vars_ = gen_vars(f"{run_id}:{case['id']}:{attempt}")
+    if case.get("vars_from"):
+        # A chained case (G2 → G3 → W1, MEM-01 → MEM-02) continues the same
+        # conversation facts: reuse the latest attempt's values of its parent.
+        parents = sorted(cases_dir.glob(f"{case['vars_from']}.a*.driver.json"),
+                         key=lambda x: int(x.name.split(".a")[-1].split(".")[0]))
+        if parents:
+            vars_ = load_json(parents[-1])["vars"]
     out_path = cases_dir / f"{case['id']}.a{attempt}.driver.json"
-    gate = None if skip_gate else envguard.gate(rd, log=log)
     rec: dict[str, Any] = {
         "case_id": case["id"], "title": case["title"], "attempt": attempt, "run_id": run_id,
         "suite": spec.get("suite"), "scene": case.get("scene"), "roles": case["roles"], "vars": vars_,
-        "gate": gate, "started_at": iso(now()), "steps": [], "status": "running", "override": case.get("override"),
+        "gate": None, "started_at": iso(now()), "steps": [], "status": "running", "override": case.get("override"),
         "employee": {"agent_id": reg["employee"]["agent_id"], "name": reg["employee"]["name"]},
+        "collect": case.get("collect"),
     }
+    blocked = precondition(case, reg, max_idle_wait_s=max_idle_wait_s, log=log)
+    if blocked:
+        rec["status"] = blocked
+        rec["ended_at"] = iso(now())
+        write_json(out_path, rec)
+        return rec
+    rec["gate"] = None if skip_gate else envguard.gate(rd, log=log)
+    rec["started_at"] = iso(now())
     write_json(out_path, rec)
     defaults = spec.get("defaults", {}).get("wait", {})
     landed_by_step: dict[str, dict[str, Any]] = {}
     emp_ids = set(reg["employee"]["open_ids"].values())
-    for step in case["steps"]:
+    steps = list(case["steps"]) + [dict(t, teardown=True) for t in case.get("teardown", [])]
+    for step in steps:
         reg = registry()
         conv_name = step.get("conversation", case["conversation"])
         conv = reg["conversations"][conv_name]
@@ -142,10 +250,46 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
             write_json(out_path, rec)
             log(f"[{case['id']}] {step['id']} observe: matched={poll_rec['matched']} in {poll_rec['waited_s']}s")
             continue
+        if "actor" not in step and "pause_s" in step:
+            # A deliberate idle gap, e.g. >30 min so the Host starts a new segment.
+            rec["steps"].append({"id": step["id"], "conversation": conv_name, "pause_s": step["pause_s"],
+                                 "actor": None, "role": None, "teardown": step.get("teardown", False)})
+            write_json(out_path, rec)
+            log(f"[{case['id']}] {step['id']} pause {step['pause_s']}s")
+            time.sleep(step["pause_s"])
+            continue
+        if "burst" in step:
+            # Background chatter (un-@ filler lines), sent in order with a short pause.
+            burst_rec = {"id": step["id"], "conversation": conv_name, "cid": conv["cid"], "burst": [],
+                         "actor": None, "role": None, "teardown": step.get("teardown", False)}
+            for i, line in enumerate(step["burst"]):
+                actor, profile = step_profile(reg, case["roles"], line["actor"])
+                marker = f"{run_id}:{case['id']}:a{attempt}:{step['id']}:{i}"
+                sent = im.send(profile=profile, cid=conv["cid"], text=fmt(line["text"], vars_), marker=marker,
+                               exclude_sender_ids=emp_ids, readback_timeout=20)
+                burst_rec["burst"].append({"actor": actor, "ok": sent["ok"], "landed": sent["landed"][:1],
+                                           "landing_count": sent["landing_count"]})
+                if sent["landed"] and "send" not in burst_rec:
+                    # The first landed line anchors the burst, so an employee
+                    # interjection during the chatter is attributed to it.
+                    burst_rec["send"] = {"landed": sent["landed"][:1], "match_key": sent["match_key"], "sent_at": sent["sent_at"]}
+                time.sleep(step.get("pause_s", 1))
+            rec["steps"].append(burst_rec)
+            write_json(out_path, rec)
+            log(f"[{case['id']}] {step['id']} burst: {sum(1 for b in burst_rec['burst'] if b['ok'])}/{len(step['burst'])} landed")
+            continue
         actor, profile = step_profile(reg, case["roles"], step["actor"])
         text = fmt(step["text"], vars_)
         marker = f"{run_id}:{case['id']}:a{attempt}:{step['id']}"
-        if not conv.get("cid"):
+        quoted = quoted_target(step, rec, landed_by_step)
+        if step.get("reply_to") and not quoted:
+            rec["status"] = "missing_quote_target"
+            break
+        if quoted:
+            send_rec = im.reply(profile=profile, cid=conv["cid"], quoted_message_id=quoted, text=text, marker=marker,
+                                at_ids=at_ids(reg, case["roles"], actor, step.get("at", [])),
+                                match_key=fmt(step.get("match_key", ""), vars_) or None, exclude_sender_ids=emp_ids)
+        elif not conv.get("cid"):
             opened = ensure_dm(reg, conv_name, actor, text, marker)
             rec.setdefault("opened_conversations", []).append({"conversation": conv_name, **opened})
             reg = registry()
@@ -159,7 +303,8 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
                                match_key=fmt(step.get("match_key", ""), vars_) or None,
                                exclude_sender_ids=emp_ids)
         step_rec: dict[str, Any] = {"id": step["id"], "role": step["actor"], "actor": actor, "conversation": conv_name,
-                                    "cid": conv["cid"], "at": step.get("at", []), "send": send_rec}
+                                    "cid": conv["cid"], "at": step.get("at", []), "send": send_rec,
+                                    "teardown": step.get("teardown", False)}
         rec["steps"].append(step_rec)
         write_json(out_path, rec)
         log(f"[{case['id']}] {step['id']} as {actor}: landing={send_rec['landing_count']} text={text[:60]!r}")
@@ -171,7 +316,8 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
         wait = dict(defaults.get(step["wait"]["mode"], {}))
         wait.update(step["wait"])
         mode = wait.pop("mode")
-        if mode == "none":
+        if mode in ("none", "pause"):
+            # pause: a deliberate idle gap (e.g. >30 min to start a new Host segment).
             time.sleep(wait.get("pause_s", 2))
             continue
         since_step = wait.pop("since_step", None)
@@ -199,11 +345,11 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
     time.sleep(10)
     rec["ended_at"] = iso(now())
     rec["transcripts"] = {}
-    for conv_name in sorted({s["conversation"] for s in rec["steps"]}):
+    for conv_name in sorted({s["conversation"] for s in rec["steps"] if s.get("conversation")}):
         conv = registry()["conversations"][conv_name]
         for reader in conv["readers"]:
             snap = im.read_messages(reg["actors"][reader]["profile"], conv["cid"], limit=60)
-            first = next((s for s in rec["steps"] if (s.get("send") or {}).get("landed")), None)
+            first = next((s for s in rec["steps"] if (s.get("send") or {}).get("landed") and s["conversation"] == conv_name), None)
             start = parse_dws_time(first["send"]["landed"][0]["createTime"]) if first else None
             msgs = [m for m in snap["messages"] if start is None or parse_dws_time(m["createTime"]) >= start - im.CLOCK_TOLERANCE]
             rec["transcripts"][f"{conv_name}@{reader}"] = {"complete": snap["complete"], "hasMore": snap["hasMore"],
@@ -249,7 +395,7 @@ def poll_optional(reg: dict[str, Any], conv: dict[str, Any], reader: str, since:
 
 
 def run(cases_path: Path, run_id: str, *, only: list[str], skip_gate: bool = False,
-        conversation: str | None = None, roles: dict[str, str] | None = None) -> int:
+        conversation: str | None = None, roles: dict[str, str] | None = None, max_idle_wait_s: int = 0) -> int:
     spec = json.loads(Path(cases_path).read_text(encoding="utf-8"))
     rd = run_dir(run_id)
     manifest_path = rd / "manifest.json"
@@ -276,7 +422,7 @@ def run(cases_path: Path, run_id: str, *, only: list[str], skip_gate: bool = Fal
                 case["conversation"] = conversation
             case["roles"].update(roles or {})
             case["override"] = {"conversation": conversation, "roles": roles}
-        rec = run_case(case, spec, run_id, rd, skip_gate=skip_gate)
+        rec = run_case(case, spec, run_id, rd, skip_gate=skip_gate, max_idle_wait_s=max_idle_wait_s)
         print(json.dumps({"case": case["id"], "attempt": rec["attempt"], "status": rec["status"],
                           "started_at": rec["started_at"], "ended_at": rec["ended_at"]}, ensure_ascii=False), flush=True)
         if rec["status"] != "completed":

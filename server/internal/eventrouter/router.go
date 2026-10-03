@@ -78,7 +78,16 @@ type Host struct {
 	Route          string
 	ConfigVersion  string
 	Fingerprint    string
+	// ExistingSceneOnly admits against a scene the agent already has: the
+	// locator is looked up, never registered or touched, and an unknown one
+	// is unmapped ("unregistered_scene"). Observations use it, so a group
+	// nobody addressed never gets a scene.
+	ExistingSceneOnly bool
 }
+
+// UnregisteredScene is the unmapped reason of an ExistingSceneOnly admission
+// whose locator names no registered scene.
+const UnregisteredScene = "unregistered_scene"
 
 type Beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -141,9 +150,18 @@ func AdmitWithHook(ctx context.Context, pool Beginner, e Event, host Host, hook 
 		if host.Locator.TenantOrgID != host.TenantOrgID {
 			return db.SceneEventReceipt{}, false, ErrInvalidEvent
 		}
-		resolved, resolveErr := scene.Resolve(ctx, q, host.Owner, host.Locator, host.Observation)
+		var resolved db.AgentScene
+		var resolveErr error
+		if host.ExistingSceneOnly {
+			resolved, resolveErr = scene.Lookup(ctx, q, host.Owner, host.Locator)
+		} else {
+			resolved, resolveErr = scene.Resolve(ctx, q, host.Owner, host.Locator, host.Observation)
+		}
 		if resolveErr != nil {
 			reason = UnmappedReason(resolveErr)
+			if reason == "" && host.ExistingSceneOnly && errors.Is(resolveErr, scene.ErrNotFound) {
+				reason = UnregisteredScene
+			}
 			if reason == "" {
 				return db.SceneEventReceipt{}, false, resolveErr
 			}

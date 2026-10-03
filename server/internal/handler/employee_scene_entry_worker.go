@@ -19,7 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
-	"github.com/multica-ai/multica/server/internal/service/employeememory"
+	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	openai "github.com/openai/openai-go/v3"
 )
@@ -42,7 +42,13 @@ import (
 // produced only when every live replica has 14.
 // It also covers invitation reminders and goal-wait stall notices: replicas
 // below 14 do not fence reminder sends in BeforeSend.
-const EmployeeLoopReplicaMarker = "[employee-loop:14]"
+// Marker 15 adds B3's routine.decision task wakes (employee_decide routine
+// occurrences: the routine TaskOriginReader, the decision wake extension and
+// its run_routine/wait tools); a replica below 15 cannot read them, so such
+// occurrences are admitted only when every live replica has 15. Memory
+// snapshot fields (brief manifest, transcript refs, memory tools v2) stay on
+// their own [employee-memory:N] markers and the shared v1 history validator.
+const EmployeeLoopReplicaMarker = "[employee-loop:15]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -56,6 +62,14 @@ type EmployeeSceneWorker struct {
 	Langfuse      *langfuse.Client
 	ReplicaReady  func(context.Context) error
 	RecoveryReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+
+	// SceneTranscript reads a group's bounded recent history as the agent;
+	// nil reuses the Coordinator's DWS history loader.
+	SceneTranscript employeeSceneTranscriptLoader
+
+	// MemoryToolsReady reports whether every live replica supports
+	// EmployeeMemoryReplicaMarker; nil keeps new inputs on memory tools v1.
+	MemoryToolsReady func(context.Context) (bool, error)
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -68,6 +82,8 @@ type EmployeeSceneWorker struct {
 	// CollectionReminders persists a requester-authorized reminder plan in the
 	// collection's creation transaction; nil refuses reminder requests.
 	CollectionReminders CollectionReminderRecorder
+	// MemoryDigest is the scene digest writer (memory M11); nil disables it.
+	MemoryDigest *digest.Writer
 	// origins resolves Tasks for task wakes; producers register their readers.
 	origins *employeeentry.TaskOriginRegistry
 	wake    chan struct{}
@@ -77,8 +93,10 @@ type EmployeeSceneWorker struct {
 func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeSceneWorker {
 	database, _ := employeeEntryDB(h)
 	origins := employeeentry.NewTaskOriginRegistry()
-	// A fresh registry cannot already hold this namespace.
-	_ = origins.Register(employeeentry.TaskOriginNamespace, employeeSceneTaskOriginReader{})
+	origins.MustRegister(employeeentry.TaskOriginNamespace, employeeSceneTaskOriginReader{})
+	for _, namespace := range service.AutomationTaskSourceNamespaces {
+		origins.MustRegister(namespace, employeeRoutineTaskOriginReader{h: h})
+	}
 	return &EmployeeSceneWorker{handler: h, store: employeeentry.NewStore(database), model: model, origins: origins, wake: make(chan struct{}, 1), done: make(chan struct{})}
 }
 func (w *EmployeeSceneWorker) Notify() {
@@ -96,7 +114,7 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 	group.Go(func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		var lastWatchdogScan time.Time
+		var lastWatchdogScan, lastTaskLedger time.Time
 		for {
 			if w.handler.TaskService != nil {
 				reconcileCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -181,6 +199,15 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				slog.WarnContext(ctx, "employee task follow-up reconciliation failed", "error", err)
 			}
 			followUpCancel()
+			// Deterministic task_terminal scene ledger entries (no model).
+			if time.Since(lastTaskLedger) >= 30*time.Second {
+				lastTaskLedger = time.Now()
+				ledgerCtx, ledgerCancel := context.WithTimeout(ctx, 5*time.Second)
+				if _, err := w.handler.ReconcileEmployeeSceneTaskLedger(ledgerCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+					slog.WarnContext(ctx, "employee scene task ledger failed", "error", err)
+				}
+				ledgerCancel()
+			}
 			releaseCtx, releaseCancel := context.WithTimeout(ctx, 5*time.Second)
 			if _, err := w.handler.ReconcileEmployeeUpstreamReleases(releaseCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
 				slog.WarnContext(ctx, "employee upstream release reconciliation failed", "error", err)
@@ -193,6 +220,7 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 			}
 		}
 	})
+	group.Go(func() { runEmployeeMemoryDigest(ctx, w.MemoryDigest) })
 	for range 4 {
 		group.Go(func() {
 			ticker := time.NewTicker(500 * time.Millisecond)
@@ -240,6 +268,13 @@ type employeeSavedInput struct {
 	Invitations []employeeInvitationBinding `json:"invitations,omitempty"`
 	// TaskWake is the typed return target of a task_wake job; nil for chat.
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
+	employeeMemoryInputMeta
+	// TranscriptRefs binds each g<N> label of the frozen group transcript to
+	// its provider line; memory tools ground transcript quotes in it.
+	TranscriptRefs map[string]employeeTranscriptRef `json:"transcript_refs,omitempty"`
+	// sceneMessages is the wake's provider read, handed to scene history
+	// storage after the snapshot is saved. Never serialized or replayed.
+	sceneMessages []employeeentry.SceneMessageInput
 }
 type employeeSavedOutcome struct {
 	Outcome employeeloop.Outcome `json:"outcome"`
@@ -275,7 +310,10 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 	trace := employeeTraceStart(ctx, w.Langfuse, job)
 	employeeTraceWake(trace, job)
 	ctx = langfuse.ContextWithTrace(ctx, trace)
-	defer func() { employeeTraceFinish(trace, saved, committed, returnErr) }()
+	defer func() {
+		w.employeeMemoryAfterWake(ctx, job, saved, committed)
+		employeeTraceFinish(trace, saved, committed, returnErr)
+	}()
 	var err error
 	h := w.handler
 	agent, agentErr := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseUUID(job.Scope.AgentID), WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
@@ -352,6 +390,11 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 					raw, err = json.Marshal(input)
 					if err == nil {
 						_, err = w.store.SaveInput(runCtx, job, raw)
+					}
+					if err == nil {
+						// The wake's provider read becomes durable group
+						// transcript only once its snapshot is frozen.
+						w.handler.recordEmployeeSceneHistory(runCtx, job.Scope, input.sceneMessages)
 					}
 				}
 			}
@@ -490,6 +533,11 @@ func (w *EmployeeSceneWorker) retryPersisted(ctx context.Context, job employeeen
 }
 
 func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.Job, envelopes, originalEnvelopes []employeeDispatchEnvelope) (employeeSavedInput, error) {
+	memory := w.employeeChatMemory(ctx, job, envelopes, originalEnvelopes)
+	defer memory.release()
+	// The bounded group transcript read runs alongside the rest of the build.
+	transcript := w.startSceneTranscript(ctx, job)
+	defer transcript.stop()
 	messages := []employeeSourceMessage{}
 	for i, item := range job.Items {
 		for _, message := range employeeSourceMessages(item, envelopes[i]) {
@@ -509,7 +557,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if len(window) > 256<<10 {
 		return employeeSavedInput{}, errEmployeeWindowTooLarge
 	}
-	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: employeeSceneTools()}}
+	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: w.newInputTools(ctx)}}
 	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
@@ -535,10 +583,20 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	if invitations != "" {
 		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
+	} else {
+		// No current sender has an open invitation here: there is nothing to
+		// record, so the tool is not offered (a late answer gets a normal reply).
+		input.Config.Tools = employeeWithoutTool(input.Config.Tools, "accept_collection_input")
 	}
-	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
+	if note := employeeUnaddressedWindowNote(envelopes); note != "" {
+		input.Input.FollowUps = append(input.Input.FollowUps, note)
+	}
+	var recent employeeRecentSnapshot
+	recent, err = w.recentConversationSnapshot(ctx, job, transcript)
 	if err != nil {
 		input.Input.RecentConversation = employeeloop.RecentConversationUnavailable
+	} else {
+		input.Input.RecentConversation, input.TranscriptRefs, input.sceneMessages = recent.Raw, recent.TranscriptRefs, recent.SceneMessages
 	}
 	if input.Input.Resources, err = w.resourceContext(ctx, job, envelopes); err != nil {
 		return employeeSavedInput{}, err
@@ -593,27 +651,8 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if identity, e := w.handler.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID}); e == nil {
 		input.Config.Persona.Name = identity.AccountDisplayName
 	}
-	if w.handler.EmployeeMemory != nil {
-		brief, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopeScene}, "", 8)
-		if e == nil {
-			input.Input.Memory = brief
-		} else {
-			input.Input.Memory = "Scene memory unavailable."
-		}
-		originalMessages := []employeeSourceMessage{}
-		for i, item := range job.Items {
-			originalMessages = append(originalMessages, employeeSourceMessages(item, originalEnvelopes[i])...)
-		}
-		registered, e := employeeSceneFence(ctx, w.handler, job)
-		if e != nil {
-			return employeeSavedInput{}, e
-		}
-		if requester, unique := employeeAutomaticPrivateRequester(registered, originalMessages); unique {
-			private, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopePrivate, PrincipalID: requester}, "", 4)
-			if e == nil && private != "" {
-				input.Input.Memory += "\nRequester-private background context for this source only; do not disclose it to other participants.\n" + private
-			}
-		}
+	if err = memory.freeze(ctx, &input); err != nil {
+		return employeeSavedInput{}, err
 	}
 	return input, nil
 }
@@ -826,7 +865,7 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 				actionIDs = append(actionIDs, actionID)
 			}
 		}
-		return nil
+		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, employeeWakeLedgerRequests(envelopes), "", saved, actionIDs))
 	})
 	if err == nil {
 		if h.DingTalkResponses != nil {

@@ -13,7 +13,15 @@ import (
 
 func employeeResetFixture(t *testing.T) (employeeLearningFixture, employeememory.Scope) {
 	t.Helper()
-	f := newEmployeeLearningFixture(t)
+	return employeeResetFixtureIn(t, "group")
+}
+
+// employeeResetFixtureIn seeds shared and private memory in a conversation.
+// A 1:1 reset clears the shared layer; a group reset clears only the sender's
+// own records (decision D3), see TestEmployeeMemoryV2GroupResetClearsOnlySendersItems.
+func employeeResetFixtureIn(t *testing.T, conversation string) (employeeLearningFixture, employeememory.Scope) {
+	t.Helper()
+	f := newEmployeeLearningFixtureInConversation(t, conversation)
 	ctx := context.Background()
 	if _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil {
 		t.Fatal(err)
@@ -52,7 +60,7 @@ func submitEmployeeReset(t *testing.T, f employeeLearningFixture, messages []Dis
 	return receipt
 }
 func TestEmployeeSceneResetClearsOnlySharedAndOwnMemoryWithoutModel(t *testing.T) {
-	f, bob := employeeResetFixture(t)
+	f, bob := employeeResetFixtureIn(t, "single")
 	ctx := context.Background()
 	calls := f.model.calls
 	receipt := submitEmployeeReset(t, f, []DispatchMessage{{OpenMsgID: "reset-one", Text: "/reset-memory"}})

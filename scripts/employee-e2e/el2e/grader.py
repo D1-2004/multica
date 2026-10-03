@@ -22,6 +22,9 @@ from .driver import fmt
 from .envguard import pipeline_runs_in_window, restarts_in_window
 
 ROUTINE_TEXT = re.compile(r"例行任务")
+CJK = re.compile(r"[\u4e00-\u9fff]")
+# Driver statuses for a case that never started: graded `not_run`, never pass/fail.
+NOT_STARTED = {"pending_actor", "deferred_idle", "missing_conversation"}
 VERDICT_ORDER = {"pass": 3, "needs_review": 2, "fail": 1, "invalid_env": 0, "harness_error": 0, "not_run": 0}
 
 
@@ -134,12 +137,75 @@ def attribute(rec: dict[str, Any], transcripts: dict[str, list[dict[str, Any]]],
     return {"by_step": by_step, "ignored": ignored}
 
 
+def _text_checks(label: str, text: str, check: dict[str, Any], vars_: dict[str, str]) -> dict[str, Any]:
+    missing = [fmt(n, vars_) for n in check.get("include", []) if fmt(n, vars_) not in text]
+    any_of = [fmt(n, vars_) for n in check.get("include_any", [])]
+    any_ok = not any_of or any(n in text for n in any_of)
+    hits = []
+    for pattern in check.get("exclude", []):
+        m = re.search(fmt(pattern, vars_), text)
+        if m:
+            hits.append(m.group(0))
+    return {"check": label, "ok": bool(text) and not missing and any_ok and not hits,
+            "detail": {"missing": missing, "include_any": any_of if not any_ok else [], "excluded_hits": hits,
+                       "chars": len(text)}}
+
+
 def evidence_check(check: dict[str, Any], rec: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
-    """Checks over Langfuse facts (model-call budget, dispatch side effects, Task/Run identity)."""
+    """Checks over Langfuse facts (model-call budget, dispatch side effects, Task/Run identity,
+    and what the Host showed the model: memory block, history, persona, packet)."""
     kind = check["evidence"]
     if not ev.get("collected"):
         return {"check": f"evidence {kind}", "ok": False, "detail": "evidence not collected"}
+    vars_ = rec.get("vars", {})
     loops = [t for t in ev["traces"] if t["name"] == "employee_loop"]
+    step_loops = [t for t in loops if check.get("step") in (t.get("matched_steps") or [])]
+    if kind in ("memory_block", "history", "system_prompt", "current_window"):
+        field = {"memory_block": "memory", "history": "history", "system_prompt": "system",
+                 "current_window": "current_window"}[kind]
+        if not step_loops:
+            return {"check": f"{check['step']}: {kind}", "ok": False, "detail": "no employee_loop wake attributed"}
+        text = (step_loops[0].get("request") or {}).get(field) or ""
+        return _text_checks(f"{check['step']}: {kind}", text, check, vars_)
+    if kind == "trace_metadata":
+        if not step_loops:
+            return {"check": f"{check['step']}: metadata {check['key']}", "ok": False, "detail": "no wake attributed"}
+        value = (step_loops[0].get("metadata") or {}).get(check["key"])
+        ok = value is not None
+        if "equals" in check:
+            ok = ok and str(value) == fmt(str(check["equals"]), vars_)
+        if "contains" in check:
+            ok = ok and fmt(check["contains"], vars_) in json.dumps(value, ensure_ascii=False)
+        if "max" in check:
+            try:
+                ok = ok and float(value) <= float(check["max"])
+            except (TypeError, ValueError):
+                ok = False
+        return {"check": f"{check['step']}: metadata {check['key']}", "ok": ok, "detail": {"value": value}}
+    if kind == "packet":
+        jobs = {t.get("job_id") for t in step_loops}
+        tasks = [t for t in ev["traces"] if t["name"] == "agent_task" and t.get("idx_jobs") and set(t["idx_jobs"]) & jobs]
+        if not tasks:
+            return {"check": f"{check['step']}: packet", "ok": False, "detail": "no agent_task trace for this wake"}
+        return _text_checks(f"{check['step']}: packet", tasks[0].get("input_text") or "", check, vars_)
+    if kind == "named_trace":
+        names = [t.get("name") for t in ev.get("named_traces", [])] + \
+                [n for t in ev["traces"] for n in (t.get("observation_names") or [])]
+        ok = check["name"] in names
+        return {"check": f"trace/span {check['name']} present", "ok": ok == check.get("present", True),
+                "detail": {"found": ok}}
+    if kind == "scene_memory":
+        label = f"scene memory of {check['conversation']}"
+        snap = (ev.get("scene_memory") or {}).get(check["conversation"]) or {}
+        if snap.get("status") != 200:
+            return {"check": label, "ok": False, "detail": {"error": snap.get("error") or "not collected"}}
+        learnings = snap.get("learnings") or []
+        text = json.dumps(learnings, ensure_ascii=False)
+        missing = [fmt(n, vars_) for n in check.get("include", []) if fmt(n, vars_) not in text]
+        hits = [fmt(p, vars_) for p in check.get("exclude", []) if re.search(fmt(p, vars_), text)]
+        lo, hi = check.get("count", [0, 10 ** 6])
+        ok = not missing and not hits and lo <= len(learnings) <= hi
+        return {"check": label, "ok": ok, "detail": {"missing": missing, "excluded_hits": hits, "count": len(learnings)}}
     if kind == "max_calls_per_wake":
         worst = max([t["model_calls"] or 0 for t in loops], default=0)
         return {"check": f"model calls per wake <= {check['max']}", "ok": worst <= check["max"], "detail": {"max": worst}}
@@ -167,15 +233,15 @@ def run_checks(rec: dict[str, Any], case: dict[str, Any], attributed: dict[str, 
         if "sentinel" in check:
             sentinel = fmt(check["sentinel"], vars_)
             parts = [fmt(p, vars_) for p in check.get("parts", [])]
-            conv = check["conversation"]
             emp = set(reg["employee"]["open_ids"].values())
             first = min((parse_dws_time(s["msg"]["createTime"]) for s in rec["steps"] if s.get("msg")), default=None)
-            texts = [m.get("text") or "" for m in transcripts.get(conv, [])
-                     if m.get("senderId") in emp and (first is None or parse_dws_time(m["createTime"]) >= first)]
-            whole = any(sentinel in t for t in texts)
-            split = leak.split_sentinel(texts, parts)
-            results.append({"check": f"sentinel {sentinel} never in {conv}", "ok": not whole and not split,
-                            "detail": {"whole": whole, "split": split, "messages_scanned": len(texts)}})
+            for conv in check.get("conversations") or [check["conversation"]]:
+                texts = [m.get("text") or "" for m in transcripts.get(conv, [])
+                         if m.get("senderId") in emp and (first is None or parse_dws_time(m["createTime"]) >= first)]
+                whole = any(sentinel in t for t in texts)
+                split = leak.split_sentinel(texts, parts)
+                results.append({"check": f"sentinel {sentinel} never in {conv}", "ok": not whole and not split,
+                                "detail": {"whole": whole, "split": split, "messages_scanned": len(texts)}})
             continue
         if "evidence" in check:
             results.append(evidence_check(check, rec, ev or {}))
@@ -201,6 +267,9 @@ def run_checks(rec: dict[str, Any], case: dict[str, Any], attributed: dict[str, 
             hit = re.search(p, joined)
             results.append({"check": f"{label}: excludes /{p}/", "ok": hit is None,
                             "detail": {"match": hit.group(0) if hit else None}})
+        if check.get("lang") == "zh":
+            latin = [m["text"][:60] for m in msgs if not CJK.search(m["text"])]
+            results.append({"check": f"{label}: replies in Chinese", "ok": not latin, "detail": {"non_chinese": latin}})
         if "max_chars" in check:
             long = [len(m["text"]) for m in msgs if len(m["text"]) > check["max_chars"]]
             results.append({"check": f"{label}: each reply <= {check['max_chars']} chars", "ok": not long,
@@ -226,10 +295,16 @@ def evidence_summary(rd: Path, rec: dict[str, Any]) -> dict[str, Any]:
                        "tools": [x["name"] for x in t.get("tools", [])],
                        "errors": t.get("errors"), "matched_steps": t.get("matched_steps"),
                        "task_ids": t.get("idx", {}).get("employee_task_id"),
+                       "idx_jobs": t.get("idx", {}).get("employee_job_id"),
+                       "request": t.get("request"), "metadata": t.get("metadata"),
+                       "observation_names": t.get("observation_names"), "input_text": t.get("input_text"),
                        "run_ids": t.get("idx", {}).get("employee_run_id"),
                        "queue_ids": t.get("idx", {}).get("queue_task_id")})
     loops = [t for t in traces if t["name"] == "employee_loop"]
     return {"collected": True, "traces": traces, "employee_loop_wakes": len(loops),
+            "named_traces": [{"name": n.get("name"), "trace_id": n.get("id"), "timestamp": n.get("timestamp")}
+                             for n in ev.get("named_traces", [])],
+            "scene_memory": ev.get("scene_memory") or {},
             "model_calls_total": sum(t["model_calls"] or 0 for t in loops),
             "max_model_calls_per_wake": max([t["model_calls"] or 0 for t in loops], default=0),
             "dispatched": any("dispatch_task" in t["tool_calls"] or "continue_task" in t["tool_calls"] for t in loops)}
@@ -285,7 +360,9 @@ def grade_case(rd: Path, rec: dict[str, Any], case: dict[str, Any], transcripts:
     recovered = [s["id"] for s in rec["steps"] if s.get("msg_source") == "transcript_recovery"]
     # A readback miss that the final transcript recovers is a driver limitation, not an environment fault.
     readback_only = rec.get("status") == "send_failed" and not missing and recovered
-    if missing or (rec.get("status") not in ("completed",) and not readback_only):
+    if rec.get("status") in NOT_STARTED:
+        verdict, reason = "not_run", f"case not started: {rec.get('status')}"
+    elif missing or (rec.get("status") not in ("completed", "missing_quote_target") and not readback_only):
         if missing:
             verdict, reason = "harness_error", f"steps not landed: {missing} (driver status {rec.get('status')})"
         else:
@@ -347,21 +424,33 @@ def diff_status(prev: str | None, cur: str, prev_failed: int | None, cur_failed:
     return "IMPROVED" if c > p else "REGRESSED"
 
 
+def load_known_gaps() -> dict[str, Any]:
+    """Merge every known_gaps.json under cases/ (one per suite directory)."""
+    gaps: dict[str, Any] = {}
+    for path in sorted((HARNESS_DIR / "cases").rglob("known_gaps.json")):
+        for case_id, why in ((load_json(path) or {}).get("gaps") or {}).items():
+            if case_id in gaps:
+                raise ValueError(f"known gap {case_id} listed twice ({path})")
+            gaps[case_id] = why
+    return gaps
+
+
 def grade_run(run_id: str, *, baseline: str | None = None, refresh: bool = True,
               cases_files: list[Path] | None = None) -> int:
     rd = run_dir(run_id)
     reg = registry()
     specs = {}
-    for path in cases_files or sorted((HARNESS_DIR / "cases").glob("*.json")):
+    for path in cases_files or sorted((HARNESS_DIR / "cases").rglob("*.json")):
         spec = load_json(path)
-        if not spec or "cases" not in spec:
-            continue
+        if not spec or "cases" not in spec or spec.get("schema") == "el2e.cases.v2":
+            continue  # cases-v2 has its own grader (grader_v2, `e2e.py v2 grade`)
         for case in spec["cases"]:
             specs[case["id"]] = case
-    known_gaps = (load_json(HARNESS_DIR / "cases" / "known_gaps.json") or {}).get("gaps", {})
+    known_gaps = load_known_gaps()
     judgements = load_json(rd / "judgements.json") or {}
     transcripts = final_transcripts(rd, refresh=refresh)
-    drivers = [load_json(p) for p in sorted((rd / "cases").glob("*.driver.json"))]
+    drivers = [d for d in (load_json(p) for p in sorted((rd / "cases").glob("*.driver.json")))
+               if d.get("schema") != "el2e.driver.v2"]
     spans = case_spans(rd, drivers, transcripts, reg)
     results = []
     (rd / "graded").mkdir(exist_ok=True)

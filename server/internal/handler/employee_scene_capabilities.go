@@ -26,8 +26,11 @@ type employeeCapabilityContext struct {
 
 // The foreground talks and reads; the Direct executor acts. A foreground
 // without a tool for something is not evidence that the executor lacks it,
-// so the default for work it cannot do here is dispatch, not refusal.
-const employeeForegroundBoundary = "Foreground boundary: here you reply, read the current window, memory and tasks, read this scene's configuration with scene_config_get, and give the configuration link with describe_capabilities. Asking specific people a question on the requester's behalf and reporting their answers back here is create_collection, done here: the Host sends the questions and receives the answers, while a background task cannot receive anyone's reply, so never dispatch_task such a request, even when an earlier one was handled differently. Everything else runs in a background task through dispatch_task: DWS lookups (contacts, managers, org, calendar, docs, messages beyond this window), skills, connectors, MCP servers, scripts, files and scene configuration changes. When a request needs such work, dispatch it; never answer that you cannot do it, have no record, or lack a tool because this foreground has none. Only a task result can show that something is impossible. Never claim a change or lookup is done before a task result says so."
+// so the default for work it cannot do here is dispatch, not refusal. Work it
+// can do here, judging evidence already in context, is answered directly:
+// DS-01 (R1003) dispatched a 20-call background check to tell whether a
+// message the requester reported as "sent (200)" had arrived.
+const employeeForegroundBoundary = "Foreground boundary: here you reply, read the current window, the recent conversation, memory and tasks, read this scene's configuration with scene_config_get, and give the configuration link with describe_capabilities. Answer directly, without dispatching, when what the answer needs is already here: facts, logs, numbers or observations the requester gave you, the recent conversation, memory, task briefs and task reports. Judging or explaining evidence in hand is your own work, not a lookup; when that evidence cannot settle the question, say exactly what it shows and what it cannot confirm, and offer a background check instead of starting one unless the requester asked you to check. Asking specific people a question on the requester's behalf and reporting their answers back here is create_collection, done here: the Host sends the questions and receives the answers, while a background task cannot receive anyone's reply, so never dispatch_task such a request, even when an earlier one was handled differently. Everything that needs data or actions outside this context runs in a background task through dispatch_task: DWS lookups (contacts, managers, org, calendar, docs, messages outside this window and the recent conversation), skills, connectors, MCP servers, scripts, files and scene configuration changes. When a request needs such work, dispatch it; never answer that you cannot do it, have no record, or lack a tool because this foreground has none. Only a task result can show that something is impossible. Never claim a change or lookup is done before a task result says so."
 
 // Scene changes are made by the executor's config-qwen-tag-scene MCP tools
 // (scene_routine_create and friends), mounted for every task with a current
@@ -190,6 +193,11 @@ func (h *employeeSceneHost) sceneConfiguration(ctx context.Context, tx pgx.Tx) (
 	delete(value, "read_only")
 	value["how_to_change"] = "dispatch_task with the requester's exact request: the background executor changes this scene (routines, prompts, offered skill/connector switches, remote MCP servers) with config-qwen-tag-scene. This read changes nothing."
 	value["runtime_availability"] = "skill and connector switches are configuration; access is verified when a background task uses them"
+	if routines, ok := value["routines"].([]sceneRoutineView); ok {
+		for i := range routines {
+			employeeLocalizeRoutineView(&routines[i])
+		}
+	}
 	raw, err := json.Marshal(value)
 	return string(raw), err
 }
@@ -332,5 +340,37 @@ func (h *employeeSceneHost) attachCapabilityReplies(outcome *employeeloop.Outcom
 		if suffix := strings.TrimSpace(strings.TrimPrefix(delivery, body)); suffix != "" {
 			outcome.Reply = strings.TrimSpace(outcome.Reply) + "\n\n" + suffix
 		}
+	}
+}
+
+// employeeLocalizeRoutineView rewrites a foreground routine view's RFC 3339
+// times to Asia/Shanghai with an explicit offset; the executor MCP view is
+// unchanged. A value that does not parse is kept as is.
+func employeeLocalizeRoutineView(v *sceneRoutineView) {
+	local := func(value string) string {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return value
+		}
+		return employeeentry.HostTime(at).Format(time.RFC3339)
+	}
+	localPtr := func(value *string) *string {
+		if value == nil {
+			return nil
+		}
+		out := local(*value)
+		return &out
+	}
+	v.CreatedAt, v.UpdatedAt = local(v.CreatedAt), local(v.UpdatedAt)
+	v.Trigger.NextRunAt = localPtr(v.Trigger.NextRunAt)
+	runs := make([]string, len(v.Trigger.NextRuns))
+	for i, run := range v.Trigger.NextRuns {
+		runs[i] = local(run)
+	}
+	v.Trigger.NextRuns = runs
+	if v.LastRun != nil {
+		run := *v.LastRun
+		run.CreatedAt, run.CompletedAt = local(run.CreatedAt), localPtr(run.CompletedAt)
+		v.LastRun = &run
 	}
 }

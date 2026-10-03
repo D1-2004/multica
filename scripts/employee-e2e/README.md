@@ -1,5 +1,11 @@
 # EmployeeLoop real-IM e2e harness
 
+> Suites: **cases-v2** (`cases/v2/`, 88 cases G/M/C/P/T; source `cases/v2/_build`, readable `cases/v2/SUITE.md`,
+> harness requirements `cases/v2/harness-gaps.md`, story `cases/v2/world.json`) and **GoldenCase-20**
+> (`cases/golden20.json`, source text `cases/golden20.md`), plus the memory suite (`cases/memory/`).
+> Known gaps: `cases/known_gaps.json` (GoldenCase-20), `cases/v2/known_gaps.json` (cases-v2), `cases/memory/known_gaps.json`.
+> Who plays whom: `ROLES.md`. Commands and gotchas: `TOOLS.md`. Round procedure: `.agents/skills/tag-eval/SKILL.md`.
+
 Drives real DingTalk conversations with the 预发 test employee **Qwen-Real**
 (Tag 33af235e, RealNiubility) and grades them against written criteria.
 Python 3.11, stdlib only. No secrets live in this directory.
@@ -19,6 +25,8 @@ Python 3.11, stdlib only. No secrets live in this directory.
 | `el2e/evidence.py` | Langfuse traces (exact attribution), SLS lines, Multica API reads |
 | `el2e/leak.py` | user-visible text checks: internal tool/enum names, UUIDs, raw JSON, stack/signal, secrets, sentinels |
 | `el2e/grader.py` | the grader: applies 判定 to evidence, writes per-case JSON, run summary and baseline diff |
+| `cases/memory/*.json` | Memory suite (M7): MEMX-*, MEM-01..04, BASE-MEMORY, its own `known_gaps.json` (merged by the grader) |
+| `el2e/conv.py` | `e2e.py conv new-group <conv>`: a fresh group (new scene) from a registry `fresh` template |
 | `tests/test_harness.py` | offline unit tests (`python3 -m unittest discover -s scripts/employee-e2e/tests -v`) |
 
 Evidence goes to `~/d1/employee-e2e-evidence/<run-id>/` (mode 0700, outside the repo and `/tmp`):
@@ -111,3 +119,47 @@ conversation, so late messages (a background task's result) are graded too:
   are vacuous under this transport; record that, do not count them as judgement.
 - `normandy` (SLS) can fail admission for long stretches; the grader then relies on the pipeline-66
   deploy timeline and `GET /api/internal/logs/tail?contains=server%20starting` (repeat ≥6× to hit both pods).
+
+## Memory suite (M7)
+
+- Clean scenes, no visible markers: each group case family gets a new group (`e2e.py conv new-group group_mem_g2`,
+  reset its `cid` to null before the next run); DM cases declare `idle_before_min: 30` so the Host's segmentation
+  separates them (`run --max-idle-wait 1900` to wait instead of deferring). Values are randomized per run
+  (`{WEEKDAY}`, `{ROOM}`, `{SECRET}` …); chained cases reuse their parent's values with `vars_from`.
+- Steps can quote-reply (`reply_to`, how a DEAP actor addresses the employee), send background chatter (`burst`),
+  pause (`pause_s`) and clean up after grading (`teardown`). A role mapped to `null` (e.g. a third human) makes the
+  case `not_run`.
+- Evidence checks read what the model was shown on the wake's first request: `memory_block`, `history`,
+  `system_prompt`, `trace_metadata` (memory_manifest, transcript_status …), `packet` (agent_task input: MEMORY
+  section, `memory:` context), `named_trace` (employee_verified_distill) and `scene_memory` (management API, scene
+  layer only). Sentinels accept several `conversations`; `lang: zh` requires Chinese replies.
+
+## cases-v2 (P0: var_sets, quote-reply, grader v2, DEAP actors)
+
+The 88 cases in `cases/v2/{G,M,C,P,T}.json` (schema `el2e.cases.v2`, background facts in
+`cases/v2/world.json`) run through their own driver and grader:
+
+```bash
+python3 e2e.py v2 dry-run [--suite G,M] [--capabilities routine_pause=on]   # parse + validate + classify, no send
+python3 e2e.py v2 run --run-id R --suite G --only G-01,G-03                 # drive; grades each case at once
+python3 e2e.py collect --run-id R --no-sls && python3 e2e.py v2 grade --run-id R   # add Langfuse evidence, regrade
+python3 e2e.py v2 sync-gaps                                                 # cases/v2/known_gaps.json from known_gap
+```
+
+- **Strict schema** (`el2e/cases_v2.py`): unknown keys at suite, case, step or check level are errors;
+  references (since_step, reply_to, check steps, only_if, quotes_step) must point at real steps.
+- **var_sets**: one row per attempt, seeded by `run:case:attempt`, merged over the driver codes
+  (`driver.code_vars`; a name clash is a load error). Variables render first, then `{=ALIAS}`.
+- **Capabilities** (`cases/v2/capabilities.json`, override with `--capabilities name=on`): harness
+  switches follow the code; a case needing an unimplemented harness capability is `blocked_harness`;
+  release/ops switches that are off keep a case from running; a check whose `requires` is off is `vacuous`.
+- **Quote-reply** (`reply_to`): step / employee_reply_of (grader attribution, last reply) / observed /
+  employee_latest, with fallback; an unresolved target is `harness_error`, never a plain send. Quoting
+  the employee drops an explicit `@employee` (a quote already @-mentions its author).
+- **Senders**: humans send with `--ai-tag=false`; every landing is located as a reader sees it by the
+  sender's id and can't reuse a message an earlier step claimed (short lines like 「好嘞」 are safe).
+  DEAP actors (`daiyu`, `wangxifeng`, `baochai`) never @ or DM, are leased on the DWH board per case
+  (`--no-lease` to skip) and are read back by a human reader.
+- **Grader v2** (`el2e/grader_v2.py`): statuses pass / fail / vacuous / na / unsupported / pending_evidence;
+  `tier: target` misses with all hard checks passing give `degraded`; unmatched non-optional observe
+  steps fail; sentinels scan only the case span; an uncovered window is `harness_error`.

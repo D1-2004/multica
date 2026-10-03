@@ -35,7 +35,11 @@
     "runtime_id": "b706c1f6-186d-476a-847a-8b36b4aba05c",
     "open_ids": {
       "zhujue": "DiiD01p03EN0Ptovr5QG6B7lyYOffx4WWW",
-      "director": "Do124gHNiPwuH7gthaNiShnhb7SiPchjJtNE"
+      "director": "Do124gHNiPwuH7gthaNiShnhb7SiPchjJtNE",
+      "daiyu": "DL8d0Sqii82cwd34PoX684mChRo50ACdeS",
+      "wangxifeng": "DgBSsTPuaU8r6MTN1V03KNJQS4CMFQ3g8",
+      "baochai": "DfUWyQbguqrgpB7axtqoTLeBJtBB03MU8",
+      "dxxh": "DnG0y3y2ZAcb2oSJG4jZp5wR6eY6uAnH6"
     },
     "routines": [
       {
@@ -55,7 +59,10 @@
       "realniubility_staff_id": "0104644667680872",
       "open_ids": {
         "director": "DiiMSMHAUrTDg3IiStruJG1kFc8SBvF3ZnF",
-        "self": "DiiD01p03EN0O0zGM31JVCEKiiZiPe4MyhSU"
+        "self": "DiiD01p03EN0O0zGM31JVCEKiiZiPe4MyhSU",
+        "daiyu": "DFU5E53iSoa8riiN6NJVH7bUaO7V8PD8OJ8",
+        "wangxifeng": "DJN8cnGRwTvAs2XNZ9h9wiPsA4gzHUZPTN",
+        "dxxh": "DpspqoGiS9BMSWyLlYDP167W93AyC0ZdiSv"
       },
       "realniubility_user_id": "0104644667680872"
     },
@@ -66,7 +73,11 @@
       "note": "Also the execution identity of prod DWH-E2E agents 0ec8a7cb/f5a8d068 (route revoked/unbound, native stream off).",
       "open_ids": {
         "zhujue": "DiiD01p03EN0NPvpEvJzdiSVfqLwulT7VPP",
-        "self": "Do124gHNiPwuGcXiSZmYwBqDxrL7lDmtpPv"
+        "self": "Do124gHNiPwuGcXiSZmYwBqDxrL7lDmtpPv",
+        "daiyu": "DvT3lyiSTUiPEsEKwziirXiP7pyhRo50ACdeS",
+        "wangxifeng": "DzfbRpeMiiMrv0miPnvyySxehmknnKNYiP2T",
+        "baochai": "DVVepV4Al5es5gDL28RI1BeBJtBB03MU8",
+        "dxxh": "DnG0y3y2ZAcYLEoKNwyC0PSzdeTrqwKGe"
       }
     },
     "daiyu": {
@@ -76,9 +87,49 @@
       "agent_uuid": "41b554af-df66-4c0b-9611-35229b9f36cf",
       "open_ids": {
         "director": "Do124gHNiPwuH7gthaNiShnhaye1bpB32kc",
-        "self": "DzFpDMXt6mYuYEL9rAuvGWChRo50ACdeS"
+        "self": "DzFpDMXt6mYuYEL9rAuvGWChRo50ACdeS",
+        "zhujue": "DiiD01p03EN0OO1nmNJTeu0Sj4mxwz9b1L",
+        "wangxifeng": "DgBSsTPuaU8r6MTN1V03KNCJ3BUJAF3IJ",
+        "dxxh": "DnG0y3y2ZAcbZIYjqF78Dul5TiitxDuvSp"
       },
       "lease_note": "lease board 5598799a had no live leases at 2026-10-03T18:16; not connected/modified"
+    },
+    "wangxifeng": {
+      "label": "红楼·王熙凤 (DEAP actor, world 凤姐; replaces v1 fengjie)",
+      "profile": "dinge033bd8ae2430d9b35c2f4657eb6378f:300136076",
+      "kind": "deap_actor",
+      "agent_uuid": "3055e975-4515-4db4-adda-6954bb7efc5d",
+      "open_ids": {
+        "director": "Do124gHNiPwuH7gthaNiShnhcWgyDe8EJuU",
+        "zhujue": "DiiD01p03EN0PZUgiSRiP6LsiSQPPX5iPvFU2K",
+        "daiyu": "DUzdN66U50RF0GeUlXa3T4iihRo50ACdeS",
+        "self": "DgBSsTPuaU8r6MTN1V03KNBmknnKNYiP2T",
+        "dxxh": "DnG0y3y2ZAcb2oSJG4jZp535kLz1riSgmD"
+      },
+      "lease_note": "lease board 5598799a empty at 2026-10-03T21:25; logged in via manage login, not connected/modified"
+    },
+    "baochai": {
+      "label": "红楼·薛宝钗 (DEAP actor, world 宝钗; P-13 only)",
+      "profile": "dinge033bd8ae2430d9b35c2f4657eb6378f:770706558",
+      "kind": "deap_actor",
+      "agent_uuid": "d2488ab1-aa02-4ccd-bf86-993e0cd9d8f0",
+      "open_ids": {
+        "director": "Do124gHNiPwuH7gthaNiShnhc8wemps5kv0"
+      },
+      "lease_note": "lease board 5598799a empty at 2026-10-03T21:25; logged in via manage login, not connected/modified"
+    },
+    "dxxh": {
+      "label": "dxxh (real human, nick SixSix; world 许航)",
+      "profile": "dinge033bd8ae2430d9b35c2f4657eb6378f:13203255213098244",
+      "kind": "human",
+      "realniubility_user_id": "13203255213098244",
+      "open_ids": {
+        "director": "Dl3CeC3480YzGdZNTG0Csbk6B1qnhfhiPC",
+        "self": "DnG0y3y2ZAcYkNkgxiir5smKNbSLKXvlEs",
+        "zhujue": "DiiD01p03EN0NIL8fLPTIyw4GTo549M2ha",
+        "daiyu": "DhvyKJbwriPwbCiSE0EGjm1ECYRRmVqJIMY",
+        "wangxifeng": "DMHEfiSdpyWL7RvX787iP9jLJYD1gn8Z0zD"
+      }
     }
   },
   "deap_pool": {
@@ -99,7 +150,10 @@
       "an unconnected local_agent actor auto-replies a fixed template when DM'd",
       "joining a group posts intro / '暂无可展示的最终产物' placeholder cards (filtered by the grader)",
       "one event-stream consumer per actor: never connect it"
-    ]
+    ],
+    "forbidden": {
+      "红楼·贾探春": "staffId 507523443 is Qwen-Real itself; never use"
+    }
   },
   "conversations": {
     "dm_zhujue": {
@@ -164,6 +218,242 @@
       "created_at": "2026-10-03T18:17:03+08:00",
       "note": "DEAP-actor probe group (Director + Qwen-Real + 红楼·林黛玉); used to test DE-sent group lines and quote-reply auto-@",
       "probe_result": "2026-10-03: plain DEAP line (EL-DE-PROBE-1) never reached EmployeeLoop; quote-reply to a Qwen-Real message rendered '@Qwen-Real …', admitted as a native @ event (trace 3d14c06e89204c7d9d678745609bedde, 2 calls) and answered in 5 s"
+    },
+    "group_mem_g1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "回执核对",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g1); reset cid to null before the next run"
+    },
+    "group_mem_g2": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "周报对齐",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "daiyu",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g2); reset cid to null before the next run"
+    },
+    "group_mem_w1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "发版沟通",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_w1); reset cid to null before the next run"
+    },
+    "group_mem_g4": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "评审会准备",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g4); reset cid to null before the next run"
+    },
+    "group_mem_l1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "上线值班",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_l1); reset cid to null before the next run"
+    },
+    "group_mem_x": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "周会",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_x); reset cid to null before the next run"
+    },
+    "group_mem_base": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "会议安排",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_base); reset cid to null before the next run"
+    },
+    "g_team": {
+      "kind": "group",
+      "cid": "cidK9nArIWtuFzXEizIBHacIA==",
+      "scene_id": null,
+      "readers": [
+        "director",
+        "zhujue",
+        "dxxh"
+      ],
+      "fresh": {
+        "title": "交付二组",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee",
+          "daiyu",
+          "wangxifeng",
+          "dxxh"
+        ]
+      },
+      "world": "g_team",
+      "note": "cases-v2 G/M group cases; doubles as the Qwen-Real group for MEMX-G2/G3/X1/D1/L1",
+      "name": "交付二组",
+      "created_by": "director",
+      "created_at": "2026-10-03T21:27:13+08:00",
+      "members": [
+        "director",
+        "zhujue",
+        "daiyu",
+        "wangxifeng",
+        "dxxh"
+      ]
+    },
+    "group_p_hx": {
+      "kind": "group",
+      "cid": "cid9pVqaL7ehXiznGozdw1ydQ==",
+      "scene_id": null,
+      "readers": [
+        "director",
+        "zhujue",
+        "dxxh"
+      ],
+      "fresh": {
+        "title": "华信二期交付群",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee",
+          "daiyu",
+          "wangxifeng",
+          "dxxh"
+        ]
+      },
+      "world": "group_p_hx",
+      "name": "华信二期交付群",
+      "created_by": "director",
+      "created_at": "2026-10-03T21:27:16+08:00",
+      "members": [
+        "director",
+        "zhujue",
+        "daiyu",
+        "wangxifeng",
+        "dxxh"
+      ]
+    },
+    "group_t": {
+      "kind": "group",
+      "cid": "cidLPuJyCMy6OKslUltqlIpug==",
+      "scene_id": null,
+      "readers": [
+        "director",
+        "zhujue",
+        "dxxh"
+      ],
+      "fresh": {
+        "title": "交付二组·项目推进",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee",
+          "dxxh"
+        ]
+      },
+      "world": "group_t",
+      "note": "cases-v2 T suite; never register as a routine conversation (grader would drop routine-like posts)",
+      "name": "交付二组·项目推进",
+      "created_by": "director",
+      "created_at": "2026-10-03T21:27:19+08:00",
+      "members": [
+        "director",
+        "zhujue",
+        "dxxh"
+      ]
+    },
+    "dm_dxxh": {
+      "kind": "dm",
+      "cid": null,
+      "scene_id": null,
+      "members": [
+        "dxxh"
+      ],
+      "readers": [
+        "dxxh"
+      ],
+      "note": "dxxh <-> Qwen-Real 1:1; opened by the first case send (ensure_dm)"
     }
   }
 }

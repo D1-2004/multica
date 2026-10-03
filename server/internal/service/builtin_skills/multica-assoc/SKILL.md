@@ -103,9 +103,12 @@ comparing purpose to the current message.
   scene's Issue associations and clears Coordinator Scene Memory. It does not
   start a sandbox; subsequent association recall for this scene is empty.
 - Employee: send `/reset-memory` alone (an optional leading @mention is allowed).
-  The Host clears Employee shared memory for this scene and the verified command
-  sender's private memory in this scene. Other people's private memory,
-  Coordinator memory and Issue associations remain. Unknown senders cannot reset.
+  The Host always clears the verified command sender's private memory in this
+  scene. In a 1:1 chat it also clears the scene's Employee shared memory. In a
+  group it clears only the shared records the sender recorded; records other
+  members recorded stay until the owner clears them on the management page.
+  Other people's private memory, Coordinator memory and Issue associations
+  remain. Unknown senders cannot reset.
   The reset itself uses no model or sandbox. Other messages in the same collected
   window keep their own processing and replies; a reset never discards their work.
 

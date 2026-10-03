@@ -20,11 +20,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Host adapters for deterministic Employee Run verification (G1). Nothing in
-// the request path or worker calls these yet: activation adds
-// ReconcileEmployeeVerifications and ReconcileEmployeeVerifiedDistill to the
-// scene entry worker beside ReconcileEmployeeLearnings, and the Task lifecycle
-// owner may call VerifyEmployeeRun / GateTx before completing a goal.
+// Host adapters for deterministic Employee Run verification (G1). The scene
+// entry worker's maintenance tick runs ReconcileEmployeeVerifications and then
+// ReconcileEmployeeVerifiedDistill beside ReconcileEmployeeLearnings; task
+// links and the Task HTTP view read the gate with employeeverification.GateTx.
+// VerifyEmployeeRun is the single-Run entry for callers holding Host records.
 
 func (h *Handler) employeeVerifier() (*employeeverification.Verifier, error) {
 	database, ok := employeeEntryDB(h)

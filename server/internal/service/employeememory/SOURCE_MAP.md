@@ -134,10 +134,12 @@ switch. No live model or pre-release service is required.
 ## Background capture and inbound reset
 
 `handler/employee_learning_capture.go` consumes terminal Employee-owned Run evidence
-through `internal/employeelearning`. Ordinary queue outcomes remain inferred,
-confidence-3 requester-private candidates; they never supply verified execution.
-`RecordTx` and Host `TrustedEvidence.OccurredAt` make capture+source receipt atomic
-and reject evidence predating a namespace reset while holding its write lock.
+through `internal/employeelearning`. Since M1 it no longer records ordinary queue
+outcomes as inferred, confidence-3 requester-private candidates: each Run gets
+its durable consumption receipt with reason `candidate_retired` and no learning
+row (GawkBot `task_distill.go`: distill verified outcomes only). Verified
+outcomes are distilled by `internal/employeeverification`. Rows written by older
+binaries stay stored but are never injected (inferred is excluded at read time).
 
 Employee inbound `handler/employee_scene_entry_memory.go` handles an exact standalone
 `/reset-memory` per frozen source. In one journaled transaction it calls
@@ -211,10 +213,43 @@ non-letters and drops tokens shorter than three bytes, which yields nothing
 usable for unspaced Chinese; here CJK runs become character bigrams (overlap
 units, with particle/function-character filtering) and trigrams (bonus
 weight), and ASCII words keep the three-character floor. `Retrieve` ranks only
-the exact authorized namespace. It is **not yet wired** into `Brief`,
-`Search`, `memory_lookup` or the work packet; tests pin the substring-search
-gap it closes.
+the exact authorized namespace. Its production consumer is the foreground
+brief below; `Search`/`memory_lookup` still use substring matching (tests pin
+the gap).
 
 ```text
 47b6cf75210a73bdc977b34a80637306aaa2a3a653c3e1db5901bd9f0bf7dda7  internal/team/context_assembler.go
 ```
+
+
+## Foreground brief v2 and DM person view (M1, Multica Host extension)
+
+`foreground.go` and `person.go` are Multica code (no verbatim GawkBot code);
+the retrieval design follows `internal/team/context_assembler.go` through
+`RankLearnings`. `ForegroundBrief` builds the frozen `Input.Memory` of every new
+chat and task-wake snapshot through `handler/employee_memory_input.go`:
+
+- Corpus: one SQL read of the scene layer (newest 500 active, non-inferred
+  records) plus, only in a DM window with one known requester, that
+  requester's private records (300). Records whose text reads like an
+  instruction (English or Chinese phrases) are dropped at read time as well as
+  rejected at write time.
+- Sections: pinned preferences (`type=preference`, observed or user-stated,
+  no query needed; group 3 from the scene layer, DM 4 with private first), a
+  mandatory retrieval block for the current window (states the searched terms
+  and "无命中" or "无可检索词"; never falls back to newest records) and verified
+  experience (trusted `execution` records). Group/enterprise ≤4 KiB, DM ≤4.5 KiB.
+- Rendering keeps the fence and its neutralization, shows type, attribution and
+  date, never evidence/source IDs, confidence or requester refs. Entries carry
+  `(id=<uuid>)` for the v1 forget tool, or `[mN]` when the snapshot's tools
+  resolve labels. The manifest (`m1..mN`, section, id, scope, origin scene,
+  bytes) and stats are frozen beside the input and sent to Langfuse as
+  metadata (ids and sizes only).
+- Person view: in a DM with one known requester whose ref is org-qualified
+  `dingtalk:<tenant>:uid:` or `:open_id:`, private records of that requester
+  from every scene of the same workspace, agent and tenant are read, each
+  re-fenced against `agent_scene` and bounded by this DM's own private
+  `reset_at` (9872 `employee_learning_person_idx`). staffId-only refs keep the
+  exact DM namespace. A group never reads private memory, even from a single
+  speaker, so nothing flows from a DM into a group.
+- Old snapshots are replayed as frozen; the brief is only built for new ones.

@@ -24,6 +24,21 @@ INTERNAL_TERMS = [
     # Executor / sandbox internals
     "signal: killed", "exit status", "dws-rpc", "HERMES_HOME", "AuthCode",
 ]
+# Memory and context assembly internals (12-memory-design): block headers the
+# Host frames model input with, record fields, evidence identities and states.
+# A user must never see how the brief or the history snapshot was built.
+MEMORY_INTERNAL_TERMS = [
+    "Existing memory snapshot", "EMPLOYEE MEMORY", "EMPLOYEE RETRIEVED EXPERIENCE", "Requester-private background",
+    "Recent conversation snapshot", "Current conversation window", "Host 分段", "群聊旁听", "NEEDS CONFIRMATION",
+    "memory_manifest", "memory_query_terms", "speaker_ref", "speaker_name", "capture_origin", "transcript_ref",
+    "conflicts_with", "evidence_id", "source_id", "scope_kind", "principal_id", "requester_ref", "replay_key",
+    "record_ref", "record_id", "superseded_by", "forgotten_at", "user-stated", "employee-message:",
+    "dingtalk-message:", "agent_task_queue:", "employee-run:", "Unverified execution candidate",
+]
+INTERNAL_TERMS = INTERNAL_TERMS + MEMORY_INTERNAL_TERMS
+# Short labels and identities that only exist in model input: brief labels
+# [m3], transcript labels [g2 …], learning refs and org-qualified person refs.
+MEMORY_LABEL_RE = re.compile(r"(\[m\d{1,3}\]|\[g\d{1,3}[\s\]]|\blearning:[0-9a-f-]{8,}|\bdingtalk:[0-9A-Za-z_-]+:(uid|open_id|staff_id):)")
 INTERNAL_RE = [re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])") for term in INTERNAL_TERMS]
 UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 HEX32_RE = re.compile(r"(?<![0-9a-fA-F])[0-9a-f]{32}(?![0-9a-fA-F])")
@@ -45,7 +60,7 @@ def scan(text: str, *, sentinels: list[str] | None = None) -> list[dict[str, Any
         if rx.search(body):
             findings.append({"kind": "internal_term", "match": term})
     for rx, kind in ((UUID_RE, "uuid"), (HEX32_RE, "trace_id"), (JSON_RE, "raw_json"), (STACK_RE, "stack_or_signal"),
-                     (SECRET_RE, "secret"), (ANSI_RE, "ansi")):
+                     (SECRET_RE, "secret"), (ANSI_RE, "ansi"), (MEMORY_LABEL_RE, "memory_label")):
         m = rx.search(body)
         if m:
             findings.append({"kind": kind, "match": m.group(0)[:80]})

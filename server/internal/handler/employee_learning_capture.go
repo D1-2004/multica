@@ -2,23 +2,22 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeelearning"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-// ReconcileEmployeeLearnings is an independent background consumer. An ordinary
-// runtime outcome is only an inferred private candidate, never verified evidence.
+// ReconcileEmployeeLearnings is an independent background consumer of terminal
+// Employee Runs. Ordinary Run outcomes are no longer recorded as inferred
+// private candidates: "every event writes a learning" only produced noise
+// (GawkBot task_distill.go: distill verified outcomes only). Each Run still
+// gets its durable consumption receipt, so the consumer never rescans it;
+// verified outcomes are distilled by internal/employeeverification.
 func (h *Handler) ReconcileEmployeeLearnings(ctx context.Context, limit int) (int, error) {
 	if h == nil || h.EmployeeMemory == nil {
 		return 0, nil
@@ -48,7 +47,6 @@ func (h *Handler) captureEmployeeRunCandidate(ctx context.Context, tx pgx.Tx, c 
 		}
 		return employeelearning.Result{}, err
 	}
-	memoryScope := employeememory.Scope{WorkspaceID: workspace, AgentID: agent, TenantOrgID: c.Scope.TenantOrgID, Scene: c.Scope.Scene, Kind: employeememory.ScopePrivate, PrincipalID: c.RequesterRef}
 	queue, err := queries.GetAgentTask(ctx, parseUUID(c.QueueTaskID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return skip("missing_execution")
@@ -68,41 +66,15 @@ func (h *Handler) captureEmployeeRunCandidate(ctx context.Context, tx pgx.Tx, c 
 	if queue.Status != terminal {
 		return skip("execution_state_mismatch")
 	}
-	var goal, result string
-	if err = tx.QueryRow(ctx, `SELECT t.definition->>'goal',r.result FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.workspace_id=$1 AND t.agent_id=$2 AND t.id=$3::uuid AND r.id=$4::uuid`, workspace, agent, c.TaskID, c.RunID).Scan(&goal, &result); err != nil {
+	var result string
+	if err = tx.QueryRow(ctx, `SELECT r.result FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.workspace_id=$1 AND t.agent_id=$2 AND t.id=$3::uuid AND r.id=$4::uuid`, workspace, agent, c.TaskID, c.RunID).Scan(&result); err != nil {
 		return employeelearning.Result{}, err
 	}
-	result = redact.Text(strings.TrimSpace(result))
-	if json.Valid([]byte(result)) {
-		result = "Structured output is retained in the execution record; no textual claim is inferred."
-	}
-	if result == "" {
+	if strings.TrimSpace(result) == "" {
 		return skip("no_result_content")
 	}
-	insight := fmt.Sprintf("Unverified execution candidate. Task %s reported %s. Goal: %s. Reported result excerpt: %s", c.TaskID, c.State, employeeLearningExcerpt(redact.Text(goal), 600), employeeLearningExcerpt(result, 2200))
-	record, err := h.EmployeeMemory.RecordTx(ctx, tx, memoryScope, employeememory.LearningRecord{Type: employeememory.LearningTypeOperational, Key: "run-" + c.RunID, Insight: insight, Confidence: 3, Source: employeememory.LearningSourceInferred}, employeememory.TrustedEvidence{SourceID: "employee-run:" + c.RunID, EvidenceID: "agent_task_queue:" + c.QueueTaskID, ActorID: "system:employee-learning", OccurredAt: *c.FinishedAt})
-	if err != nil {
-		if errors.Is(err, employeememory.ErrPreResetEvidence) {
-			return skip("pre_reset_outcome")
-		}
-		if errors.Is(err, employeememory.ErrInvalidLearning) || errors.Is(err, employeememory.ErrInvalidScope) || errors.Is(err, employeememory.ErrUntrustedCorrection) {
-			return skip("rejected_candidate")
-		}
-		return employeelearning.Result{}, err
-	}
-	return employeelearning.Result{LearningID: record.ID}, nil
+	return skip("candidate_retired")
 }
-func employeeLearningExcerpt(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	cut := text[:limit]
-	for !utf8.ValidString(cut) {
-		cut = cut[:len(cut)-1]
-	}
-	return cut + " [excerpt truncated]"
-}
-
 func employeeUniqueRequester(messages []employeeSourceMessage) (string, bool) {
 	requester := ""
 	for _, message := range messages {

@@ -78,44 +78,52 @@ func (f employeeLearningFixture) privateScope() employeememory.Scope {
 	return employeememory.Scope{WorkspaceID: parseUUID(f.scope.WorkspaceID), AgentID: parseUUID(f.scope.AgentID), TenantOrgID: f.scope.TenantOrgID, Scene: f.scope.Scene, Kind: employeememory.ScopePrivate, PrincipalID: f.requester}
 }
 
-func TestEmployeeLearningCaptureIsPrivateInferredAndIdempotent(t *testing.T) {
+// Run outcomes are no longer captured as inferred candidates: the receipt is
+// still written once (the consumer must not rescan the Run), but no learning
+// row is created, with or without concurrent consumers.
+func TestRunCandidateRetiredReceiptKept(t *testing.T) {
 	f := newEmployeeLearningFixture(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	calls := f.model.calls
-	if n, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil || n != 1 {
-		t.Fatalf("capture=%d %v", n, err)
+	var wg sync.WaitGroup
+	consumed := make(chan int, 8)
+	failures := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			n, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100)
+			consumed <- n
+			failures <- err
+		}()
 	}
-	var raw []byte
-	var kind, principal string
-	if err := testPool.QueryRow(ctx, `SELECT record,scope_kind,principal_id FROM employee_learning WHERE agent_id=$1`, f.scope.AgentID).Scan(&raw, &kind, &principal); err != nil {
+	wg.Wait()
+	close(consumed)
+	close(failures)
+	total := 0
+	for n := range consumed {
+		total += n
+	}
+	for err := range failures {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var state, reason string
+	var learningID *string
+	if err := testPool.QueryRow(ctx, `SELECT state,reason,learning_id::text FROM employee_learning_consumption WHERE run_id=$1`, f.runID).Scan(&state, &reason, &learningID); err != nil {
 		t.Fatal(err)
 	}
-	var learning employeememory.LearningRecord
-	if err := json.Unmarshal(raw, &learning); err != nil {
-		t.Fatal(err)
+	if total != 1 || state != "skipped" || reason != "candidate_retired" || learningID != nil {
+		t.Fatalf("receipt consumed=%d state=%s reason=%s learning=%v", total, state, reason, learningID)
 	}
-	if kind != "private" || principal != f.requester || learning.Trusted || learning.Source != employeememory.LearningSourceInferred || learning.Confidence > 3 || learning.SourceID != "employee-run:"+f.runID || learning.EvidenceID != "agent_task_queue:"+f.queueID {
-		t.Fatalf("runtime claim was promoted or mis-scoped: %s %s %s", kind, principal, raw)
+	var records, receipts int
+	if err := testPool.QueryRow(ctx, `SELECT (SELECT count(*) FROM employee_learning WHERE agent_id=$1),(SELECT count(*) FROM employee_learning_consumption WHERE agent_id=$1)`, f.scope.AgentID).Scan(&records, &receipts); err != nil || records != 0 || receipts != 1 || f.model.calls != calls {
+		t.Fatalf("records=%d receipts=%d model calls %d->%d %v", records, receipts, calls, f.model.calls, err)
 	}
-	if _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM employee_learning WHERE agent_id=$1`, f.scope.AgentID).Scan(&count); err != nil || count != 1 || f.model.calls != calls {
-		t.Fatalf("duplicate/model capture: records=%d calls=%d %v", count, f.model.calls, err)
-	}
-	if err := f.response.h.EmployeeMemory.Reset(ctx, f.privateScope()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := testPool.Exec(ctx, `DELETE FROM employee_learning_consumption WHERE run_id=$1`, f.runID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil {
-		t.Fatal(err)
-	}
-	brief, err := f.response.h.EmployeeMemory.Brief(ctx, f.privateScope(), "", 8)
-	if err != nil || brief != "" {
-		t.Fatalf("reset resurrected old evidence: %q %v", brief, err)
+	if n, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil || n != 0 {
+		t.Fatalf("retired receipt rescanned: %d %v", n, err)
 	}
 }
 
@@ -148,7 +156,7 @@ func TestEmployeeLearningCaptureSkipsStaleRevisionDurably(t *testing.T) {
 func TestEmployeePrivateBriefOnlyForOneKnownRequester(t *testing.T) {
 	f := newEmployeeLearningFixtureInConversation(t, "single")
 	ctx := context.Background()
-	if _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil {
+	if _, err := f.response.h.EmployeeMemory.Record(ctx, f.privateScope(), employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "trend-first", Insight: "Lead with the customer trend", Confidence: 4, Source: employeememory.LearningSourceObserved}, employeememory.TrustedEvidence{SourceID: "employee-message:seed", EvidenceID: "seed", ActorID: f.requester}); err != nil {
 		t.Fatal(err)
 	}
 	f.model.dispatch = false
@@ -189,57 +197,6 @@ func TestEmployeePrivateBriefOnlyForOneKnownRequester(t *testing.T) {
 	}
 }
 
-func TestEmployeeLearningCaptureConcurrentResetRejectsFirstOldEvidence(t *testing.T) {
-	f := newEmployeeLearningFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	scope := f.privateScope()
-	if _, err := testPool.Exec(ctx, `INSERT INTO employee_memory_state(workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id) VALUES($1,$2,$3,$4,'private',$5)`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID, scope.PrincipalID); err != nil {
-		t.Fatal(err)
-	}
-	reset, err := testPool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reset.Rollback(context.Background())
-	var resetPID int
-	if err = reset.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&resetPID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = reset.Exec(ctx, `UPDATE employee_memory_state SET reset_at=clock_timestamp(),revision=revision+1 WHERE agent_id=$1 AND principal_id=$2`, scope.AgentID, scope.PrincipalID); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); done <- err }()
-	blocked := false
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if err = testPool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, resetPID).Scan(&blocked); err != nil {
-			t.Fatal(err)
-		}
-		if blocked {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !blocked {
-		t.Fatal("capture did not wait on real reset transaction")
-	}
-	if err = reset.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err = <-done; err != nil {
-		t.Fatal(err)
-	}
-	brief, err := f.response.h.EmployeeMemory.Brief(ctx, scope, "", 8)
-	if err != nil || brief != "" {
-		t.Fatalf("first old evidence resurrected after concurrent reset: %q %v", brief, err)
-	}
-	var reason string
-	if err = testPool.QueryRow(ctx, `SELECT reason FROM employee_learning_consumption WHERE run_id=$1`, f.runID).Scan(&reason); err != nil || reason != "pre_reset_outcome" {
-		t.Fatalf("reset skip=%q %v", reason, err)
-	}
-}
-
 func TestEmployeeLearningCaptureRejectsPermanentInputsOnce(t *testing.T) {
 	cases := []struct{ name, sql, reason string }{
 		{"rebound tenant", `UPDATE agent_dingtalk_identity SET org_id='another-org' WHERE agent_id=$1`, "stale_tenant"},
@@ -271,39 +228,6 @@ func TestEmployeeLearningCaptureRejectsPermanentInputsOnce(t *testing.T) {
 				t.Fatalf("private data captured after reject: %d %v", learningCount, err)
 			}
 		})
-	}
-}
-func TestEmployeeLearningCaptureConcurrentConsumersCommitOnce(t *testing.T) {
-	f := newEmployeeLearningFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var wg sync.WaitGroup
-	results := make(chan int, 8)
-	failures := make(chan error, 8)
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			n, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100)
-			results <- n
-			failures <- err
-		}()
-	}
-	wg.Wait()
-	close(results)
-	close(failures)
-	total := 0
-	for n := range results {
-		total += n
-	}
-	for err := range failures {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	var records int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM employee_learning WHERE agent_id=$1`, f.scope.AgentID).Scan(&records); err != nil || records != 1 || total != 1 {
-		t.Fatalf("records=%d consumed=%d %v", records, total, err)
 	}
 }
 func TestEmployeeLearningCaptureFailureRollsBackLearningWithReceipt(t *testing.T) {

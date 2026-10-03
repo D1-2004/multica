@@ -20,7 +20,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
-	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -279,7 +278,7 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 				saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Reply, Reply: employeeAutonomousLimitNote}
 			}
 		} else {
-			host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel}
+			host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel, kind: wake.Kind}
 			durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
 			input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
 			saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
@@ -389,16 +388,20 @@ func (w *EmployeeSceneWorker) taskWakeBinding(ctx context.Context, database empl
 
 // employeeTaskWakeContext is rendered as data. It is a Host snapshot of the
 // Task, never a human instruction, and it grants no authority.
+// employeeTaskWakeContext is the model-visible Task snapshot of a new wake.
+// Raw Task, Run, plan and queue UUIDs stay in Host-private fields (the wake
+// item and employeeTaskWakeTarget); the model sees a short task_ref and the
+// kind of the wake's authority and evidence only.
 type employeeTaskWakeContext struct {
 	Wake struct {
 		Kind         string `json:"kind"`
 		GoalRevision int64  `json:"goal_revision"`
 		InputSeq     int64  `json:"input_boundary_seq"`
-		AuthorityRef string `json:"authority_ref"`
-		EvidenceRef  string `json:"evidence_ref"`
+		AuthorityRef string `json:"authority"`
+		EvidenceRef  string `json:"evidence"`
 	} `json:"wake"`
 	Task struct {
-		ID           string                  `json:"id"`
+		Ref          string                  `json:"task_ref"`
 		State        string                  `json:"state"`
 		GoalRevision int64                   `json:"goal_revision"`
 		Definition   employeetask.Definition `json:"definition"`
@@ -551,9 +554,9 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 		return employeeSavedInput{}, holdTaskWake("unsupported_scene_kind")
 	}
 	var snapshot employeeTaskWakeContext
-	snapshot.Wake.Kind, snapshot.Wake.GoalRevision, snapshot.Wake.InputSeq, snapshot.Wake.AuthorityRef, snapshot.Wake.EvidenceRef = wake.Kind, wake.GoalRevision, wake.InputSeq, wake.AuthorityRef, wake.EvidenceRef
-	snapshot.Task.ID, snapshot.Task.State, snapshot.Task.GoalRevision, snapshot.Task.Definition, snapshot.Task.RequesterRef = current.Task.ID, string(current.Task.State), current.Task.GoalRevision, current.Task.Definition, current.Task.RequesterRef
-	snapshot.OriginalRequest.SourceRef = origin.SourceRef
+	snapshot.Wake.Kind, snapshot.Wake.GoalRevision, snapshot.Wake.InputSeq, snapshot.Wake.AuthorityRef, snapshot.Wake.EvidenceRef = wake.Kind, wake.GoalRevision, wake.InputSeq, employeeModelRefKind(wake.AuthorityRef), employeeModelRefKind(wake.EvidenceRef)
+	snapshot.Task.Ref, snapshot.Task.State, snapshot.Task.GoalRevision, snapshot.Task.Definition, snapshot.Task.RequesterRef = "t1", string(current.Task.State), current.Task.GoalRevision, current.Task.Definition, current.Task.RequesterRef
+	snapshot.OriginalRequest.SourceRef = employeeModelScrubIDs(origin.SourceRef)
 	snapshot.OriginalRequest.Speaker = clipTaskWakeText(origin.RequestSpeaker, 128)
 	snapshot.OriginalRequest.Text = clipTaskWakeText(origin.RequestText, 4096)
 	snapshot.LedgerTruncated = current.Truncated
@@ -567,7 +570,7 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 		if entry.Kind == "request" {
 			body = ""
 		}
-		snapshot.Ledger = append(snapshot.Ledger, employeeTaskWakeEntry{Seq: entry.Seq, Kind: entry.Kind, ActorRef: entry.ActorRef, GoalRevision: entry.GoalRevision, Body: clipTaskWakeText(body, 2048)})
+		snapshot.Ledger = append(snapshot.Ledger, employeeTaskWakeEntry{Seq: entry.Seq, Kind: entry.Kind, ActorRef: employeeModelScrubIDs(entry.ActorRef), GoalRevision: entry.GoalRevision, Body: clipTaskWakeText(body, 2048)})
 	}
 	if current.LatestRun != nil {
 		snapshot.LatestRun = &employeeTaskWakeRun{State: string(current.LatestRun.State), Result: clipTaskWakeText(current.LatestRun.Result, 4096)}
@@ -671,6 +674,12 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if snapshot.Plan != nil {
 		input.Config.Persona.Instructions += "\nThis wake reviews the latest result before the plan's next step. Call continue_plan to start that step as planned when the result supports it; otherwise reply to the requester or stay quiet, and the plan pauses until the requester decides."
 	}
+	if ext := employeeTaskWakeExtensionFor(wake.Kind); ext != nil {
+		// A kind's own Host data, tools and guidance join the frozen input.
+		if err := ext.extendInput(ctx, w, job, &input); err != nil {
+			return employeeSavedInput{}, err
+		}
+	}
 	if voice, e := h.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
 		input.Config.Persona.Tone = voice.ReplyTone
@@ -678,20 +687,8 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if identity, e := h.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID}); e == nil {
 		input.Config.Persona.Name = identity.AccountDisplayName
 	}
-	if h.EmployeeMemory != nil {
-		memoryScope := employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopeScene}
-		if brief, e := h.EmployeeMemory.Brief(ctx, memoryScope, "", 8); e == nil {
-			input.Input.Memory = brief
-		} else {
-			input.Input.Memory = "Scene memory unavailable."
-		}
-		// Requester-private context only in a 1:1 scene with that requester.
-		if requester := origin.Anchor.RequesterRef; registered.SceneKind == scene.KindDM && requester != "" && requester == origin.Task.RequesterRef {
-			memoryScope.Kind, memoryScope.PrincipalID = employeememory.ScopePrivate, requester
-			if private, e := h.EmployeeMemory.Brief(ctx, memoryScope, "", 4); e == nil && private != "" {
-				input.Input.Memory += "\nRequester-private background context for this Task's requester only; do not disclose it to other participants.\n" + private
-			}
-		}
+	if err = w.employeeTaskWakeMemory(job, registered, origin, current.Task.Definition.Goal).freeze(ctx, &input); err != nil {
+		return employeeSavedInput{}, err
 	}
 	return input, nil
 }
@@ -702,6 +699,7 @@ type employeeTaskWakeHost struct {
 	worker *EmployeeSceneWorker
 	job    employeeentry.Job
 	abort  context.CancelFunc
+	kind   string
 }
 
 func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (employeeloop.ToolResult, error) {
@@ -744,7 +742,13 @@ func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloo
 				result = employeeloop.ToolResult{Content: "Reply recorded.", Terminal: &employeeloop.Decision{Kind: employeeloop.Reply, Reply: strings.TrimSpace(reply)}}
 			}
 		default:
-			err = errors.New("employee tool is not registered for task wakes")
+			handled := false
+			if ext := employeeTaskWakeExtensionFor(h.kind); ext != nil {
+				result, handled, err = ext.executeTool(ctx, tx, h.worker, h.job, call)
+			}
+			if !handled {
+				err = errors.New("employee tool is not registered for task wakes")
+			}
 		}
 		record := employeeToolRecord{Result: result}
 		if err != nil {
@@ -928,7 +932,8 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		text = employeeCollectionFallbackSummary(view)
 	}
 	actionIDs := []string{}
-	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+	ext := employeeTaskWakeExtensionFor(wake.Kind)
+	deliver := func(tx pgx.Tx) error {
 		if wake.Kind == employeeentry.TaskWakeExecutionFollowUp {
 			if err := w.pauseEmployeePlanAfterWake(ctx, tx, job); err != nil {
 				return err
@@ -971,12 +976,28 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		}
 		actionIDs = append(actionIDs, actionID)
 		return nil
+	}
+	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+		if err := deliver(tx); err != nil {
+			return err
+		}
+		// A kind extension settles its own records after the send is
+		// enqueued, in the same completion transaction.
+		if ext != nil {
+			if err := ext.completeTx(ctx, tx, w, job, saved, text); err != nil {
+				return err
+			}
+		}
+		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, nil, string(wake.Kind), saved, actionIDs))
 	})
 	if err == nil {
 		if len(actionIDs) > 0 && h.DingTalkResponses != nil {
 			h.DingTalkResponses.Notify()
 		}
 		w.logCompleted(ctx, job, saved, actionIDs)
+		if ext != nil {
+			ext.afterComplete(ctx, w, job)
+		}
 	}
 	return err
 }

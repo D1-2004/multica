@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -91,6 +92,16 @@ func employeeCollectionTools(source map[string]any, stringField func(string) map
 			"reply":           stringField("Short natural acknowledgement to the sender. Do not mention other people, totals or the requester's other context."),
 		}, "required": []string{"source_ref", "invitation_ref", "reply"}, "additionalProperties": false}},
 	}
+}
+
+func employeeWithoutTool(tools []employeeloop.Tool, name string) []employeeloop.Tool {
+	out := make([]employeeloop.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Name != name {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 func isEmployeeCollectionTool(name string) bool {
@@ -447,6 +458,10 @@ func (h *employeeSceneHost) createCollection(ctx context.Context, tx pgx.Tx, sou
 		channel, _ := object["channel"].(string)
 		group, _ := object["group"].(string)
 		target, err := employeeResolveCollectionTarget(ctx, tx, h.job.Scope, name, channel, group)
+		var unresolved *employeeCollectionResolveError
+		if errors.As(err, &unresolved) {
+			return employeeloop.ToolResult{}, employeeCollectionRefusal(unresolved.msg)
+		}
 		if err != nil {
 			return employeeloop.ToolResult{}, err
 		}
@@ -468,7 +483,7 @@ func (h *employeeSceneHost) createCollection(ctx context.Context, tx pgx.Tx, sou
 		rendered[i] = employeeInvitationText(source.Message.SenderDisplayName, question, target.sceneKind)
 		audience, _ := taskinput.AudienceForSceneKind(target.sceneKind)
 		if check := taskinput.CheckEgress(taskinput.EgressInput{Rendered: rendered[i], Audience: audience, TargetSceneKind: target.sceneKind, Private: private}); check.Held {
-			return employeeloop.ToolResult{}, fmt.Errorf("the question for %s was held (%s): rewrite it without private conversation details, secrets or links", target.spec.ParticipantLabel, strings.Join(check.Reasons, ","))
+			return employeeloop.ToolResult{}, employeeCollectionRefusal(fmt.Sprintf("the question for %s was held (%s): rewrite it without private conversation details, secrets or links", target.spec.ParticipantLabel, strings.Join(check.Reasons, ",")))
 		}
 	}
 
@@ -796,6 +811,107 @@ func (w *EmployeeSceneWorker) invitationContext(ctx context.Context, job employe
 
 // ---- accept_collection_input ----
 
+// errEmployeeCollectionRefused marks a collection tool refusal made before any
+// effect: nothing was written, so the model may reply or clarify instead of
+// the turn ending with a generic failure.
+var errEmployeeCollectionRefused = errors.New("collection request refused")
+
+func employeeCollectionRefusal(reason string) error {
+	return fmt.Errorf("%w: %s", errEmployeeCollectionRefused, reason)
+}
+
+// employeeQuestionTerms are the comparable terms of a text: every CJK bigram
+// and every lower-cased word of two or more letters that is not only digits.
+func employeeQuestionTerms(text string) map[string]bool {
+	terms := map[string]bool{}
+	var han []rune
+	var word []rune
+	flushWord := func() {
+		if len(word) >= 2 {
+			letters := false
+			for _, r := range word {
+				if unicode.IsLetter(r) {
+					letters = true
+				}
+			}
+			if letters {
+				terms[strings.ToLower(string(word))] = true
+			}
+		}
+		word = word[:0]
+	}
+	flushHan := func() {
+		for i := 0; i+1 < len(han); i++ {
+			terms[string(han[i:i+2])] = true
+		}
+		han = han[:0]
+	}
+	for _, r := range text {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			flushWord()
+			han = append(han, r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			flushHan()
+			word = append(word, r)
+		default:
+			flushWord()
+			flushHan()
+		}
+	}
+	flushWord()
+	flushHan()
+	return terms
+}
+
+// quoteNamesInvitation reports whether the sender's own words name the chosen
+// question: the quote shares a term with it that no other listed question has.
+// A bare number or the whole message does not name a question.
+func (h *employeeSceneHost) quoteNamesInvitation(ctx context.Context, tx pgx.Tx, quote string, chosen employeeInvitationCandidate, listed []employeeInvitationCandidate) (bool, error) {
+	if utf8.RuneCountInString(quote) < 2 {
+		return false, nil
+	}
+	store := taskinput.NewStore(tx)
+	scopeIn := employeeTaskinputScope(h.job.Scope)
+	question := func(id string) (map[string]bool, error) {
+		inv, err := store.GetInvitation(ctx, scopeIn, id)
+		if err != nil {
+			return nil, err
+		}
+		return employeeQuestionTerms(inv.Question), nil
+	}
+	mine, err := question(chosen.InvitationID)
+	if err != nil {
+		return false, err
+	}
+	others := []map[string]bool{}
+	for _, c := range listed {
+		if c.InvitationID == chosen.InvitationID {
+			continue
+		}
+		terms, err := question(c.InvitationID)
+		if err != nil {
+			return false, err
+		}
+		others = append(others, terms)
+	}
+	for term := range employeeQuestionTerms(quote) {
+		if !mine[term] {
+			continue
+		}
+		distinct := true
+		for _, other := range others {
+			if other[term] {
+				distinct = false
+			}
+		}
+		if distinct {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *employeeSceneHost) acceptCollectionInput(ctx context.Context, tx pgx.Tx, source employeeSourceMessage, env employeeDispatchEnvelope, call employeeloop.ToolCall) (employeeloop.ToolResult, error) {
 	ref, err := argument(call.Arguments, "invitation_ref")
 	if err != nil {
@@ -821,7 +937,7 @@ func (h *employeeSceneHost) acceptCollectionInput(ctx context.Context, tx pgx.Tx
 		}
 	}
 	if binding == nil {
-		return employeeloop.ToolResult{}, errors.New("this message has no invitation context")
+		return employeeloop.ToolResult{}, employeeCollectionRefusal("this message is not an answer to any open question you asked this sender; reply normally")
 	}
 	var candidate *employeeInvitationCandidate
 	for i := range binding.Candidates {
@@ -830,7 +946,7 @@ func (h *employeeSceneHost) acceptCollectionInput(ctx context.Context, tx pgx.Tx
 		}
 	}
 	if candidate == nil {
-		return employeeloop.ToolResult{}, errors.New("invitation_ref is not one of this message's invitations")
+		return employeeloop.ToolResult{}, employeeCollectionRefusal("invitation_ref is not one of this message's invitations")
 	}
 	registered, err := employeeSceneFence(ctx, &Handler{Queries: db.New(tx)}, h.job)
 	if err != nil {
@@ -840,8 +956,14 @@ func (h *employeeSceneHost) acceptCollectionInput(ctx context.Context, tx pgx.Tx
 	if binding.Outcome != string(taskinput.BindBound) || !candidate.Bound {
 		// Only a 1:1 sender may name the question in their own words.
 		quote = strings.TrimSpace(quote)
-		if registered.SceneKind != scene.KindDM || utf8.RuneCountInString(quote) < 2 || !strings.Contains(source.Message.Text, quote) {
-			return employeeloop.ToolResult{}, errors.New("this message is not bound to that question; ask the sender which question they are answering, or to quote the original question")
+		named := false
+		if registered.SceneKind == scene.KindDM && strings.Contains(source.Message.Text, quote) {
+			if named, err = h.quoteNamesInvitation(ctx, tx, quote, *candidate, binding.Candidates); err != nil {
+				return employeeloop.ToolResult{}, err
+			}
+		}
+		if !named {
+			return employeeloop.ToolResult{}, employeeCollectionRefusal("this message does not say which of your questions it answers; ask the sender which one (quote their questions back), or ask them to reply to the question itself")
 		}
 		kind = taskinput.BindInviteReference
 	}
@@ -868,7 +990,7 @@ func (h *employeeSceneHost) acceptCollectionInput(ctx context.Context, tx pgx.Tx
 			continue
 		}
 		if err != nil {
-			return employeeloop.ToolResult{}, employeeCollectionError(err)
+			return employeeloop.ToolResult{}, employeeCollectionRefusal(employeeCollectionError(err).Error())
 		}
 		break
 	}

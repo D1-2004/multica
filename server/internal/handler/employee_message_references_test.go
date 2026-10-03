@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 )
@@ -38,11 +39,11 @@ type employeeQuoteSetup struct {
 func employeeQuoteHost(t *testing.T, state, anchor string, configure ...func(*employeeQuoteSetup)) (*employeeQuoteSetup, *employeeSceneHost, employeeloop.Identity, employeeSourceMessage) {
 	t.Helper()
 	ctx := context.Background()
-	s := &employeeQuoteSetup{notice: employeeNoticeDatabase(t, state, false, false), text: "停止这个", outerSender: quoteRequesterOpenID, quotedSender: quoteEmployeeOpenID, replicasReady: true}
+	s := &employeeQuoteSetup{notice: employeeNoticeDatabase(t, state, anchor == "callback-ack", false), text: "停止这个", outerSender: quoteRequesterOpenID, quotedSender: quoteEmployeeOpenID, replicasReady: true}
 	s.conversation = s.notice.command.Event.Data.Conversation.OpenConversationID
 	s.anchorScene = s.conversation
 	switch anchor {
-	case "ack":
+	case "ack", "callback-ack":
 		s.quotedID = "msg-ack"
 	case "notice":
 		s.quotedID = "msg-notice"
@@ -66,6 +67,18 @@ func employeeQuoteHost(t *testing.T, state, anchor string, configure ...func(*em
 	case "notice":
 		if tag, err := testPool.Exec(ctx, `UPDATE response_action SET state='delivered',provider_conversation_id=$3,provider_message_id='msg-notice' WHERE agent_id=$1::uuid AND input->>'employee_run_notice_id'=$2`, s.notice.agentID, s.notice.runID, s.anchorScene); err != nil || tag.RowsAffected() != 1 {
 			t.Fatal("run notice anchor", tag.RowsAffected(), err)
+		}
+	case "callback-ack":
+		// A native/Router source answers through its completion callback.
+		var requestID, reply string
+		if err := testPool.QueryRow(ctx, `SELECT request_id,result_message FROM task_completion_outbox WHERE agent_id=$1::uuid AND request_id LIKE 'multica-terminal:sync-completed:%'`, s.notice.agentID).Scan(&requestID, &reply); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.notice.h.PrepareExecutionResult(ctx, s.notice.command.CompletionCallback.URL, agentmessagerouter.ExecutionResultRequest{RequestID: requestID, AgentID: s.notice.agentID, ExecutionStatus: "completed", ResultMessage: reply}); err != nil {
+			t.Fatal(err)
+		}
+		if tag, err := testPool.Exec(ctx, `UPDATE response_action SET state='delivered',provider_conversation_id=$2,provider_message_id='msg-ack' WHERE agent_id=$1::uuid AND request_id=$3`, s.notice.agentID, s.anchorScene, requestID); err != nil || tag.RowsAffected() != 1 {
+			t.Fatal("callback acknowledgement anchor", tag.RowsAffected(), err)
 		}
 	}
 	var endpoint, namespace string
@@ -162,6 +175,23 @@ func TestEmployeeReferenceQuotedAcknowledgementStopsRunningTask(t *testing.T) {
 	}
 	if queue != "cancelled" || task != "cancelled" || tasks != 1 {
 		t.Fatalf("queue=%s task=%s tasks=%d", queue, task, tasks)
+	}
+}
+
+// A native source's acknowledgement goes through its completion callback;
+// quoting it locates the same Task (pre REF-01a found this path missing).
+func TestEmployeeReferenceQuotedCallbackAcknowledgementLocatesTask(t *testing.T) {
+	s, host, id, source := employeeQuoteHost(t, "running", "callback-ack")
+	quoted := employeeQuotedBindings(t, host)
+	if len(quoted) != 1 || quoted[0].TaskID != employeeTaskOf(t, s) {
+		t.Fatalf("quoted bindings = %+v", quoted)
+	}
+	ctx := context.Background()
+	if _, err := host.Execute(ctx, id, employeeQuoteCall("read_task", "quote-read", source, "q1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := host.Execute(ctx, id, employeeQuoteCall("stop_task", "quote-stop", source, "q1", map[string]any{"read_ref": "quote-read", "instruction_quote": "停止这个"})); err != nil || result.Receipt == "" {
+		t.Fatal("quoted stop", result, err)
 	}
 }
 

@@ -26,6 +26,10 @@ type employeeToolRecord struct {
 	Failure       string                   `json:"failure,omitempty"`
 	DeliveryReply string                   `json:"delivery_reply,omitempty"`
 	TaskRead      *employeeCurrentTaskRead `json:"task_read,omitempty"`
+	// Refused marks a Failure the Host refused before any effect, inside the
+	// journal transaction; the model may correct it like a pre-journal refusal.
+	// Collection refusals (errEmployeeCollectionRefused) count as refused.
+	Refused bool `json:"refused,omitempty"`
 }
 
 type employeeSceneHost struct {
@@ -279,6 +283,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 				record.Result = employeeStopRefusal(err)
 			}
 			record.Failure = err.Error()
+			record.Refused = errors.Is(err, employeeloop.ErrToolRefused) || errors.Is(err, errEmployeeCollectionRefused)
 		}
 		return json.Marshal(record)
 	})
@@ -302,6 +307,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		return record.Result, err
 	}
 	if record.Failure != "" {
+		if record.Refused {
+			return record.Result, employeeJournaledRefusal(record.Failure)
+		}
 		return record.Result, errors.New(record.Failure)
 	}
 	if call.Name == "continue_task" {
@@ -325,6 +333,13 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	}
 	return record.Result, nil
 }
+
+// employeeJournaledRefusal restores a journaled refusal with its exact text.
+type employeeJournaledRefusal string
+
+func (e employeeJournaledRefusal) Error() string { return string(e) }
+func (e employeeJournaledRefusal) Unwrap() error { return employeeloop.ErrToolRefused }
+
 func (h *employeeSceneHost) taskScope() employeetask.Scope {
 	return employeetask.Scope{WorkspaceID: h.job.Scope.WorkspaceID, AgentID: h.job.Scope.AgentID, TenantOrgID: h.job.Scope.TenantOrgID, Kind: employeetask.ScopeScene, Scene: scene.Ref{SceneID: h.job.Scope.SceneID}}
 }

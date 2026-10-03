@@ -17,6 +17,12 @@ const (
 	LearningTypeArchitecture LearningType = "architecture"
 	LearningTypeTool         LearningType = "tool"
 	LearningTypeOperational  LearningType = "operational"
+	// Scene-shared memory types. They are validated only on write, so an older
+	// binary that reads them simply displays the stored value.
+	LearningTypeFact     LearningType = "fact"
+	LearningTypeDecision LearningType = "decision"
+	// LearningTypeOpenItem is proposed only by the Host flush writer.
+	LearningTypeOpenItem LearningType = "open_item"
 )
 
 func ValidLearningTypes() []LearningType {
@@ -27,6 +33,9 @@ func ValidLearningTypes() []LearningType {
 		LearningTypeArchitecture,
 		LearningTypeTool,
 		LearningTypeOperational,
+		LearningTypeFact,
+		LearningTypeDecision,
+		LearningTypeOpenItem,
 	}
 }
 
@@ -76,12 +85,31 @@ type LearningRecord struct {
 	CreatedBy          string          `json:"created_by"`
 	CreatedAt          time.Time       `json:"created_at"`
 	Supersedes         string          `json:"supersedes,omitempty"`
+	// Attribution of a captured statement. All of it is filled by the Host from
+	// frozen evidence, never from model arguments; older binaries ignore it.
+	Subject       string        `json:"subject,omitempty"`
+	SpeakerRef    string        `json:"speaker_ref,omitempty"`
+	SpeakerName   string        `json:"speaker_name,omitempty"`
+	SaidAt        time.Time     `json:"said_at,omitempty,omitzero"`
+	CaptureOrigin CaptureOrigin `json:"capture_origin,omitempty"`
+	// ConflictsWith names an active scene record with the same type and key
+	// written by another author. Both stay active as conflicting candidates.
+	ConflictsWith string `json:"conflicts_with,omitempty"`
+	// CaptureSourceID names the admitted message that asked for the capture
+	// ("employee-message:<receipt_id>"), so history can hide the capture job's
+	// own confirmation once the record is forgotten or superseded.
+	CaptureSourceID string `json:"capture_source_id,omitempty"`
 }
 
 func dedupeLearnings(records []LearningRecord) []LearningRecord {
 	byKey := make(map[string]LearningRecord, len(records))
 	for _, rec := range records {
 		key := rec.Scope + "|" + string(rec.Type) + "|" + rec.Key
+		if rec.Scope == string(ScopeScene) {
+			// Cross-author records with one key are conflict candidates, not
+			// versions of each other: keep one current record per author.
+			key += "|" + rec.CreatedBy
+		}
 		existing, ok := byKey[key]
 		if !ok || rec.CreatedAt.After(existing.CreatedAt) || (rec.CreatedAt.Equal(existing.CreatedAt) && rec.ID > existing.ID) {
 			byKey[key] = rec
@@ -149,6 +177,20 @@ func containsInstructionLikeLearning(insight string) bool {
 		"do not mention",
 		"approve all",
 		"approve every",
+		// Chinese equivalents (Multica extension): role changes, overrides and
+		// blanket approvals that must never become stored "memory".
+		"忽略之前的指令",
+		"忽略之前所有指令",
+		"忽略之前的所有指令",
+		"忽略以上指令",
+		"忽略上述指令",
+		"你现在是",
+		"以系统身份",
+		"跳过审核",
+		"全部批准",
+		"无需审批",
+		"无需确认",
+		"系统提示",
 	}
 	for _, phrase := range bad {
 		if strings.Contains(lower, phrase) {

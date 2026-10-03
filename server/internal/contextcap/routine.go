@@ -35,8 +35,23 @@ type Routine struct {
 	CreatedByType string
 	CreatedByID   string
 	CreatedTaskID string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// EmployeeExecution applies when the agent runs in employee mode:
+	// RoutineRunOnly dispatches every occurrence, RoutineEmployeeDecide gives
+	// each occurrence an EmployeeLoop decision first.
+	EmployeeExecution string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// Routine execution choices for an employee-mode agent.
+const (
+	RoutineRunOnly        = "run_only"
+	RoutineEmployeeDecide = "employee_decide"
+)
+
+// ValidRoutineEmployeeExecution reports whether choice is a known execution.
+func ValidRoutineEmployeeExecution(choice string) bool {
+	return choice == RoutineRunOnly || choice == RoutineEmployeeDecide
 }
 
 // Routine creator types.
@@ -51,13 +66,13 @@ var ErrRoutineDuplicate = errors.New("a routine with the same purpose and schedu
 
 const routineColumns = `id::text, workspace_id::text, agent_id::text, scene_id::text, tenant_org_id, scene_kind,
 	autopilot_id::text, delivery_open_dingtalk_id, dedupe_key, created_by_type,
-	COALESCE(created_by_id::text, ''), COALESCE(created_task_id::text, ''), created_at, updated_at`
+	COALESCE(created_by_id::text, ''), COALESCE(created_task_id::text, ''), employee_execution, created_at, updated_at`
 
 func scanRoutine(row pgx.Row) (Routine, error) {
 	var r Routine
 	err := row.Scan(&r.ID, &r.WorkspaceID, &r.AgentID, &r.SceneID, &r.TenantOrgID, &r.SceneKind,
 		&r.AutopilotID, &r.DeliveryOpenDingTalkID, &r.DedupeKey, &r.CreatedByType,
-		&r.CreatedByID, &r.CreatedTaskID, &r.CreatedAt, &r.UpdatedAt)
+		&r.CreatedByID, &r.CreatedTaskID, &r.EmployeeExecution, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Routine{}, ErrNotFound
 	}
@@ -106,14 +121,20 @@ func InsertRoutine(ctx context.Context, db DBTX, r Routine) (Routine, error) {
 	default:
 		return Routine{}, ErrInvalidInput
 	}
+	if r.EmployeeExecution == "" {
+		r.EmployeeExecution = RoutineRunOnly
+	}
+	if !ValidRoutineEmployeeExecution(r.EmployeeExecution) {
+		return Routine{}, ErrInvalidInput
+	}
 	created, err := scanRoutine(db.QueryRow(ctx, `INSERT INTO context_scope_routine (
 			workspace_id, agent_id, scene_id, tenant_org_id, scene_kind, autopilot_id,
-			delivery_open_dingtalk_id, dedupe_key, created_by_type, created_by_id, created_task_id
-		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid)
+			delivery_open_dingtalk_id, dedupe_key, created_by_type, created_by_id, created_task_id, employee_execution
+		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid, $12)
 		ON CONFLICT (scene_id, dedupe_key) DO NOTHING
 		RETURNING `+routineColumns,
 		r.WorkspaceID, r.AgentID, r.SceneID, strings.TrimSpace(r.TenantOrgID), r.SceneKind, r.AutopilotID,
-		r.DeliveryOpenDingTalkID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID))
+		r.DeliveryOpenDingTalkID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID, r.EmployeeExecution))
 	if errors.Is(err, ErrNotFound) {
 		return Routine{}, ErrRoutineDuplicate
 	}
@@ -181,6 +202,16 @@ func SetRoutineDedupeKey(ctx context.Context, db DBTX, id, dedupeKey string) err
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return ErrRoutineDuplicate
 	}
+	return err
+}
+
+// SetRoutineEmployeeExecution changes a routine's execution choice. Accepted
+// occurrences keep the choice frozen in their receipt.
+func SetRoutineEmployeeExecution(ctx context.Context, db DBTX, id, choice string) error {
+	if !validUUID(id) || !ValidRoutineEmployeeExecution(choice) {
+		return ErrInvalidInput
+	}
+	_, err := db.Exec(ctx, `UPDATE context_scope_routine SET employee_execution = $2, updated_at = now() WHERE id = $1::uuid`, id, choice)
 	return err
 }
 

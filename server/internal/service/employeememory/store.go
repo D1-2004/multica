@@ -197,14 +197,29 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return LearningRecord{}, err
 	}
-	var previous LearningRecord
-	err = tx.QueryRow(ctx, `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL AND record->>'type'=$7 AND record->>'key'=$8 ORDER BY created_at DESC,id DESC LIMIT 1`, append(scope.args(), string(rec.Type), rec.Key)...).Scan(&raw)
-	if err == nil {
-		if err = json.Unmarshal(raw, &previous); err != nil {
+	// An untrusted scene statement only versions its own author's record. The
+	// author is the recorder, or for a human-requested capture the original
+	// speaker correcting themself. Another author's record stays active and the
+	// new one names it as a conflicting candidate.
+	author := sceneAuthorFilter(scope, rec)
+	var previous, other LearningRecord
+	// own holds every active record the write versions; outside the author
+	// rule there is at most one (the latest record for this type/key).
+	own, err := activeSameKey(ctx, tx, scope, rec, author, true)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	if len(own) > 0 {
+		previous = own[0]
+	}
+	if author != nil {
+		others, err := activeSameKey(ctx, tx, scope, rec, author, false)
+		if err != nil {
 			return LearningRecord{}, err
 		}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return LearningRecord{}, err
+		if len(others) > 0 {
+			other = others[0]
+		}
 	}
 	if rec.Supersedes != "" {
 		if previous.ID != rec.Supersedes {
@@ -213,14 +228,32 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 	}
 	lateObservation := false
 	fenceID := ""
-	if previous.ID != "" && previous.Trusted && !rec.Trusted {
-		return LearningRecord{}, ErrUntrustedCorrection
+	for _, prior := range own {
+		if prior.Trusted && !rec.Trusted {
+			return LearningRecord{}, ErrUntrustedCorrection
+		}
+	}
+	// No untrusted statement stands next to a trusted record either: another
+	// author's trusted record for this key is never put in conflict.
+	if author != nil && other.ID != "" {
+		var trusted bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL AND record->>'type'=$7 AND record->>'key'=$8 AND (record->>'trusted')::boolean)`, append(scope.args(), string(rec.Type), rec.Key)...).Scan(&trusted); err != nil {
+			return LearningRecord{}, err
+		}
+		if trusted {
+			return LearningRecord{}, ErrUntrustedCorrection
+		}
 	}
 	if orderedObservation {
 		// Forgotten and superseded records still fence older sources. Otherwise
 		// forgetting the current value could reactivate an unseen delayed event.
 		var fenceAt time.Time
-		err = tx.QueryRow(ctx, `SELECT id::text,COALESCE(NULLIF(record->>'evidence_occurred_at','0001-01-01T00:00:00Z')::timestamptz,created_at) AS evidence_time FROM employee_learning WHERE `+scopePredicate+` AND record->>'type'=$7 AND record->>'key'=$8 ORDER BY evidence_time DESC,id DESC LIMIT 1`, append(scope.args(), string(rec.Type), rec.Key)...).Scan(&fenceID, &fenceAt)
+		query, args := `SELECT id::text,COALESCE(NULLIF(record->>'evidence_occurred_at','0001-01-01T00:00:00Z')::timestamptz,created_at) AS evidence_time FROM employee_learning WHERE `+scopePredicate+` AND record->>'type'=$7 AND record->>'key'=$8`, append(scope.args(), string(rec.Type), rec.Key)
+		if author != nil {
+			query += ` AND ` + author.predicate(9)
+			args = append(args, author.actor, author.speaker)
+		}
+		err = tx.QueryRow(ctx, query+` ORDER BY evidence_time DESC,id DESC LIMIT 1`, args...).Scan(&fenceID, &fenceAt)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return LearningRecord{}, err
 		}
@@ -232,6 +265,9 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 		rec.Supersedes = ""
 	} else if previous.ID != "" {
 		rec.Supersedes = previous.ID
+	}
+	if !lateObservation && other.ID != "" {
+		rec.ConflictsWith = other.ID
 	}
 
 	rec.ID = uuid.NewString()
@@ -256,7 +292,11 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 		return LearningRecord{}, err
 	}
 	if previous.ID != "" && !lateObservation {
-		if _, err = tx.Exec(ctx, `UPDATE employee_learning SET superseded_by=$7 WHERE `+scopePredicate+` AND id=$8`, append(scope.args(), rec.ID, previous.ID)...); err != nil {
+		ids := make([]string, 0, len(own))
+		for _, prior := range own {
+			ids = append(ids, prior.ID)
+		}
+		if _, err = tx.Exec(ctx, `UPDATE employee_learning SET superseded_by=$7 WHERE `+scopePredicate+` AND id::text=ANY($8::text[])`, append(scope.args(), rec.ID, ids)...); err != nil {
 			return LearningRecord{}, err
 		}
 	}
@@ -264,6 +304,64 @@ func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecor
 		return LearningRecord{}, err
 	}
 	return rec, nil
+}
+
+// sceneAuthor selects one author's records within a scene namespace.
+type sceneAuthor struct{ actor, speaker string }
+
+func (a sceneAuthor) predicate(first int) string {
+	return fmt.Sprintf(`(record->>'created_by'=$%d OR ($%d<>'' AND record->>'speaker_ref'=$%d))`, first, first+1, first+1)
+}
+
+// sceneAuthorFilter is nil outside the untrusted scene layer, where the
+// existing same-key correction rule stays unchanged. Synthesis (flush) output
+// never versions a human-requested record by speaker identity.
+func sceneAuthorFilter(scope Scope, rec LearningRecord) *sceneAuthor {
+	if scope.Kind != ScopeScene || rec.Trusted {
+		return nil
+	}
+	author := &sceneAuthor{actor: rec.CreatedBy}
+	if rec.Source == LearningSourceObserved {
+		author.speaker = rec.SpeakerRef
+	}
+	return author
+}
+
+// activeSameKey reads active records with the same type/key, newest first.
+// Without an author it returns at most the latest record (the single current
+// version). With an author it returns that author's records (same=true), or
+// at most the latest record of any other author (same=false).
+func activeSameKey(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, author *sceneAuthor, same bool) ([]LearningRecord, error) {
+	query, args := `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND forgotten_at IS NULL AND superseded_by IS NULL AND record->>'type'=$7 AND record->>'key'=$8`, append(scope.args(), string(rec.Type), rec.Key)
+	limit := 1
+	if author != nil {
+		filter := author.predicate(9)
+		if same {
+			limit = 64
+		} else {
+			filter = "NOT " + filter
+		}
+		query += " AND " + filter
+		args = append(args, author.actor, author.speaker)
+	}
+	rows, err := tx.Query(ctx, query+fmt.Sprintf(` ORDER BY created_at DESC,id DESC LIMIT %d`, limit), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LearningRecord
+	for rows.Next() {
+		var raw []byte
+		var prior LearningRecord
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &prior); err != nil {
+			return nil, err
+		}
+		out = append(out, prior)
+	}
+	return out, rows.Err()
 }
 
 // Search first resolves the trusted scene directory, then fetches only the exact
@@ -423,6 +521,10 @@ func normalizeRecord(rec LearningRecord, scope Scope, e TrustedEvidence) (Learni
 	rec.Scope = string(scope.Kind)
 	rec.Key = strings.TrimSpace(rec.Key)
 	rec.Insight = strings.TrimSpace(rec.Insight)
+	rec.ConflictsWith = ""
+	if err := validateAttribution(rec, scope); err != nil {
+		return bad(err.Error())
+	}
 	rec.Trusted = e.HumanStated || e.VerifiedExecution
 	switch {
 	case e.HumanStated:

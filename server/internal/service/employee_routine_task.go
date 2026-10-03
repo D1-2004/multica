@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/dispatch"
 	"github.com/multica-ai/multica/server/internal/employeeloopconfig"
@@ -46,9 +45,11 @@ import (
 const (
 	routineOccurrenceSchema           = "scene.routine.occurrence/1"
 	routineDispatchModeEmployeeDirect = "employee_direct"
+	routineDispatchModeEmployeeDecide = "employee_decide"
 	routineDefaultTimezone            = "Asia/Shanghai"
 
 	routineOccurrenceAccepted       = "accepted"
+	routineOccurrenceDecision       = "decision"
 	routineOccurrenceSkipped        = "skipped"
 	routineOccurrenceSkippedOverlap = "skipped_overlap"
 	routineOccurrenceFailed         = "failed"
@@ -165,6 +166,11 @@ type routineAdmission struct {
 	creator        AutomationPrincipal
 	principal      AutomationPrincipal
 	configRevision string
+	// execution is the routine's choice frozen into this occurrence:
+	// run_only dispatches, employee_decide wakes the EmployeeLoop first.
+	execution string
+	// promptSHA is the frozen packet fingerprint (decision dispatch only).
+	promptSHA string
 }
 
 // routineOccurrenceInput is the frozen, secret-free snapshot of an accepted
@@ -364,6 +370,9 @@ func (s *AutopilotService) admitEmployeeRoutine(ctx context.Context, host Employ
 		s.publishRoutineRefusal(adm.ap, run, *refusal)
 		return &run, refusal.code, true, nil
 	}
+	if adm.execution == contextcap.RoutineEmployeeDecide {
+		return s.admitRoutineDecision(ctx, tx, qtx, host, adm, fire)
+	}
 	accepted, refusal, err := s.acceptRoutineOccurrenceTx(ctx, tx, qtx, host, adm, fire)
 	if err != nil {
 		return s.routineSlotConflict(ctx, fire, err)
@@ -414,7 +423,7 @@ func (s *AutopilotService) routineSlotConflict(ctx context.Context, fire routine
 // authority. It never borrows an administrator or another principal.
 func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.Tx, qtx *db.Queries, host EmployeeRoutineHost, routine contextcap.Routine, staleAP db.Autopilot, fire routineFire) (routineAdmission, *routineRefusal, error) {
 	adm := routineAdmission{routine: routine, ap: staleAP, timezone: routineDefaultTimezone}
-	workspaceID, agentID := staleAP.WorkspaceID, staleAP.AssigneeID
+	workspaceID := staleAP.WorkspaceID
 	ap, err := qtx.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: staleAP.ID, WorkspaceID: workspaceID})
 	if err != nil {
 		return adm, nil, fmt.Errorf("employee routine: reload autopilot: %w", err)
@@ -486,102 +495,23 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 			return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "routine trigger is disabled"), nil
 		}
 	}
-	// Scene and tenant fence: the scene still belongs to the agent and the
-	// agent is still bound in the routine's org. Never another scene.
-	owner := scene.Owner{WorkspaceID: workspaceID, AgentID: agentID}
-	sc, err := scene.Get(ctx, qtx, owner, parseRoutineUUID(routine.SceneID))
-	if errors.Is(err, scene.ErrNotFound) {
-		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "routine scene is gone"), nil
+	if refusal, err := s.verifyRoutineAuthority(ctx, tx, qtx, host, &adm, fire.ManualActorID); err != nil || refusal != nil {
+		return adm, refusal, err
 	}
-	if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: load scene: %w", err)
+	adm.execution = routine.EmployeeExecution
+	if adm.execution == "" {
+		adm.execution = contextcap.RoutineRunOnly
 	}
-	adm.scene = sc
-	identity, err := qtx.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: workspaceID, AgentID: agentID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "agent has no DingTalk identity for the routine scene"), nil
-	}
-	if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: load identity: %w", err)
-	}
-	if scene.CheckTenant(sc, identity.OrgID) != nil || sc.TenantOrgID != routine.TenantOrgID {
-		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "agent is no longer bound in the routine's org"), nil
-	}
-	agent, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "assignee agent no longer exists"), nil
-	}
-	if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: load agent: %w", err)
-	}
-	adm.agent = agent
-	ready, reason, err := AgentReadiness(ctx, qtx, agent)
-	if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: agent readiness: %w", err)
-	}
-	if !ready {
-		return adm, skipRoutine(agentReadinessReasonCode(agent), formatAdmissionReason(ap, reason)), nil
-	}
-	runtime, err := qtx.GetAgentRuntime(ctx, agent.RuntimeID)
-	if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: load runtime: %w", err)
-	}
-	if runtime.WorkspaceID != agent.WorkspaceID || !DirectTaskRuntimeCapable(runtime) {
-		return adm, skipRoutine(dispatch.ReasonRuntimeOffline, "agent runtime lacks "+protocol.DaemonCapabilityEmployeeDirectV1+" at dispatch time"), nil
-	}
-	// Authority: the member creator by current membership and invoke rules;
-	// an Agent creator as a real same-workspace Agent under the Agent invoke
-	// rules; a manual run by the member who ran it. No admin fallback.
-	adm.principal = adm.creator
-	switch adm.creator.Kind {
-	case AutomationPrincipalMember:
-		creatorID := parseRoutineUUID(adm.creator.ID)
-		if _, err := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: creatorID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator is no longer a workspace member"), nil
-		} else if err != nil {
-			return adm, nil, fmt.Errorf("employee routine: creator membership: %w", err)
-		}
-		if !s.canMemberInvokeAgentWith(ctx, qtx, agent, creatorID, workspaceID) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator lacks access to the assignee agent"), nil
-		}
-	case AutomationPrincipalAgent:
-		creator, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseRoutineUUID(adm.creator.ID), WorkspaceID: workspaceID})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && creator.ArchivedAt.Valid) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator agent is no longer in the workspace"), nil
-		}
-		if err != nil {
-			return adm, nil, fmt.Errorf("employee routine: creator agent: %w", err)
-		}
-		if !(&AutopilotService{Queries: qtx}).canCreatorInvokeAgent(ctx, ap, agent) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator agent may not invoke the assignee agent"), nil
-		}
-	}
-	if fire.ManualActorID.Valid {
-		if _, err := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: fire.ManualActorID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "you are not a member of this workspace"), nil
-		} else if err != nil {
-			return adm, nil, fmt.Errorf("employee routine: manual actor membership: %w", err)
-		}
-		if !s.canMemberInvokeAgentWith(ctx, qtx, agent, fire.ManualActorID, workspaceID) {
-			return adm, skipRoutine(dispatch.ReasonInvocationNotAllowed, "you are not allowed to trigger this autopilot's assignee agent"), nil
-		}
-		adm.principal = AutomationPrincipal{Kind: AutomationPrincipalMember, ID: util.UUIDToString(fire.ManualActorID)}
-	}
-	if strings.TrimSpace(ap.Title) == "" || strings.TrimSpace(ap.Description.String) == "" {
-		return adm, failRoutine("routine has no title or instructions"), nil
-	}
-	if err := host.CheckRoutineDeliveryTx(ctx, tx, routine); errors.Is(err, ErrRoutineDeliveryTarget) {
-		return adm, failRoutine(err.Error()), nil
-	} else if err != nil {
-		return adm, nil, fmt.Errorf("employee routine: delivery target: %w", err)
-	}
-	// Overlap: the previous accepted occurrence still has an active Run. A
-	// webhook delivery is its own event, never a cadence slot: it always runs.
+	// Overlap: the previous occurrence still has an active Run, or its
+	// decision is pending or dispatched a Run that is still active. A webhook
+	// delivery is its own event, never a cadence slot: it always runs.
 	if !fire.webhook() {
 		var overlap string
 		err = tx.QueryRow(ctx, `SELECT o.id::text FROM employee_routine_occurrence o
- JOIN employee_task_run r ON r.id=o.employee_run_id AND r.workspace_id=o.workspace_id
- WHERE o.routine_id=$1::uuid AND o.workspace_id=$2 AND o.state='accepted' AND r.state='running'
+ LEFT JOIN employee_routine_decision d ON d.occurrence_id=o.id
+ LEFT JOIN employee_task_run r ON r.id=COALESCE(o.employee_run_id,d.employee_run_id) AND r.workspace_id=o.workspace_id
+ WHERE o.routine_id=$1::uuid AND o.workspace_id=$2 AND ((o.state='accepted' AND r.state='running')
+  OR (o.state='decision' AND (d.state='pending' OR (d.state='dispatched' AND r.state='running'))))
  ORDER BY o.created_at DESC LIMIT 1`, routine.ID, workspaceID).Scan(&overlap)
 		if err == nil {
 			return adm, &routineRefusal{state: routineOccurrenceSkippedOverlap, reason: "previous occurrence of this routine is still running", code: dispatch.ReasonAlreadyActive, overlap: overlap}, nil
@@ -601,6 +531,105 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 		return adm, nil, fmt.Errorf("employee routine: config revision: %w", err)
 	}
 	return adm, nil, nil
+}
+
+// verifyRoutineAuthority is the use-time fence an occurrence runs on: the
+// routine's scene and tenant, the agent and its Direct-capable runtime, the
+// creator's (or manual actor's) current authority, the routine text and its
+// notice target. Admission and a decision's later dispatch both apply it; it
+// never borrows an administrator or another principal.
+func (s *AutopilotService) verifyRoutineAuthority(ctx context.Context, tx pgx.Tx, qtx *db.Queries, host EmployeeRoutineHost, adm *routineAdmission, manualActor pgtype.UUID) (*routineRefusal, error) {
+	workspaceID, agentID := adm.ap.WorkspaceID, adm.ap.AssigneeID
+	// Scene and tenant fence: the scene still belongs to the agent and the
+	// agent is still bound in the routine's org. Never another scene.
+	owner := scene.Owner{WorkspaceID: workspaceID, AgentID: agentID}
+	sc, err := scene.Get(ctx, qtx, owner, parseRoutineUUID(adm.routine.SceneID))
+	if errors.Is(err, scene.ErrNotFound) {
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "routine scene is gone"), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("employee routine: load scene: %w", err)
+	}
+	adm.scene = sc
+	identity, err := qtx.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: workspaceID, AgentID: agentID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "agent has no DingTalk identity for the routine scene"), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("employee routine: load identity: %w", err)
+	}
+	if scene.CheckTenant(sc, identity.OrgID) != nil || sc.TenantOrgID != adm.routine.TenantOrgID {
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "agent is no longer bound in the routine's org"), nil
+	}
+	agent, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return skipRoutine(dispatch.ReasonTargetUnavailable, "assignee agent no longer exists"), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("employee routine: load agent: %w", err)
+	}
+	adm.agent = agent
+	ready, reason, err := AgentReadiness(ctx, qtx, agent)
+	if err != nil {
+		return nil, fmt.Errorf("employee routine: agent readiness: %w", err)
+	}
+	if !ready {
+		return skipRoutine(agentReadinessReasonCode(agent), formatAdmissionReason(adm.ap, reason)), nil
+	}
+	runtime, err := qtx.GetAgentRuntime(ctx, agent.RuntimeID)
+	if err != nil {
+		return nil, fmt.Errorf("employee routine: load runtime: %w", err)
+	}
+	if runtime.WorkspaceID != agent.WorkspaceID || !DirectTaskRuntimeCapable(runtime) {
+		return skipRoutine(dispatch.ReasonRuntimeOffline, "agent runtime lacks "+protocol.DaemonCapabilityEmployeeDirectV1+" at dispatch time"), nil
+	}
+	// Authority: the member creator by current membership and invoke rules;
+	// an Agent creator as a real same-workspace Agent under the Agent invoke
+	// rules; a manual run by the member who ran it. No admin fallback.
+	adm.principal = adm.creator
+	switch adm.creator.Kind {
+	case AutomationPrincipalMember:
+		creatorID := parseRoutineUUID(adm.creator.ID)
+		if _, err := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: creatorID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator is no longer a workspace member"), nil
+		} else if err != nil {
+			return nil, fmt.Errorf("employee routine: creator membership: %w", err)
+		}
+		if !s.canMemberInvokeAgentWith(ctx, qtx, agent, creatorID, workspaceID) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator lacks access to the assignee agent"), nil
+		}
+	case AutomationPrincipalAgent:
+		creator, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseRoutineUUID(adm.creator.ID), WorkspaceID: workspaceID})
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && creator.ArchivedAt.Valid) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator agent is no longer in the workspace"), nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("employee routine: creator agent: %w", err)
+		}
+		if !(&AutopilotService{Queries: qtx}).canCreatorInvokeAgent(ctx, adm.ap, agent) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "routine creator agent may not invoke the assignee agent"), nil
+		}
+	}
+	if manualActor.Valid {
+		if _, err := qtx.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: manualActor, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "you are not a member of this workspace"), nil
+		} else if err != nil {
+			return nil, fmt.Errorf("employee routine: manual actor membership: %w", err)
+		}
+		if !s.canMemberInvokeAgentWith(ctx, qtx, agent, manualActor, workspaceID) {
+			return skipRoutine(dispatch.ReasonInvocationNotAllowed, "you are not allowed to trigger this autopilot's assignee agent"), nil
+		}
+		adm.principal = AutomationPrincipal{Kind: AutomationPrincipalMember, ID: util.UUIDToString(manualActor)}
+	}
+	if strings.TrimSpace(adm.ap.Title) == "" || strings.TrimSpace(adm.ap.Description.String) == "" {
+		return failRoutine("routine has no title or instructions"), nil
+	}
+	if err := host.CheckRoutineDeliveryTx(ctx, tx, adm.routine); errors.Is(err, ErrRoutineDeliveryTarget) {
+		return failRoutine(err.Error()), nil
+	} else if err != nil {
+		return nil, fmt.Errorf("employee routine: delivery target: %w", err)
+	}
+	return nil, nil
 }
 
 func (s *AutopilotService) canMemberInvokeAgentWith(ctx context.Context, q *db.Queries, agent db.Agent, member, workspaceID pgtype.UUID) bool {
@@ -720,14 +749,7 @@ type routineDirectSpec struct {
 // in tx and recorded its receipt.
 func (s *AutopilotService) startRoutineDirectTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, host EmployeeRoutineHost, adm routineAdmission, fire routineFire, run db.AutopilotRun, spec routineDirectSpec) (routineAccepted, *routineRefusal, error) {
 	out := routineAccepted{run: run}
-	var attr attribution.Result
-	var err error
-	if fire.ManualActorID.Valid {
-		attr = attribution.DirectHumanRun(fire.ManualActorID, attribution.EvidenceAutopilotRun, run.ID)
-	} else {
-		attr = triggerOwnerAttribution(ctx, qtx, fire.TriggerID, adm.ap.WorkspaceID, adm.ap.ID, attribution.EvidenceAutopilotRun, run.ID)
-	}
-	attr, err = (&TaskService{Queries: qtx}).applyAttributionFallback(ctx, attr, adm.agent)
+	attr, err := routineRunAttribution(ctx, qtx, adm, fire.ManualActorID, run)
 	if err != nil {
 		refusal := skipRoutine(dispatch.ReasonAttributionBlocked, "workspace fail-closed: no accountable human for routine run")
 		if out.run, err = qtx.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{ID: run.ID, FailureReason: pgtype.Text{String: refusal.reason, Valid: true}}); err != nil {
@@ -758,17 +780,9 @@ func (s *AutopilotService) startRoutineDirectTx(ctx context.Context, tx pgx.Tx, 
 	if err := s.routineFault("employee_task"); err != nil {
 		return out, nil, err
 	}
-	contextJSON, err := directTaskContext(DirectTaskRequest{Task: task, Prompt: packet.Text, Context: routineQueueContext(adm, spec.originKind, occurrenceID, run.ID, packet.ContextUsed)})
+	queueID, err := s.insertRoutineQueueTx(ctx, tx, adm, spec.originKind, attr, task, run, packet, occurrenceID)
 	if err != nil {
 		return out, nil, err
-	}
-	queueID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-	attrSource, _, evidence, evidenceRef := attributionCreateParams(attr)
-	if _, err = tx.Exec(ctx, `INSERT INTO agent_task_queue(id,agent_id,runtime_id,status,context,autopilot_run_id,originator_user_id,accountable_user_id,originator_source,trigger_evidence_kind,trigger_evidence_ref_id,rule_version_id,trigger_summary,max_attempts)
- VALUES($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9,$10,$11,$12,1)`,
-		queueID, adm.agent.ID, adm.agent.RuntimeID, contextJSON, run.ID, attr.UserID, attr.AccountableUserID, attrSource, evidence, evidenceRef, attr.RuleVersionID,
-		truncateForSummary(adm.ap.Title, triggerSummaryMaxLen)); err != nil {
-		return out, nil, fmt.Errorf("employee routine: insert queue: %w", err)
 	}
 	if err := s.routineFault("queue"); err != nil {
 		return out, nil, err
@@ -809,14 +823,24 @@ type routineAcceptedIDs struct {
 }
 
 func (s *AutopilotService) insertRoutineOccurrenceTx(ctx context.Context, tx pgx.Tx, adm routineAdmission, fire routineFire, run db.AutopilotRun, state, reason, overlap string, input routineOccurrenceInput, ids *routineAcceptedIDs) error {
+	_, err := s.insertRoutineOccurrenceAtTx(ctx, tx, adm, fire, run, state, reason, overlap, input, ids)
+	return err
+}
+
+// insertRoutineOccurrenceAtTx records the receipt and returns its first-commit
+// occurred_at (DB time). A decision receipt names only its Task.
+func (s *AutopilotService) insertRoutineOccurrenceAtTx(ctx context.Context, tx pgx.Tx, adm routineAdmission, fire routineFire, run db.AutopilotRun, state, reason, overlap string, input routineOccurrenceInput, ids *routineAcceptedIDs) (time.Time, error) {
 	id := uuid.NewString()
 	var taskID, runID, queueID, promptSHA any
 	inputJSON := []byte(`{}`)
 	if ids != nil {
-		id, taskID, runID, queueID, promptSHA = ids.occurrenceID, ids.taskID, ids.runID, ids.queueID, ids.promptSHA
+		id, taskID, promptSHA = ids.occurrenceID, ids.taskID, ids.promptSHA
+		if ids.runID != "" {
+			runID, queueID = ids.runID, ids.queueID
+		}
 		raw, err := json.Marshal(input)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		inputJSON = raw
 	} else {
@@ -842,13 +866,18 @@ func (s *AutopilotService) insertRoutineOccurrenceTx(ctx context.Context, tx pgx
 	if overlap != "" {
 		overlapID = overlap
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO employee_routine_occurrence(id,workspace_id,agent_id,tenant_org_id,scene_id,routine_id,autopilot_id,trigger_id,source,source_event_id,planned_at,timezone,state,reason,autopilot_run_id,employee_task_id,employee_run_id,queue_task_id,overlap_occurrence_id,creator_kind,creator_id,manual_actor_id,requester_ref,config_revision,dispatch_mode,authorization_ref,input,prompt_sha256)
- VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::uuid,$17::uuid,$18::uuid,$19::uuid,$20,$21::uuid,$22::uuid,$23,$24,$25,$26,$27::jsonb,$28)`,
+	dispatchMode := routineDispatchModeEmployeeDirect
+	if adm.execution == contextcap.RoutineEmployeeDecide {
+		dispatchMode = routineDispatchModeEmployeeDecide
+	}
+	var occurredAt time.Time
+	err := tx.QueryRow(ctx, `INSERT INTO employee_routine_occurrence(id,workspace_id,agent_id,tenant_org_id,scene_id,routine_id,autopilot_id,trigger_id,source,source_event_id,planned_at,timezone,state,reason,autopilot_run_id,employee_task_id,employee_run_id,queue_task_id,overlap_occurrence_id,creator_kind,creator_id,manual_actor_id,requester_ref,config_revision,dispatch_mode,authorization_ref,input,prompt_sha256)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::uuid,$17::uuid,$18::uuid,$19::uuid,$20,$21::uuid,$22::uuid,$23,$24,$25,$26,$27::jsonb,$28) RETURNING occurred_at`,
 		id, adm.routine.WorkspaceID, adm.routine.AgentID, adm.routine.TenantOrgID, adm.routine.SceneID, adm.routine.ID, adm.ap.ID, fire.TriggerID,
 		fire.source(), eventID, planned, adm.timezone, state, reason, run.ID, taskID, runID, queueID, overlapID,
-		creatorKind, creatorID, manualActor, routineRequesterRef(adm.routine.ID), adm.configRevision, routineDispatchModeEmployeeDirect,
-		routineAuthorizationRef(adm, fire), inputJSON, promptSHA)
-	return err
+		creatorKind, creatorID, manualActor, routineRequesterRef(adm.routine.ID), adm.configRevision, dispatchMode,
+		routineAuthorizationRef(adm, fire), inputJSON, promptSHA).Scan(&occurredAt)
+	return occurredAt, err
 }
 
 func routineAuthorizationRef(adm routineAdmission, fire routineFire) string {

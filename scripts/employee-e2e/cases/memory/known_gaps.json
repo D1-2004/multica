@@ -1,0 +1,23 @@
+{
+  "schema": "el2e.known_gaps.v1",
+  "note": "Memory suite ratchet (M7): remove a case here in the same change that makes it pass. Privacy guards (BASE-MEMORY, MEMX-G4, MEMX-X2) are not gaps: they must pass today.",
+  "gaps": {
+    "MEMX-G1": "M2 group transcript (Diamond group_transcript target, D1)",
+    "MEMX-G2": "M5 memory_capture audience=scene with transcript_ref + M2 transcript",
+    "MEMX-G3a": "M5 scene forget permission (author/speaker only)",
+    "MEMX-G3b": "needs a third human actor; M5 group /reset-memory narrowed (D3)",
+    "MEMX-W1": "M2 transcript omits forgotten evidence; M5 transcript capture. Risk: the capture job's own reply repeats the value and is not withdrawn today",
+    "MEMX-L1": "M8 persisted group transcript and [O] recall (C stage, D5/D6)",
+    "MEMX-X1": "M1 person view (Diamond person_view, D2)",
+    "MEMX-P1": "M1 pinned preferences [P]",
+    "MEMX-N1": "M1 denoise and retrieval block",
+    "MEMX-S1": "M2 deterministic segmentation",
+    "MEMX-H1": "M3 [S] scene status (routine never run)",
+    "MEMX-SELF": "M3 SELF PROFILE + M6 directory supervisor",
+    "MEM-01": "M4 employee_verified_distill span",
+    "MEM-01N": "M4 employee_verified_distill span (absence is only meaningful once the span exists)",
+    "MEM-02": "M4 work packet MEMORY section and ContextUsed memory:<id>",
+    "MEM-03": "M9 promotion (C stage) and a manager approval actor",
+    "MEM-04": "M4 work packet memory (forget must drop it)"
+  }
+}

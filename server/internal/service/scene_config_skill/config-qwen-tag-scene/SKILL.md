@@ -86,6 +86,18 @@ this run has no scene to configure; say so instead of improvising.
 - A routine never uses anyone's personal accounts, not even in a 1:1 chat:
   it runs with this scene's configuration only. If a routine needs an
   account, connect it to the scene through `scene_connect_link`.
+- `employee_execution` chooses how each occurrence runs for an agent in
+  employee mode: `run_only` (default) runs the instructions every time;
+  `employee_decide` lets the employee look at this scene and the last results
+  first and then run the instructions, reply once here, wait for the next
+  occurrence, or stay quiet. Use `employee_decide` only when the requester
+  asked for something conditional ("only remind when the report is
+  missing"), and write the condition and what to do into the instructions.
+  Only a scheduled routine can use `employee_decide`; a webhook routine
+  always runs its instructions.
+  It may be refused with `routine_decision_unavailable` while the platform is
+  updating; keep `run_only` then. A change applies to later occurrences, not
+  to one already started.
 
 ## Limits
 

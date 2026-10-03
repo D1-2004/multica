@@ -1363,6 +1363,25 @@ arrives. There are no org-level or person-level routines.
   its signing secret (16–256 printable characters) on a route of its own;
   the secret is never returned or logged, views show only
   `trigger.has_signing_secret`, and a chat cannot set it (no MCP tool).
+- **Employee-mode agents.** For an agent in employee mode, every occurrence
+  is admitted as an independent EmployeeTask with a frozen receipt
+  (`employee_routine_occurrence`) instead of the run_only prompt; the start
+  and end notices stay the only sender (`docs/employee-loop.md`). The
+  routine's `employee_execution` (migration 9820, default `run_only`) picks
+  how: `run_only` dispatches the frozen instructions as one Direct Run;
+  `employee_decide` admits one `routine.decision` task wake whose model may
+  only run the frozen instructions (`run_routine`, then the usual notices),
+  reply once in the scene, `wait_for_next_occurrence` or stay quiet, within
+  the three-request budget. A decision without a Run completes the
+  AutopilotRun with `result.employee_decision` and closes its Task without a
+  Run. Choosing `employee_decide` is refused with
+  `routine_decision_unavailable` until every live replica runs the decision
+  reader, and with `invalid_routine` on a webhook routine (a delivery
+  always runs its instructions). While the previous occurrence is undecided
+  or its Run is still active, the next one is recorded as `skipped_overlap`.
+  A schedule slot whose planned time fell while the routine was paused is
+  recorded as skipped even when the routine is resumed before the
+  dispatcher's five-minute lateness window closes.
 - **Who may change them.** `rights.edit_routines` follows the scene rights:
   agent managers (configure page and admin Context Builder). From a
   conversation, the config-qwen-tag-scene tools (§10) act for the scene
@@ -1375,8 +1394,9 @@ arrives. There are no org-level or person-level routines.
   scene). Admin:
   the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`,
   plus `PUT …/routines/{id}/webhook-signing-secret` (`{signing_secret}`,
-  `""` clears; admin only).
-  Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
+  `""` clears; admin only). Create and PATCH accept `employee_execution`
+  (`run_only` | `employee_decide`); views return it.
+  Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`, `routine_decision_unavailable`,
   `dm_target_unknown`, `dm_target_ambiguous`, `agent_runtime_required`, `routine_duplicate`,
   `routine_paused`, `scene_kind_without_routines`, `routine_gone` (the
   autopilot was archived or lost its trigger outside the scene API; delete

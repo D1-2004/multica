@@ -56,3 +56,12 @@ Webhook 下一步复用现有验签 ingress、dedupe 和 delivery worker，保�
 - **恢复。** commit 后、通知前崩溃：调度器 stale 重入读到 receipt，只重复唤醒，ID 与字节不变；旧 `RecoverPartialAutopilotRun` 分支在 receipt 检查之后，永不作用于新来源。队列已终态但 APRun 仍 running（丢失任务事件）由 `ReconcileEmployeeRoutineRuns` 每 5 秒补结算，结束通知已存在时不重发。
 - **滚动门禁。** 仅当 `EmployeeLoopReplicaMarker` 被所有在线副本声明（`EmployeeSceneWorker.ReplicaReady`）时产生新形状；否则该发生仍走原 Autopilot run_only 路径。marker 编号由主代理在合入时分配。
 - **后续 Task wake 接口。** `LoadAutomationTaskOrigin(scope, taskID)` 按 Task.Source.Namespace（`AutomationTaskSourceNamespaces`）返回 scope、投递锚点、creator principal 与历史策略（群/单聊：用该场域当前 dispatch endpoint principal 读历史，绝不用 routine creator；enterprise：不适用）。`ListRoutineOccurrenceOutcomes` 给 B3 提供最近 N 次发生的确定性结果（时间、状态、是否送达、正文/结果哈希）。
+
+## 实现说明（B wave 2：routine decision）
+
+- **执行选择。** `context_scope_routine.employee_execution`（9820，默认 `run_only`）：`run_only` / `employee_decide`。不写入旧二进制会解析的 `autopilot.execution_mode`。配置页、Admin 和场域 MCP（`scene_routine_create/update` 的 `employee_execution`）可切换；选择 `employee_decide` 需全部在线副本具备 decision reader，否则 409 `routine_decision_unavailable`。已受理的 occurrence 冻结当时的选择。
+- **受理。** `employee_decide` 的 occurrence 同一事务写真实 AutopilotRun（running，无 task_id）、EmployeeTask（v1，`requester_ref=routine:<id>`）、receipt（`state=decision`、`dispatch_mode=employee_decide`、冻结 packet 指纹）、`employee_routine_decision`（pending）和一个 `routine.decision` typed wake（source `employee.task_wake/scene.routine`，event id = receipt id，occurred_at = receipt 首次提交时间）。不发开始通知，不入队。门禁关闭时记 skipped，不会退化成无条件执行。
+- **Origin reader。** `employeeRoutineTaskOriginReader` 注册在 `scene.routine.schedule` / `scene.routine.manual`（`MustRegister`，重复注册在启动时 panic）：从 PG 读冻结 receipt、核对当前 routine principal 权限；历史用该 agent 当前 dispatch endpoint 的 actor（并验证其当前成员与调用权限），从不用 routine creator；DM 投递对象取 routine 冻结的 counterpart。
+- **Decision wake。** 在 P2 的 task wake 上加 kind 扩展：输入追加冻结规则（标题、说明、cron、计划本地时间）和最近 5 次确定性结果；工具只有 `run_routine`（执行冻结 packet）、`reply`（本场域一次）、`wait_for_next_occurrence`、`stay_quiet`。`run_routine` 在 tool journal 事务中重核授权、重编译并核对 packet 指纹，再写 queue/Run/APRun.task_id/开始通知；之后的结束通知、ExecutionEvent 排除、learning 跳过与 run_only 相同。三次模型请求预算和失败计数沿用 job journal。
+- **结算。** quiet / waited / replied / failed 在 job 完成事务中（reply 在发送入队之后）把 AutopilotRun 记为 completed（failed 记 failed），`result.employee_decision` 写明状态与理由，并由 routine requester 关闭 Task，不伪造 Run。wake 被 hold 或被旧二进制完成而未结算的，由 `ReconcileEmployeeRoutineRuns` 记 failed，避免永久 overlap。
+- **重叠。** 上一次 decision 未决或其派发的 Run 仍在执行时，本次记 `skipped_overlap`。

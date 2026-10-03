@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -35,6 +38,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
+	"github.com/multica-ai/multica/server/internal/employeedirectory"
 	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -977,9 +981,47 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return nil
 	}
+	// Memory tools v2 are frozen into new chat inputs only once every live
+	// replica can execute them; until then new inputs keep v1.
+	h.EmployeeSceneWorker.MemoryToolsReady = func(ctx context.Context) (bool, error) {
+		if opts.DeploymentFence == nil {
+			return false, nil
+		}
+		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryReplicaMarker)
+	}
+	// Scene digest (memory M11): each newly persisted human transcript line
+	// marks its scene dirty in the insert transaction; the budgeted writer
+	// claims scenes only once every live replica advertises the digest marker.
+	h.EmployeeSceneMessagesObserved = func(ctx context.Context, tx pgx.Tx, key employeeentry.Scope, humanRows int, lastHumanAt time.Time) error {
+		return digest.MarkSceneDirtyTx(ctx, tx, digest.SceneKey(key), humanRows, lastHumanAt)
+	}
+	h.EmployeeSceneWorker.MemoryDigest = handler.NewEmployeeMemoryDigest(h, h.Models, opts.Langfuse, handler.EmployeeSceneTranscript{}, handler.NewEmployeeSceneFacts(h.EmployeeMemory), func(ctx context.Context) error {
+		if opts.DeploymentFence == nil {
+			return errors.New("employee memory digest replica verification is unavailable")
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, digest.MemoryMarker)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return errors.New("live server replicas do not all support " + digest.MemoryMarker)
+		}
+		return nil
+	})
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
+	// The group transcript's all-groups subscription and proactive wakes start
+	// only when every live replica reads the transcript (same stream
+	// fingerprint on every replica); retention and the gate run everywhere.
+	h.EmployeeMemoryObserveReady = func(ctx context.Context) bool {
+		if opts.DeploymentFence == nil {
+			return false
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryObserveMarker)
+		return err == nil && ready
+	}
+	h.EmployeeSceneMessageWorker = handler.NewEmployeeSceneMessageWorker(h)
 	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
 	if opts.RuntimeConfig != nil {
 		h.EmployeeSceneWorker.VisionConfig = opts.RuntimeConfig.employeeVision
@@ -1054,6 +1096,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Consumers: []dwseventsource.Consumer{
 					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
 					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
+					// Every group message of Employee-loop identities, observed into
+					// the group transcript; optional, so an account DingTalk
+					// refuses it for keeps its @ and single-chat stream.
+					{EventKey: dws.EventIMAllGroups, Identities: h.EmployeeObservationIdentities, Handle: h.HandleDWSNativeGroupObservation, Optional: true},
 					{EventKey: a2ui.NativeEventKey, Identities: identities, Handle: func(ctx context.Context, id dwsclient.Identity, line []byte) error {
 						return h.HandleDWSNativeCardAction(ctx, id, line, func(ctx context.Context, bizID, surfaceID string) error {
 							client, err := native.Client(ctx, id, mint)
@@ -1079,6 +1125,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DWSNativeStaffID = func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error) {
 					return native.StaffID(ctx, id, mint, openDingTalkID, names, conversationID)
 				}
+				// EmployeeLoop directory facts (agent profile, group rosters)
+				// read as the identity, through the same sessions.
+				h.EmployeeDirectory = employeedirectory.DWSDirectory{Client: func(ctx context.Context, id dwsclient.Identity) (*dws.Client, error) {
+					return native.Client(ctx, id, mint)
+				}}
 			}
 		}
 	}

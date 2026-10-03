@@ -78,8 +78,9 @@ func (h *Handler) NotifyRoutineNotices() {
 
 // ReconcileEmployeeRoutineRuns settles routine-origin executions whose queue
 // row reached a terminal status while their AutopilotRun still says running,
-// for example after a lost task event. SyncRunFromTask settles the run and
-// posts the end notice only when it does not exist yet.
+// for example after a lost task event, and routine decisions whose wake job
+// ended without settling them. SyncRunFromTask settles the run and posts the
+// end notice only when it does not exist yet.
 func (h *Handler) ReconcileEmployeeRoutineRuns(ctx context.Context, limit int) (int, error) {
 	if h == nil || h.DB == nil || h.AutopilotService == nil || limit < 1 || limit > 1000 {
 		return 0, nil
@@ -109,7 +110,14 @@ func (h *Handler) ReconcileEmployeeRoutineRuns(ctx context.Context, limit int) (
 	if err != nil {
 		return 0, err
 	}
-	settled := 0
+	// Decisions whose wake ended without one (held, or completed by a binary
+	// without the decision extension) settle as failed so the routine is not
+	// overlapped forever.
+	decided, err := h.AutopilotService.ReconcileRoutineDecisions(ctx, limit)
+	if err != nil {
+		return decided, err
+	}
+	settled := decided
 	for _, id := range ids {
 		task, err := h.Queries.GetAgentTask(ctx, id)
 		if err != nil {
