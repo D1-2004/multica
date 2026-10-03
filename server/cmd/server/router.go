@@ -960,6 +960,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.EmployeeMemory = employeememory.NewStore(pool)
 	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
 	h.EmployeeSceneWorker.ModelRoutes = h.Models
+	// Requester-authorized invitation reminders are recorded per invitation in
+	// the collection's creating transaction.
+	h.EmployeeSceneWorker.CollectionReminders = handler.RecordCollectionReminders
 	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
