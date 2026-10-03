@@ -40,6 +40,8 @@ import (
 // chat snapshots that continue_task and stop_task accept from a quote reply.
 // An older replica replays them with the old quote refusal, so they are
 // produced only when every live replica has 14.
+// It also covers invitation reminders and goal-wait stall notices: replicas
+// below 14 do not fence reminder sends in BeforeSend.
 const EmployeeLoopReplicaMarker = "[employee-loop:14]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
