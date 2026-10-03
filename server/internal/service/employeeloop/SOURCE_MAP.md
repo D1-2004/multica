@@ -195,6 +195,22 @@ values from history, except for an explicit authorized audit. This extends the
 existing receipt and memory-reply contracts without changing memory storage or
 tombstone projection.
 
+M5 extends the Host-only withdrawal projection in
+`employeeentry/recent_reply_withdrawals.go`: exact retired record IDs resolve
+against frozen memory manifests and successful persisted memory tool results.
+Scoped, provider-confirmed reply actions bind those jobs to delivered message
+IDs; exact prior-history action/message IDs and transcript reference IDs carry
+withdrawal through later replies. The whole reply is the conservative unit;
+Host does not infer which words used which record. Independent same-value human
+messages and replies without these dependencies remain dialogue. Group quotes
+of those exact reply IDs are omitted too. This follows the fixed source's
+ordered session/bounded context separation and our existing provenance reader,
+not an LLM rewrite or a value-based history eraser. Original audit rows and old
+snapshots/journals stay intact; unknown legacy provenance is not guessed.
+Each scoped record/job/reply set is bounded at 2000 with explicit unavailability
+on overflow or read failure; the kernel, prompt, model budget, schema and replica
+marker are unchanged. Quality after deployment remains a separate M5 IM verdict.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without

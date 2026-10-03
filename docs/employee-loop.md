@@ -95,6 +95,8 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。
 
+M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombstone 记录 ID 关联冻结的 `memory_manifest`、实际 memory tool 结果，再关联实际 delivered reply 的 action/provider message ID；沿新投影范围内旧快照的历史 ID 与 `transcript_refs` 有界传播，隐藏借旧 assistant 文本继续复述的整条回复。群转录对这些撤销回复的引用正文也省略，不能借 provider readback 重新注入。其他成员同值但不同来源的消息不删，原件与已冻结 job 不改，当前授权审计由独立权限路径读取。没有结构化引用的独立复述仍不按值推断；超限或失败显式 unavailable，部分集合不能作为完整撤销结果。来源与原反例见 [20 回复来源过滤](plans/2026-10-03/employee-loop-backend-delivery/20-withdrawn-reply-provenance.md)。
+
 ## 纯停止当前事项
 
 `stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。reaction 与结构 continuation 不能停止任何事项，不推断其他场域的目标。

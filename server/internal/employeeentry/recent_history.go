@@ -152,6 +152,19 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 		}
 		out.Messages = kept
 	}
+	withdrawnReplies, err := s.withdrawnMemoryReplyIDs(ctx, request.Scope, out.Since, before)
+	if err != nil {
+		return RecentConversation{}, err
+	}
+	kept := out.Messages[:0]
+	for _, message := range out.Messages {
+		if withdrawnReplies.Sources[message.MessageID] {
+			out.WithdrawnMemoryEvidenceOmitted = true
+			continue
+		}
+		kept = append(kept, message)
+	}
+	out.Messages = kept
 	// A send must link to this principal's admitted sources: a foreground
 	// scene notice, the original response callback, or a persisted Run notice.
 	// A Host send that carries no source linkage at all (a routine notice) was
@@ -191,6 +204,10 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 			break
 		}
 		count++
+		if withdrawnReplies.Actions[message.ActionID] || withdrawnReplies.Messages[message.MessageID] {
+			out.WithdrawnMemoryEvidenceOmitted = true
+			continue
+		}
 		message.Role = "assistant"
 		boundRecentMessage(&message)
 		out.Truncated = out.Truncated || message.Truncated
