@@ -66,7 +66,17 @@ func (m *employeeMemoryWake) release() {
 
 // freeze adds every memory-owned part of a new input snapshot.
 func (m *employeeMemoryWake) freeze(ctx context.Context, input *employeeSavedInput) error {
-	return m.freezeBrief(ctx, input)
+	if err := m.freezeBrief(ctx, input); err != nil {
+		return err
+	}
+	// Persona facts (self profile, language, scene status, group members) are
+	// frozen into the same new snapshot.
+	wake := employeePersonaChatWake(m.job, m.work)
+	if m.task != nil {
+		wake = employeePersonaTaskWake(m.task.origin)
+	}
+	m.worker.applyEmployeePersonaInput(ctx, m.job, wake, input)
+	return nil
 }
 
 // employeeMemoryAfterWake is the write-side hook: it runs once after a wake's

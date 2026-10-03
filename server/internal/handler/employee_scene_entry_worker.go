@@ -506,6 +506,9 @@ func (w *EmployeeSceneWorker) retryPersisted(ctx context.Context, job employeeen
 func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.Job, envelopes, originalEnvelopes []employeeDispatchEnvelope) (employeeSavedInput, error) {
 	memory := w.employeeChatMemory(ctx, job, envelopes, originalEnvelopes)
 	defer memory.release()
+	// The bounded group transcript read runs alongside the rest of the build.
+	transcript := w.startSceneTranscript(ctx, job)
+	defer transcript.stop()
 	messages := []employeeSourceMessage{}
 	for i, item := range job.Items {
 		for _, message := range employeeSourceMessages(item, envelopes[i]) {
@@ -552,9 +555,12 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if invitations != "" {
 		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
 	}
-	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
+	var recent employeeRecentSnapshot
+	recent, err = w.recentConversationSnapshot(ctx, job, transcript)
 	if err != nil {
 		input.Input.RecentConversation = employeeloop.RecentConversationUnavailable
+	} else {
+		input.Input.RecentConversation, input.TranscriptRefs, input.sceneMessages = recent.Raw, recent.TranscriptRefs, recent.SceneMessages
 	}
 	if input.Input.Resources, err = w.resourceContext(ctx, job, envelopes); err != nil {
 		return employeeSavedInput{}, err
