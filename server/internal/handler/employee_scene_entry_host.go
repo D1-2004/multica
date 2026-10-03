@@ -62,6 +62,7 @@ func employeeSceneTools() []employeeloop.Tool {
 	continueNoticeSchema["description"] = "Omit to inherit the existing Task delivery constraint. An earlier file-only instruction stays effective; always does not revoke it. Set if_not_delivered only for a new explicit file-only instruction quoted from this selected source."
 	tools = append(tools, employeeloop.Tool{Name: "continue_task", Effect: true, Description: "Continue the same successfully completed task only when this source explicitly requests a further step of that goal. First read_task on its source-bound task_ref, then use the returned read_ref. Do not change the goal contract, start while running, retry failed/cancelled work, or treat thanks as work. With multiple plausible candidates clarify. A new Run is queued under the same Task; include its acceptance reply so no extra model call is required. Omit completion_notice_policy to preserve the Task delivery constraint; always cannot revoke an earlier file-only instruction without new requester authorization.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact candidate read this wake"), "read_ref": stringField("read_ref from this wake's successful read_task"), "instruction_quote": stringField("Exact outer-message excerpt explicitly requesting this continuation"), "prompt": stringField("Current requested step preserving user constraints; do not replace the stored goal"), "reply": stringField("Briefly confirm acceptance of the requested next step and intent to handle it. The previous run and this acceptance do not prove the new execution has started. Without separate observed evidence for the new execution, do not claim it has started, is running, has stopped, or has completed. Use natural wording such as 我来继续处理，跑完发你; do not narrate internal queue or sandbox states."), "completion_notice_policy": continueNoticeSchema}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote", "prompt", "reply"}, "additionalProperties": false}})
 	tools = append(tools, employeeStopTool())
+	tools = append(tools, employeeCollectionTools(source, stringField)...)
 	return append(tools, employeeMemoryTools()...)
 }
 func (h *employeeSceneHost) source(ref string) (employeeSourceMessage, employeeDispatchEnvelope, error) {
@@ -208,6 +209,27 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			}
 		case "stop_task":
 			result, acceptedStop, err = h.stopTask(ctx, tx, source, call)
+		case "create_collection", "accept_collection_input":
+			// Every effect commits with this journal entry or not at all.
+			var sp pgx.Tx
+			if sp, err = tx.Begin(ctx); err == nil {
+				if call.Name == "create_collection" {
+					result, err = h.createCollection(ctx, sp, source, env, call)
+				} else {
+					result, err = h.acceptCollectionInput(ctx, sp, source, env, call)
+				}
+				if err == nil {
+					err = sp.Commit(ctx)
+				} else {
+					_ = sp.Rollback(ctx)
+				}
+			}
+		case "read_collection":
+			if len(call.Arguments) != 1 {
+				err = errors.New("read_collection accepts only source_ref")
+			} else {
+				result, err = h.readCollection(ctx, tx, source)
+			}
 		case "continue_task":
 			if preparationErr != nil {
 				err = preparationErr
@@ -260,6 +282,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	}
 	if acceptedStop != nil {
 		h.observeTaskStop(ctx, *acceptedStop)
+	}
+	if call.Name == "create_collection" && record.Result.Receipt != "" && h.worker.handler.DingTalkResponses != nil {
+		h.worker.handler.DingTalkResponses.Notify()
 	}
 	if record.DeliveryReply != "" {
 		if h.deliveryReplies == nil {

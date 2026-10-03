@@ -26,9 +26,13 @@ import (
 
 // EmployeeLoopReplicaMarker 12 adds typed scene jobs: claim filters by kind,
 // human input precedes Task wakes, and only this worker executes task_wake.
-// 13 adds the scene_routine_webhook automation origin: a replica without it
-// fails the claim of a webhook routine's Direct execution closed, so the
-// webhook ingress freezes the Employee path only when all replicas have 13.
+// Marker 13 adds the scene_routine_webhook automation origin (a replica
+// without it fails the claim of a webhook routine's Direct execution closed,
+// so the webhook ingress freezes the Employee path only when all replicas
+// have 13) and cross-scene collections: the create/read/accept collection
+// tools and invitation bindings in chat snapshots, invitation sends whose
+// action id is the invitation's, and collection.ready wakes that carry the
+// authorized answers and complete the collection with their summary.
 const EmployeeLoopReplicaMarker = "[employee-loop:13]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
@@ -49,6 +53,9 @@ type EmployeeSceneWorker struct {
 	handler          *Handler
 	store            *employeeentry.Store
 	model            employeeloop.Model
+	// CollectionReminders persists a requester-authorized reminder plan in the
+	// collection's creation transaction; nil refuses reminder requests.
+	CollectionReminders CollectionReminderRecorder
 	// origins resolves Tasks for task wakes; producers register their readers.
 	origins *employeeentry.TaskOriginRegistry
 	wake    chan struct{}
@@ -128,6 +135,12 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				}
 				cancel()
 			}
+			// Cross-scene collections: invitation delivery facts and ready wakes.
+			collectionCtx, collectionCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.ReconcileEmployeeCollections(collectionCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee collection reconciliation failed", "error", err)
+			}
+			collectionCancel()
 			// Stall episodes; Scan itself requires every live replica to
 			// understand the watchdog's notices.
 			if w.handler.EmployeeWatchdog != nil && time.Since(lastWatchdogScan) >= 30*time.Second {
@@ -199,6 +212,9 @@ type employeeSavedInput struct {
 	Config       employeeloop.Config            `json:"config"`
 	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
 	CurrentTasks []employeeCurrentTaskBinding   `json:"current_tasks,omitempty"`
+	// Invitations freezes the Host's binding of each source message to its
+	// sender's own collection invitations (accept_collection_input).
+	Invitations []employeeInvitationBinding `json:"invitations,omitempty"`
 	// TaskWake is the typed return target of a task_wake job; nil for chat.
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
 }
@@ -418,6 +434,13 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
 	if err != nil {
 		return employeeSavedInput{}, err
+	}
+	var invitations string
+	if input.Invitations, invitations, err = w.invitationContext(ctx, job, envelopes); err != nil {
+		return employeeSavedInput{}, err
+	}
+	if invitations != "" {
+		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
 	}
 	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
 	if err != nil {

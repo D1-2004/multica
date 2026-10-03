@@ -351,6 +351,9 @@ type employeeTaskWakeContext struct {
 	// RecentConversation is "attached" or "not_applicable" for a Task without
 	// a conversation; it is never presented as unavailable.
 	RecentConversation string `json:"recent_conversation"`
+	// Collection carries a collection.ready wake's authorized answers at the
+	// wake's frozen revision (marker 13); absent for every other kind.
+	Collection *employeeCollectionWakeView `json:"collection,omitempty"`
 }
 type employeeTaskWakeEntry struct {
 	Seq          int64  `json:"seq"`
@@ -369,7 +372,7 @@ type employeeTaskWakeRun struct {
 func employeeTaskWakeFraming(kind string) string {
 	switch kind {
 	case employeeentry.TaskWakeCollectionReady:
-		return "The inputs this Task was waiting for are now recorded in its ledger."
+		return "Every invited person has answered, or the requester closed the collection early. The authorized answers are in the snapshot's collection section; send the requester one summary of them now."
 	case employeeentry.TaskWakeExecutionFollowUp:
 		return "A background execution of this Task reached a terminal state."
 	case employeeentry.TaskWakeRoutineDecision:
@@ -390,6 +393,22 @@ func clipTaskWakeText(text string, limit int) string {
 		end--
 	}
 	return text[:end] + "…"
+}
+
+// employeeTaskWakeToolsFor: a collection summary is owed to the requester, so
+// a collection.ready wake with a conversation offers reply without stay_quiet.
+func employeeTaskWakeToolsFor(kind string, conversation bool) []employeeloop.Tool {
+	tools := employeeTaskWakeTools(conversation)
+	if kind != employeeentry.TaskWakeCollectionReady || !conversation {
+		return tools
+	}
+	out := tools[:0:0]
+	for _, tool := range tools {
+		if tool.Name != "stay_quiet" {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 // employeeTaskWakeTools offers reply only when the Task has a conversation.
@@ -446,6 +465,11 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if current.LatestRun != nil {
 		snapshot.LatestRun = &employeeTaskWakeRun{State: string(current.LatestRun.State), Result: clipTaskWakeText(current.LatestRun.Result, 4096)}
 	}
+	if wake.Kind == employeeentry.TaskWakeCollectionReady {
+		if snapshot.Collection, err = w.collectionWakeView(ctx, job, wake); err != nil {
+			return employeeSavedInput{}, err
+		}
+	}
 	snapshot.ReturnTarget, snapshot.RecentConversation = "none", string(employeeentry.HistoryNotApplicable)
 	if origin.Anchor.Conversation {
 		snapshot.ReturnTarget, snapshot.RecentConversation = "task_origin_conversation", "attached"
@@ -461,7 +485,7 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	input := employeeSavedInput{TaskWake: &target, Input: employeeloop.Input{
 		Identity:  employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID},
 		FollowUps: []string{"Task wake from the Host (" + wake.Kind + "). " + employeeTaskWakeFraming(wake.Kind) + "\nTask snapshot (data):\n" + string(rendered)},
-	}, Config: employeeloop.Config{Tools: employeeTaskWakeTools(origin.Anchor.Conversation), HistoryPresentation: employeeloop.HistoryPresentationConversationTurnsV1}}
+	}, Config: employeeloop.Config{Tools: employeeTaskWakeToolsFor(wake.Kind, origin.Anchor.Conversation), HistoryPresentation: employeeloop.HistoryPresentationConversationTurnsV1}}
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
@@ -515,6 +539,9 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 		}
 	}
 	input.Config.Persona.Instructions += employeeTaskWakeGuidance
+	if wake.Kind == employeeentry.TaskWakeCollectionReady {
+		input.Config.Persona.Instructions += employeeCollectionWakeGuidance
+	}
 	if voice, e := h.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
 		input.Config.Persona.Tone = voice.ReplyTone
@@ -610,6 +637,19 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 	if saved.Outcome.Kind == employeeloop.Quiet {
 		text = ""
 	}
+	if text == "" && wake.Kind == employeeentry.TaskWakeCollectionReady {
+		// A failed summary turn still owes the requester the answers: render
+		// them deterministically, without another model request.
+		var input employeeSavedInput
+		if json.Unmarshal(job.InputSnapshot, &input) == nil && len(input.Input.FollowUps) == 1 {
+			if _, raw, ok := strings.Cut(input.Input.FollowUps[0], "Task snapshot (data):\n"); ok {
+				var snapshot employeeTaskWakeContext
+				if json.Unmarshal([]byte(raw), &snapshot) == nil {
+					text = employeeCollectionFallbackSummary(snapshot.Collection)
+				}
+			}
+		}
+	}
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
 		if text == "" {
@@ -626,6 +666,11 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		binding, err := w.taskWakeBinding(ctx, tx, job, wake)
 		if err != nil {
 			return err
+		}
+		if wake.Kind == employeeentry.TaskWakeCollectionReady {
+			if err = w.completeCollectionWake(ctx, tx, job, wake, binding.origin, text); err != nil {
+				return err
+			}
 		}
 		in, err := employeeTaskWakeDelivery(ctx, view.Queries, job, binding.origin, registered, text)
 		if err != nil {
