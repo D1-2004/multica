@@ -72,3 +72,21 @@ The WorkPacket now also carries a Host-validated completion-notice policy and
 its exact selected-source quote. The Host's deterministic completion hook adapts
 GawkBot completion delivery to Multica's verified native-file receipts; receipt
 and provider checks remain outside the kernel, with no extra model call.
+
+## Lifecycle v2 (design reuse only, no copied code)
+
+`lifecycle.go` re-implements GawkBot mechanisms from the same fixed commit
+`71e82a1809565281cbd0bf8185d3c125b715d934`; no source text was copied, so no
+symbol carries the Sustainable Use License.
+
+| GawkBot design | Local implementation |
+| --- | --- |
+| `internal/team/broker_lifecycle_transition.go::transitionLifecycleLocked` single chokepoint and closed state enum | `transition`/`lifecycleEdges`: every persisted Task state write in `mutate` is validated against a per-version table with the requesting operation as its cause. Illegal writes return a typed `LifecycleError` before anything is written; v1 rows keep the accepted pre-v2 table. |
+| `office_eval_jobs_live_paths.go` zero-work approve returns a structured 409, never terminal; `office_eval_jobs_task_integrity.go` one done-post per double terminal attempt | `CompleteGoal` returns `not_ready/no_execution_evidence` without a Run of the current goal revision that succeeded or an explicit evidence ref; a source replay returns the same entry, a second source gets `conflict/already_completed`, and a unique index allows one `goal_completed` entry per goal revision. |
+| `broker_tasks_human_note.go` halt gate (a stop blocks completion) | A human stop is final for v2: `CompleteGoal`, `ReadyTask`, `WaitTask`, `StartRun`, `Steer` and `Resume` return `stopped`, inputs never lift it, and open waits close with the stop. |
+| `broker_tasks_lifecycle.go` dependency release only on a real terminal fact | Waits are durable `employee_task_wait` rows resolved only by `ReadyTask` with Host evidence; the Task state is their projection, never a model claim or a TTL. |
+| `governor.go` turns since the last human checkpoint | `autonomous_rounds` counts non-human wakes (`NoteAutonomousRound`, source-deduplicated) and resets on accepted human input. No cap is enforced here. |
+
+Deliberately not ported: in-memory indexes, the unknown-state migration shim
+(PostgreSQL CHECKs reject unknown states instead), review/approval states, and
+the per-process governor pause channel.
