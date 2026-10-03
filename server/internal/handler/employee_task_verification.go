@@ -2,15 +2,21 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/employeeverification"
 	"github.com/multica-ai/multica/server/internal/scene"
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -25,11 +31,129 @@ func (h *Handler) employeeVerifier() (*employeeverification.Verifier, error) {
 	if !ok {
 		return nil, employeeverification.ErrInvalid
 	}
+	evidence := employeeverification.PGEvidence{Reader: h.readEmployeeVerificationArtifact}
+	if provider := h.employeeVerificationProvider(); provider != nil {
+		evidence.Files = employeeVerificationFiles{h: h, provider: provider}
+	}
 	return &employeeverification.Verifier{
 		DB:          database,
-		Evidence:    employeeverification.PGEvidence{Reader: h.readEmployeeVerificationArtifact},
+		Evidence:    evidence,
 		TenantFence: employeeVerificationTenantFence,
 	}, nil
+}
+
+// employeeVerificationProvider reads provider messages as the agent: the
+// worker's injected provider, else the DingTalk response service.
+func (h *Handler) employeeVerificationProvider() employeeResourceProvider {
+	if h.EmployeeSceneWorker != nil && h.EmployeeSceneWorker.ResourceProvider != nil {
+		return h.EmployeeSceneWorker.ResourceProvider
+	}
+	if h.DingTalkResponses != nil {
+		return h.DingTalkResponses
+	}
+	return nil
+}
+
+const employeeVerificationReadTimeout = 15 * time.Second
+
+// employeeVerificationFiles downloads the own file resources of a message a
+// Run delivered through DingTalk (G1.1). Reads use D1's provider path as the
+// agent's bound DWS identity, outside every database lock.
+type employeeVerificationFiles struct {
+	h        *Handler
+	provider employeeResourceProvider
+}
+
+func (f employeeVerificationFiles) ReadDeliveredFiles(ctx context.Context, scope employeetask.Scope, taskID, _ string, queueTaskID string, m employeeverification.DeliveredMessage, maxBytes int64) ([]employeeverification.DeliveredFile, error) {
+	in, err := f.h.employeeVerificationActionInput(ctx, scope, taskID, queueTaskID)
+	if err != nil {
+		return nil, err
+	}
+	// The receipt froze the sending identity and destination; a different
+	// current identity or scene target cannot read the message as its sender.
+	if m.DWSUID != in.DWSUID {
+		return []employeeverification.DeliveredFile{{Unreadable: "identity_changed"}}, nil
+	}
+	if m.ConversationID != in.ConversationID {
+		return []employeeverification.DeliveredFile{{Unreadable: "conversation_changed"}}, nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, employeeVerificationReadTimeout)
+	defer cancel()
+	message, err := f.provider.ReadMessageResources(readCtx, in, m.ConversationID, m.MessageID)
+	if errors.Is(err, dwsclient.ErrMessageUnverified) {
+		return []employeeverification.DeliveredFile{{Unreadable: "message_unverified"}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []employeeverification.DeliveredFile
+	for _, r := range message.Resources {
+		if r.Type != "file" || r.IDType != "fileId" {
+			continue
+		}
+		file, err := f.provider.DownloadMessageFile(readCtx, in, r.ID, maxBytes)
+		if errors.Is(err, dwsclient.ErrMessageFileTooLarge) {
+			out = append(out, employeeverification.DeliveredFile{FileID: r.ID, Unreadable: "file_too_large"})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, employeeverification.DeliveredFile{FileID: r.ID, Name: file.Name, Data: file.Data})
+	}
+	return out, nil
+}
+
+// employeeVerificationActionInput binds a provider read to the Run's own
+// execution: the queue must be this Task's Employee Direct execution, the
+// scene must still serve the tenant, and the identity and DWS gateway come
+// from the agent binding and the admitted dispatch, never from the receipt.
+func (h *Handler) employeeVerificationActionInput(ctx context.Context, scope employeetask.Scope, taskID, queueTaskID string) (dingtalkresponse.ActionInput, error) {
+	var in dingtalkresponse.ActionInput
+	queue, err := h.Queries.GetAgentTask(ctx, parseUUID(queueTaskID))
+	if err != nil {
+		return in, err
+	}
+	direct, ok := service.ParseDirectTaskContext(queue)
+	if !ok || direct.EmployeeTaskID != taskID || direct.WorkspaceID != scope.WorkspaceID || uuidToString(queue.AgentID) != scope.AgentID {
+		return in, errors.New("employee verification: execution does not belong to the task")
+	}
+	if err = employeeVerificationTenantFence(ctx, h.DB, scope); err != nil {
+		return in, err
+	}
+	owner := scene.Owner{WorkspaceID: parseUUID(scope.WorkspaceID), AgentID: parseUUID(scope.AgentID)}
+	registered, err := scene.Get(ctx, h.Queries, owner, parseUUID(scope.Scene.SceneID))
+	if err != nil {
+		return in, err
+	}
+	identity, err := h.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: owner.WorkspaceID, AgentID: owner.AgentID})
+	if err != nil {
+		return in, fmt.Errorf("employee verification identity: %w", err)
+	}
+	environment := ""
+	var meta struct {
+		JobID string `json:"employee_job_id"`
+	}
+	if json.Unmarshal(queue.Context, &meta) == nil && meta.JobID != "" {
+		var items []employeeentry.Item
+		err = h.DB.QueryRow(ctx, `SELECT items FROM employee_scene_job WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid`, meta.JobID, scope.WorkspaceID, scope.AgentID).Scan(&items)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return in, err
+		}
+		if len(items) > 0 {
+			var env employeeDispatchEnvelope
+			if err = json.Unmarshal(items[0].Payload, &env); err != nil {
+				return in, err
+			}
+			if env.Command.ExternalIdentity.DWS != nil && env.Command.ExternalIdentity.DWS.UID != identity.DwsUid {
+				return in, errors.New("employee verification: agent identity changed since dispatch")
+			}
+			environment = commandDWSEnvironment(env.Command)
+		}
+	}
+	return dingtalkresponse.ActionInput{WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, TaskID: queueTaskID, RequestID: "employee-verification:" + queueTaskID,
+		DWSUID: identity.DwsUid, DWSOrgID: scope.TenantOrgID, SceneID: scope.Scene.SceneID, ConversationID: registered.ExternalSceneID,
+		IsGroup: registered.SceneKind == scene.KindGroup, DWSEnvironment: environment}, nil
 }
 
 // VerifyEmployeeRun checks one succeeded Run against its Task's active
