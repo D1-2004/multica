@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/employeedirectory"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/forwarding"
@@ -410,6 +411,14 @@ type Handler struct {
 	// supervisor/department/title and group member rosters). Nil leaves
 	// those facts unread.
 	EmployeeDirectory employeedirectory.Directory
+	// EmployeeMemoryObserveReady reports whether every live replica supports
+	// EmployeeMemoryObserveMarker: only then is the all-group-messages
+	// observation subscribed and proactive wakes admitted. Nil keeps both off.
+	EmployeeMemoryObserveReady func(context.Context) bool
+	// EmployeeSceneMessagesObserved runs in the transaction that stored new
+	// human group transcript rows (the scene digest marks the scene dirty).
+	// Nil does nothing.
+	EmployeeSceneMessagesObserved func(ctx context.Context, tx pgx.Tx, key employeeentry.Scope, humanRows int, lastHumanAt time.Time) error
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.
