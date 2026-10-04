@@ -148,3 +148,29 @@
 改号补件验证结果：新建专用本地PostgreSQL `multica_once_renumber_20261004`，实际packaged migrator从空库初始化到10060/10061/10062成功；已有本地库重放也成功。`TestMigrationOrderCrossesFiveDigitBoundary` 与 `TestMigrationOrderPreservesExistingFourDigitSequence` 通过，up跨4/5位数字与down逆序、原<10000序列均覆盖。新版数据库上handler/service/scheduler一次性定向回归、migrator alias校验、Go vet migrations、autopilot专项sqlc --check、候选6case结构与diff --check通过。未执行真实IM或共享部署。
 
 完整交付由统一发布负责人采用base582c到最终source SHA的净差分或等价语义集成；不能在A2UI已有旧编号的目标里单取769d406a8f后提前执行migration。其他全schema专项生成器若仍用filename lexical排序，应在统一工具链按相同numeric版本合同对齐；本次未借机修改不相关生成器或修复既有SQL歧义。
+
+## 真实入口失败后的直接修复（用户明确要求）
+
+当版source36a、统一reader22已经部署，但冬翔17:39明确5分钟后讲笑话，被前台旧历史“不需要定时任务”误要确认，再编译成sleep300且禁止创建timer；实际原请求到IM用了377秒。trace/task精确证据见本机ONCE-PRE-20261004/qwen-dws-five-minute-diagnostic，既有失败不清历史。另独立3m once准时admit（3秒），后续Run却反复探查平台投递/格式，超120秒；没有sleep命令，不能混成planner迟到。
+
+用户要求直接修改。本波分支fix/once-foreground-contract-20261004基于实际source36a18c03c2cc8aefac4fbe9e5c39f524b5aa6628，保护统一release WIP，仍由发布和验收统一预发。本波只修server能力/派发与执行合同，不改schema、Task/receipt绑定、输出协议或Runtime镜像，不新增平行timer。
+
+- 前台明确once/run_at可用，15分钟下限只属于周期Cron；当前明确5分钟请求不是“现在还是以后”的歧义。旧单轮不要定时仅约束原轮，不变成永久禁止；当前同一请求人的明确一次性要求优先，仍保留权限与持续silence合同。
+- 通过dispatch_task交创建工作，prompt指定scene_routine_create kind=once与原消息occurredAt锚定，不替用户发明sleep/禁创建。补充确认保留原业务请求的时间与上下文，不以确认/排队/工具开始重新起算；authorization source仍是当前绑定来源，早先原话/time仅核实后的引用。
+- 创建与到点是不同阶段；已到点packet立即执行当前业务动作，不复演原创建或再等待。原source与材料保留为历史数据；原创建Run的输出格式不是新Run的当前合同。
+- claim准确描述当前结果consumer。Human结构化Direct按现有tag-round-result/v1返回JSON由Host解析summary；legacy routine消费者要求原结果文本，不能借历史packet引入不支持的JSON合同；Host是结果发送者，禁止为简单提醒探索CLI/binary/投递内部机制。
+- 本地定向合同/数据库校验后交固定SHA；由统一发布生效再复测原DM路径与short-due，不以mock宣称成功。维持45s/120s分面时间门、原场域History/checkpoint，只标受影响步骤。评测补当前指令与旧历史作用域反例，维持已有case身份/P0总数。
+
+本波修复已完成代码与本地验证：前台directory/dispatch_task共用once合同（原time/current授权/旧单轮作用域/区分待设置与已持久资源）；到点packet与claim结果消费者明确，来源原文/材料/refs不删。legacy routine plain结果不继承原Human创建packet的tag控制envelope；ordinary结构化Direct按当前输出合同交JSON，实际decoder与schema未改。
+
+新增canonical `office-cron-once-history-scope` 和 `office-cron-once-result-contract`，精确关联原cron-office/G15，既有145身份保留、P0仍20、当前147例。定义校验仅结构/来源/引用，不是模型行为通过。真实原失败与现场timing/IM/API/LF记录保留在ONCE-PRE-20261004；原开始测试的状态只到checkpoint。
+
+专用本地PG更新当前source迁移后，前台assembled contract、due packet、Direct/routine输出合同及原routine frozen claim/outbox回归通过；Go vet handler/service和diff检查通过；独立审查一次性路径无新增阻断。审查建议未来ordinary Direct可按现有queue marker进一步显式选输出，目前仅纠正claim与现合同矛盾，未新增协议或借历史授予格式。
+
+统一发布负责人最新传达用户暂停原验收、当前只汇总预发关联分支到feat/tag-multitenant（排除public-forwarding-ingress）并部署；本波未提交WIP不带入那轮。现先交固定SHA，不自行共享发布/重触发真实用例，待允许后按原checkpoint复测原DM与short-due。真实模型遵守和IM验收仍未签通过。
+
+## CR !31 语义冲突处理
+
+用户要求解决现有CR30322834的冲突，不重复通知发布协调。源修复仅重放本会话的单笔addfb变更到最新aone/feat/tag-multitenant（1938a059），不导入旧base36中被目标分支排除的其他历史。冲突为employee_run_claim与对应test：目标e341收敛平台引导并保留verified receipts/文件路径及progress边界，本修复区分当前Human JSON、legacy routine原文本及历史创建格式作用域。合并后的Output保持简短，保留双方行为合同；未恢复稳定Direct平台引导或通用Multica目录。docs对当前结构化结果与旧原文本消费者同步说明，原来源及plain business JSON边界不变。
+
+冲突后验证：定向handler/service回归通过。目标Direct已移除通用平台开场，原routine frozen claim测试仍断言旧前缀，现更新为新Work packet开头，继续核原冻结内容/不混新指令与唯一notice owner；未通过放宽语义绕过真实绑定检查。当前定义148例、既有Goal结果/首次询问用例均保留，P0仍20。MR源更新用明确lease防止覆盖其他人写入，同一CR继续，不重复通知发布协调，也不执行目标分支合并或部署。
