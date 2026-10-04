@@ -16,10 +16,11 @@ type sandboxDeliveryReader interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
-// SandboxDeliveryInTx reads only server-verified receipts in the exact task,
+// SandboxDeliveryInTx reads through a transaction or pool, using only
+// server-verified receipts in the exact task,
 // sending identity and destination. Duplicate shim/SDK receipts retain the
 // existing delivered-first ordering; another conversation never qualifies.
-func (s *Service) SandboxDeliveryInTx(ctx context.Context, tx pgx.Tx, in ActionInput) (SandboxDelivery, error) {
+func (s *Service) SandboxDeliveryInTx(ctx context.Context, tx DBTX, in ActionInput) (SandboxDelivery, error) {
 	return sandboxDelivery(ctx, tx, in)
 }
 func sandboxDelivery(ctx context.Context, db sandboxDeliveryReader, in ActionInput) (SandboxDelivery, error) {

@@ -96,3 +96,14 @@
 - `service/employee_webhook_task.go::compileWebhookRoutinePacket` and `handler/employee_run_claim.go::employeeRoutineOutputInstruction`: frozen work packet and claim-time business-result guidance; Host owns delivery.
 - `handler/scene_routines.go::enqueueRoutineEndNotice`, `employeeRoutineResultText`: frozen Employee automation origin selects a result-only reply; failure/cancel/empty output retain explicit explanation. Routine outbox IDs and terminal savepoints stay unchanged.
 - `handler/employee_webhook_task_test.go`, `employee_routine_notice_test.go`: PG admission/claim/completion/replay and result-format boundaries; `office-hook-result-only-delivery` / G16 and `office-cron-result-only-delivery` / G15 defines real IM acceptance, not claimed by local tests.
+
+## Same-scene native routine delivery
+
+- `handler/employee_routine_delivery_guard.go::beforeEmployeeRoutineNoticeSend`: before-submit receipt check for Employee end outbox; exact task/identity/conversation, late receipt, pending/unknown/failure and durable suppression.
+- `service/dingtalkresponse/sandbox_delivery.go::SandboxDeliveryInTx`: same authoritative receipt projection through transaction or pool; another target or sender cannot qualify.
+- `service/dingtalkresponse/worker.go::send`: existing SuppressSendError cancellation, deferred reload and unknown-query-only recovery. No new sender or protocol.
+- `handler/employee_routine_delivery_guard_test.go`: scoped receipt negatives, late suppression without provider send and already-submitted query-only recovery.
+
+- `handler/employee_routine_send_receipt.go`: Postgres-sealed automation receipt scope shared by claim and task-token callback, current tenant/identity checked.
+- `handler/daemon.go`, `employee_run_claim.go`, `dingtalk_send_receipt.go`: existing managed policy enables shim pre-send intents, strict receipt admission and all-live employee-loop:24 deferral.
+- `handler/employee_routine_send_receipt_test.go`: authenticated endpoint/producer/verified receipt boundary, not a direct INSERT substitute.

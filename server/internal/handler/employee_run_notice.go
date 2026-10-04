@@ -579,6 +579,9 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 	if h == nil || h.DB == nil || h.TxStarter == nil {
 		return errors.New("employee notice authority is unavailable")
 	}
+	if in.RoutineRunID != "" {
+		return h.beforeEmployeeRoutineNoticeSend(ctx, in)
+	}
 	var runID, workspaceID, state, reason, body string
 	var recorded employeeNoticeBinding
 	err := h.DB.QueryRow(ctx, `SELECT run_id::text,workspace_id::text,state,reason,body,agent_id::text,scene_id::text,task_id::text,queue_task_id::text,COALESCE(job_id::text,''),result_state FROM employee_run_notice WHERE action_id=$1`, in.ActionID).Scan(&runID, &workspaceID, &state, &reason, &body, &recorded.Scope.AgentID, &recorded.Scope.Scene.SceneID, &recorded.TaskID, &recorded.QueueID, &recorded.JobID, &recorded.ResultState)

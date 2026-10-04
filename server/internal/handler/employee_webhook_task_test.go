@@ -117,7 +117,11 @@ func (x *employeeWebhookRoutineFixture) count(t *testing.T, sql string, args ...
 // result notice is the only sender, without an admission announcement.
 func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 	x := newEmployeeWebhookRoutineFixture(t, "WEBHOOK_ROUTINE_V1: report the deploy marker.")
+	prepareNumericRoutineSendIdentity(t, x.f, &x.a)
 	f, ctx := x.f, context.Background()
+	previousWorker := testHandler.EmployeeSceneWorker
+	testHandler.EmployeeSceneWorker = f.h.EmployeeSceneWorker
+	t.Cleanup(func() { testHandler.EmployeeSceneWorker = previousWorker })
 	previousResponses := testHandler.DingTalkResponses
 	testHandler.DingTalkResponses = f.h.DingTalkResponses
 	t.Cleanup(func() { testHandler.DingTalkResponses = previousResponses })
@@ -187,7 +191,7 @@ func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 		t.Fatal(claimed, err)
 	}
 	req := newDaemonTokenRequest(http.MethodPost, "/", nil, testWorkspaceID, x.daemonID)
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1+","+protocol.DWSMessagePolicyCapability)
 	resp, _, _, _, failure := testHandler.buildClaimedTaskResponse(req, claimed, x.runtime, "", uuidToString(x.runtime.ID), testWorkspaceID)
 	if failure != nil {
 		t.Fatal(failure.message)

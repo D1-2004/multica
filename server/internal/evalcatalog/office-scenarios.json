@@ -2960,6 +2960,31 @@
           ],
           "origin": "defined",
           "sourceCases": []
+        },
+        {
+          "id": "office-cron-native-same-scene-delivery",
+          "title": "例行任务已在本场域交付，不重复发送送达总结",
+          "roles": [
+            "请求者：授权测试群成员，只控制本人测试例行任务",
+            "执行者：Employee模式员工，在当前测试群用真实消息工具发送安全无@验收内容",
+            "观察者：获准完整读取该测试场域IM、Run/queue与模型、provider回执"
+          ],
+          "verifies": [
+            "同routine Run实际发送到当前场域且服务端确认送达后，只保留目标消息，没有额外“已发送/delivered”汇报。",
+            "另一群/另一任务/另一发送身份的回执不能抑制当前结果；pending晚回执、unknown或failed不能被模型自述升级为送达，已经提交的Host outbox只查询不重发。"
+          ],
+          "method": [
+            "使用专用测试routine实际向原场域发送无副作用无@文本，保留原重复汇报反例；等Run终态后独立全窗IM读回、LF实际工具和server receipt，核唯一有效输出及持久suppressed end。",
+            "隔离晚回执和未知/失败provider条件，检查unsubmitted end延迟或说明、真实确认后只抑制同task同身份同CID；已提交未知outbox恢复必须query-only。缺内表API或真人条件时分别标证据缺口，不把局部mock签为真实通过。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-05/routine-same-scene-delivery.md",
+            "server/internal/handler/employee_routine_delivery_guard.go",
+            "server/internal/handler/employee_routine_delivery_guard_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "collaboration"
