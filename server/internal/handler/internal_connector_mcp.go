@@ -382,7 +382,11 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	}
 	denied := ""
 	if request.Method == "tools/call" && c.CatalogSlug == "github" {
-		denied = githubToolBlockReason(params.Name, h.githubGrantView(r.Context(), c))
+		access := h.githubGrantView(r.Context(), c)
+		denied = githubOwnerBlockReason(params.Name, params.Arguments, access)
+		if denied == "" {
+			denied = githubToolBlockReason(params.Name, access)
+		}
 	}
 	if err = h.connectorAudit(r, *c, task, agent, request.Method, params.Name, "forwarded"); err != nil {
 		h.writeMulticaMCPToolError(w, request.ID, "connector audit unavailable")
@@ -396,9 +400,12 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	_ = http.NewResponseController(w).Flush()
 	var result any
+	agentRefusal := false
 	if denied != "" {
-		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: denied}}}
+		// Leave isError false. pi-mcp-extension discards isError text.
+		result = githubAgentRefusal(denied)
 		err = nil
+		agentRefusal = true
 	} else {
 		result, err = h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
 	}
@@ -416,12 +423,15 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	}
 	if c.CatalogSlug == "github" && request.Method == "tools/call" && err == nil {
 		if toolResult, ok := result.(multicaMCPToolResult); ok && toolResult.IsError && githubUpstreamPermissionFailure(toolResult) {
-			if message := githubUpstreamPermissionMessage(params.Name); message != "" {
-				result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: message}}}
+			if message := githubUpstreamPermissionMessage(params.Name, githubArgumentOwner(params.Arguments)); message != "" {
+				result = githubAgentRefusal(message)
+				agentRefusal = true
 			}
 		}
 	}
-	if toolResult, ok := result.(multicaMCPToolResult); ok && toolResult.IsError && err == nil {
+	if agentRefusal {
+		outcome = "tool_error"
+	} else if toolResult, ok := result.(multicaMCPToolResult); ok && toolResult.IsError && err == nil {
 		outcome = "tool_error"
 	}
 	if auditErr := h.connectorAudit(r, *c, task, agent, request.Method, params.Name, outcome); auditErr != nil {

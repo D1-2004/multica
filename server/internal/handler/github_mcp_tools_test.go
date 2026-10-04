@@ -159,7 +159,45 @@ func TestLoadGitHubGrantCeiling(t *testing.T) {
 	if access.kind != githubGrantApp || access.ceiling["contents"] != "read" || access.ceiling["issues"] != "" {
 		t.Fatalf("access %+v", access)
 	}
+	if len(access.installs) != 1 || access.installs[0].login != "xdxer" {
+		t.Fatalf("installs %+v", access.installs)
+	}
 	if reason := githubToolBlockReason("push_files", access); !strings.Contains(reason, "Contents 写") {
 		t.Fatalf("reason %s", reason)
+	}
+}
+
+func TestGitHubOwnerBlockNamesTheInstallation(t *testing.T) {
+	access := githubAccess{
+		kind: githubGrantApp,
+		ceiling: map[string]string{
+			"contents": "write", "metadata": "read", "pull_requests": "write", "issues": "write",
+		},
+		installs: []githubInstallGrant{
+			{login: "xdxer", permissions: map[string]string{"contents": "write", "metadata": "read", "pull_requests": "write", "issues": "write"}},
+			{login: "dingtalk-fde", permissions: map[string]string{"contents": "read", "metadata": "read", "pull_requests": "read"}},
+		},
+	}
+	approved := githubOwnerBlockReason("create_branch", []byte(`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"e2e"}`), access)
+	if approved != "" {
+		t.Fatalf("approved install blocked: %s", approved)
+	}
+	denied := githubOwnerBlockReason("create_branch", []byte(`{"owner":"DingTalk-FDE","repo":"dingtalk-workforce-harness"}`), access)
+	if !strings.Contains(denied, "@dingtalk-fde") || !strings.Contains(denied, "Contents 写") || !strings.Contains(denied, "重新批准") {
+		t.Fatalf("unapproved install reason = %s", denied)
+	}
+	if githubOwnerBlockReason("get_file_contents", []byte(`{"owner":"dingtalk-fde","path":"README.md"}`), access) != "" {
+		t.Fatal("read on an unapproved install should stay allowed")
+	}
+	if githubOwnerBlockReason("create_branch", []byte(`{"repo":"dingtalk-workforce-harness"}`), access) != "" {
+		t.Fatal("missing owner must fall through to the ceiling check")
+	}
+	refusal := githubAgentRefusal(denied)
+	if refusal.IsError || len(refusal.Content) != 1 || refusal.Content[0].Text != denied {
+		t.Fatalf("refusal must keep the text and leave isError false: %+v", refusal)
+	}
+	upstream := githubUpstreamPermissionMessage("create_branch", "dingtalk-fde")
+	if !strings.Contains(upstream, "@dingtalk-fde") || !strings.Contains(upstream, "Contents 写") {
+		t.Fatalf("upstream message = %s", upstream)
 	}
 }
