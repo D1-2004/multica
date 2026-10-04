@@ -64,7 +64,9 @@ import (
 // immutable routine source and atomic once admission; old 21 lacks once.
 // Marker 23 preserves frozen dialogue in new dispatch packets and combines
 // current-message intent with recent confirmation context and person capability fixes.
-const EmployeeLoopReplicaMarker = "[employee-loop:23]"
+// Marker 24 admits authenticated routine send receipts and suppresses same-scene
+// end replies from verified delivery. Routine claims wait for all live readers.
+const EmployeeLoopReplicaMarker = "[employee-loop:24]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

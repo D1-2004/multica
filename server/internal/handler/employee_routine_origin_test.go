@@ -140,7 +140,11 @@ func (x *employeeRoutineHandlerFixture) count(t *testing.T, sql string, args ...
 // completion and every background reader.
 func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T) {
 	x := newEmployeeRoutineHandlerFixture(t, "FROZEN_ROUTINE_V1: list yesterday's open questions.")
+	prepareNumericRoutineSendIdentity(t, x.f, &x.a)
 	f, ctx := x.f, context.Background()
+	previousWorker := testHandler.EmployeeSceneWorker
+	testHandler.EmployeeSceneWorker = f.h.EmployeeSceneWorker
+	t.Cleanup(func() { testHandler.EmployeeSceneWorker = previousWorker })
 	previousResponses := testHandler.DingTalkResponses
 	testHandler.DingTalkResponses = f.h.DingTalkResponses
 	t.Cleanup(func() { testHandler.DingTalkResponses = previousResponses })
@@ -174,7 +178,7 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 	}
 	claimed = x.claimExact(t, auth, run.TaskID)
 	req := newDaemonTokenRequest(http.MethodPost, "/", nil, testWorkspaceID, x.daemonID)
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1+","+protocol.DWSMessagePolicyCapability)
 	resp, _, _, _, failure := testHandler.buildClaimedTaskResponse(req, claimed, x.runtime, "", uuidToString(x.runtime.ID), testWorkspaceID)
 	if failure != nil {
 		t.Fatal(failure.message)

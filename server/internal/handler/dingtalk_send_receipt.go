@@ -36,11 +36,16 @@ func (h *Handler) RecordDingTalkSendReceipt(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	routineInput, routine, routineErr := h.employeeRoutineSendInput(r.Context(), task)
+	if routineErr != nil {
+		writeError(w, http.StatusConflict, "routine DingTalk receipt scope is unavailable")
+		return
+	}
 	stored, present := parsePersistedDispatchContext(task.Context)
-	if !present || !managedDingTalkResponse(DispatchCommand{
+	if !routine && (!present || !managedDingTalkResponse(DispatchCommand{
 		ResponsePolicy: stored.ResponsePolicy, Source: stored.Source, Outbound: stored.Outbound,
 		Event: DispatchEvent{Domain: stored.Domain, Type: stored.Type}, Control: stored.Control,
-	}) {
+	})) {
 		writeError(w, http.StatusForbidden, "task does not have a managed DingTalk response policy")
 		return
 	}
@@ -62,7 +67,10 @@ func (h *Handler) RecordDingTalkSendReceipt(w http.ResponseWriter, r *http.Reque
 		SenderOpenDingTalkID: firstNonEmpty(stored.EventData.Sender.OpenDingTalkID, stored.EventData.Sender.SenderOpenDingTalkID),
 		IsGroup:              strings.EqualFold(stored.EventData.Conversation.Type, "group"),
 	}
-	if stored.ExternalIdentity != nil && stored.ExternalIdentity.DWS != nil {
+	if routine {
+		in = routineInput
+	}
+	if !routine && stored.ExternalIdentity != nil && stored.ExternalIdentity.DWS != nil {
 		in.DWSUID, in.DWSOrgID = stored.ExternalIdentity.DWS.UID, stored.ExternalIdentity.DWS.OrgID
 	}
 	if in.DWSUID == "" || in.DWSOrgID == "" {

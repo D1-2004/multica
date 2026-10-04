@@ -41,6 +41,12 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 	}
 	resp.DirectTaskPrompt = employeeDirectPrompt(c.Prompt)
 	if c.AutomationOrigin != nil {
+		// The receipt producer must not run while an older replica would reject
+		// its routine task-token callback. Existing Direct deferral keeps this
+		// accepted occurrence intact until every reader is upgraded.
+		if err := h.EmployeeRoutineReady(r.Context()); err != nil {
+			return &claimBuildFailure{outcome: "error_employee_routine_receipt_readers", status: http.StatusServiceUnavailable, message: "Employee routine send receipt readers are not ready"}
+		}
 		// A routine-origin execution runs only the frozen packet of its
 		// verified receipt. The current autopilot instructions never apply.
 		origin, err := service.LoadAutomationOrigin(r.Context(), h.DB, task)
@@ -82,7 +88,7 @@ func employeeDirectPrompt(compiled string) string {
 const employeeRoutineOutputInstruction = `## Output
 
 Current routine result contract: return plain final assistant text with the concise result or actionable failure. OriginalWorkPacket may quote tag-round-result/v1, summary and choice from its historical creation run; they are not this occurrence's output protocol. Do not wrap it in a tag-round-result/v1 control envelope or add choice. This does not prohibit business JSON data or JSON files explicitly requested by the current routine.
-The Host owns terminal delivery and any configured notices; Employee routine occurrences (scheduled, one-shot, webhook or manually started) have no start notice. Final text should be the business result or an actionable failure, without announcing execution or reporting elapsed time. Returning the result completes your part; do not send it to the routine's scene yourself or inspect CLI help, binaries, platform internals or transport formats to discover the Host's sending mechanism.
+The Host owns terminal delivery and any configured notices; Employee routine occurrences (scheduled, one-shot, webhook or manually started) have no start notice. Final text should be the business result or an actionable failure, without announcing execution or reporting elapsed time. Returning the result completes your part. If the current routine explicitly asks to send or mention a message in this same scene, use the authorized messaging tool once and verify its receipt; do not add a duplicate sent/delivered acknowledgement. The Host suppresses a redundant final reply only after verifying same-scene delivery. Otherwise return the requested result for the Host to send. Do not inspect CLI help, binaries, platform internals or transport formats to discover the Host's sending mechanism.
 Deliver files or messages to other destinations only when explicitly requested by the routine. Only verified receipts prove file delivery; local paths are not delivered files.`
 
 func employeeAutomationPrompt(compiled string, origin service.AutomationOrigin) string {

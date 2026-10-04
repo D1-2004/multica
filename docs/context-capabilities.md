@@ -1334,6 +1334,16 @@ arrives. There are no org-level or person-level routines.
 - **Notices.** Employee Direct routine occurrences skip the start announcement
   and deliver only the final business result; timing remains in run history.
   Failures, cancellation and missing output retain an explicit explanation.
+  If this Employee occurrence already delivered its work through a verified
+  sandbox send to the same conversation, the Host suppresses the redundant
+  end reply. Exact task and sending identity must match; sends elsewhere or
+  unconfirmed/failed sends do not establish this exemption. Pending receipts
+  defer a never-submitted notice until their outcome is known. The existing
+  dws_message_policy_v1 capability must be present; a verified Employee
+  automation claim enables its managed send-intent/receipt reporting. The
+  task-token callback derives its scope from the committed automation graph,
+  not the receipt body. New routine claims wait for every live replica to
+  advertise [employee-loop:24] so rolling callbacks cannot hit an old rejecter.
   Legacy Coordinator routines still post a start notice when the task is queued
   and an end notice from the task's terminal transaction, under a savepoint
   so a failed notice never aborts the transition (the clipped final
