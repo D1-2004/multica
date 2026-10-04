@@ -26,6 +26,7 @@ type employeeToolRecord struct {
 	Failure       string                   `json:"failure,omitempty"`
 	DeliveryReply string                   `json:"delivery_reply,omitempty"`
 	TaskRead      *employeeCurrentTaskRead `json:"task_read,omitempty"`
+	TaskDiscovery *employeeTaskDiscovery   `json:"task_discovery,omitempty"`
 	// Refused marks a Failure the Host refused before any effect, inside the
 	// journal transaction; the model may correct it like a pre-journal refusal.
 	// Collection refusals (errEmployeeCollectionRefused) count as refused.
@@ -191,6 +192,11 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			return h.firstFeedbackReplay(ctx, tx, source, call, raw)
 		}
 	}
+	if call.Name == "find_tasks" {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.discoveryReplay(ctx, tx, source, call, raw)
+		}
+	}
 	if isEmployeeMemoryTool(call.Name) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.memoryReplay(ctx, tx, call, raw)
@@ -211,6 +217,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		var result employeeloop.ToolResult
 		var deliveryReply string
 		var taskRead *employeeCurrentTaskRead
+		var taskDiscovery *employeeTaskDiscovery
 		var err error
 		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || isEmployeeStopTool(call.Name) || call.Name == "first_feedback" {
 			journalObservation = observation
@@ -235,6 +242,8 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 					_ = sp.Rollback(ctx)
 				}
 			}
+		case "find_tasks":
+			result, taskDiscovery, err = h.findTasks(ctx, tx, source, call)
 		case "set_scene_participation":
 			result, err = h.setParticipation(ctx, tx, source, env, call)
 		case "stay_quiet":
@@ -316,7 +325,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		default:
 			err = errors.New("employee tool is not registered")
 		}
-		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply, TaskRead: taskRead}
+		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply, TaskRead: taskRead, TaskDiscovery: taskDiscovery}
 		if err != nil {
 			if call.Name == "continue_task" {
 				record.Result = employeeContinuationRefusalResult(err)

@@ -80,6 +80,9 @@ type EmployeeSceneWorker struct {
 	// MemoryToolsReady reports whether every live replica supports
 	// EmployeeMemoryReplicaMarker; nil keeps new inputs on memory tools v1.
 	MemoryToolsReady func(context.Context) (bool, error)
+	// TaskDiscoveryReady gates new demand-driven task discovery inputs. Nil
+	// retains legacy candidate snapshots; frozen inputs are never upgraded.
+	TaskDiscoveryReady func(context.Context) (bool, error)
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -587,6 +590,12 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: w.newInputTools(ctx)}}
 	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
+	for _, tool := range input.Config.Tools {
+		if tool.Name == "find_tasks" {
+			input.Config.Persona.DecisionRules = employeeTaskDecisionRules
+			break
+		}
+	}
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
@@ -601,7 +610,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		input.ModelRoute = &plan
 		input.Config.Model = plan.Candidates[0].Model
 	}
-	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
+	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasksForInput(ctx, job, envelopes, input.Config.Persona.DecisionRules != "")
 	if err != nil {
 		return employeeSavedInput{}, err
 	}

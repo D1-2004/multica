@@ -52,6 +52,9 @@ func (h *employeeSceneHost) steer(ctx context.Context, tx pgx.Tx, source employe
 		if err != nil {
 			return employeeloop.ToolResult{}, err
 		}
+		if binding.SharedReadOnly {
+			return employeeloop.ToolResult{}, errors.New("shared_read_only task cannot be steered")
+		}
 		explicit = binding.TaskID
 	}
 	if source.Message.Reaction != nil || env.Command.Continuation != nil {

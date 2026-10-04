@@ -71,6 +71,9 @@ type Input struct {
 // Persona contains trusted employee configuration, separate from conversation data.
 type Persona struct {
 	Name, Personality, Tone string
+	// DecisionRules is an optional trusted, front-loaded decision contract.
+	// Empty legacy snapshots keep their original prompt bytes.
+	DecisionRules string `json:"DecisionRules,omitempty"`
 	// Instructions contains trusted configured duties and business constraints.
 	// It does not grant Host permissions or capabilities.
 	Instructions string
