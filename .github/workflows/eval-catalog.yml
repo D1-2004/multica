@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'server/internal/evalcatalog/**'
+      - 'server/internal/evalreport/**'
+      - 'server/internal/handler/eval_reports*'
+      - 'server/migrations/*eval_report*'
+      - 'scripts/submit-eval-report.py'
       - 'server/cmd/evalcatalog/**'
       - 'server/internal/handler/*eval*'
       - 'apps/web/app/evals/**'
@@ -24,6 +28,10 @@ on:
   push:
     paths:
       - 'server/internal/evalcatalog/**'
+      - 'server/internal/evalreport/**'
+      - 'server/internal/handler/eval_reports*'
+      - 'server/migrations/*eval_report*'
+      - 'scripts/submit-eval-report.py'
       - 'server/cmd/evalcatalog/**'
       - 'server/internal/handler/*eval*'
       - 'apps/web/app/evals/**'

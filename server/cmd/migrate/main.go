@@ -118,6 +118,9 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"9926_employee_task_input_source_idx":      cleanupInvalidConcurrentIndexHook("employee_task_input_source_idx"),
 	"9927_employee_task_input_version_idx":     cleanupInvalidConcurrentIndexHook("employee_task_input_version_idx"),
 	"9928_employee_task_ready_intent_idx":      cleanupInvalidConcurrentIndexHook("employee_task_ready_intent_idx"),
+	"10021_eval_report_id_idx":                 cleanupInvalidConcurrentIndexHook("eval_report_id_idx"),
+	"10022_eval_report_run_idx":                cleanupInvalidConcurrentIndexHook("eval_report_run_idx"),
+	"10023_eval_report_workspace_time_idx":     cleanupInvalidConcurrentIndexHook("eval_report_workspace_time_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

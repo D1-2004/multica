@@ -15,7 +15,7 @@ func main() {
 	flag.Parse()
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           evalcatalog.NewHandler(),
+		Handler:           evalcatalog.NewHandler(nil),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("evaluation catalog: http://%s/api/evals", *listen)

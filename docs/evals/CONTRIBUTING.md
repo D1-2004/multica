@@ -4,6 +4,8 @@
 
 当前页面读取 `spec.json`、`p0-golden.json` 和 `office-scenarios.json`。SPEC 只表达员工的行为要求；EVALS 每例展示 `roles`、`verifies`、`method`。ID、来源和引用为维护元数据，不添加历史通过率或运行状态。
 
+运行结果走独立的 [上报合同](reporting-contract.md)，保存为不可变报告。不能把报告写回三份 canonical 定义；新运行使用新 ID，重试使用已冻结文件与原 ID。报告 Tab 使用当次快照，未部署的本地新用例也必须保留其完整行为要求。
+
 `spec.json.requirements` 的每项需要稳定 `id`、`title`、业务语言的 `summary`、可观察的 `requirements`、有效 `scenarioRefs` 和仓内 `sources`。每个场景至少关联一项 SPEC。修改已有要求可保留 ID，新增要求使用新 ID；不把定义或结构检查通过称为能力验收通过。
 
 `office-scenarios.json.categories` 定义展示分类的 `id`、`title`、`description`；场景用 `categoryRef` 选择一个分类。分类可重组，但已有场景和用例的行为 ID、场景归属及 P0 引用保持稳定。不得创建空分类。概览标题和描述使用普通办公语言；必要的工具、数据字段与证据术语放在核验方法中。
