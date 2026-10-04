@@ -9,3 +9,7 @@
 验收：各冻结来源净差分已归并；被排除提交不是新目标祖先且未额外带入其独有改动（保留目标既有共享转发实现）；受影响本地编译/定义/接缝测试通过。发布固定目标 SHA/CR/Run，构建扫描部署成功，两 live 新启动且 normal/marker符合。发布成功不冒称办公 E2E 通过，不关闭人工验收门。
 
 流程：清洁隔离checkout→冻结预发分支与源SHA→语义合并及排除检查→受影响验证→回读远端目标→复用目标CR发一次pipeline66→核对实际release/live→执行表及报告。已有Run3110387322由另一交付者执行，部署资源空闲前不重发；本会话E2E heartbeat已暂停。
+
+## 组合检查结果
+
+已归并四支（backend/progress保持merge祖先，eval/progress-release净变更）；目标原有公共转发代码保持逐字一致，排除分支独有文档/测试未带入。被排除5ec不是候选祖先。reader22/human1/eval1、完整目标提示词与GitHub权限修复保留。全Go编译、make eval-check（145）、14定向测试0fail/skip与vet通过；原134真实PG/完整迁移检查未受影响部分复用。尚未本波部署，Runtime461不切，真实E2E不升级。
