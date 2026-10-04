@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeeplan"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/employeeverification"
+	"github.com/multica-ai/multica/server/internal/humanquestion"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -247,6 +248,10 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			}
 		case "memory_capture", "memory_lookup", "memory_forget":
 			result, err = h.memoryTool(ctx, tx, call)
+		case "a2ui_ask":
+			result, err = h.stageHumanQuestion(ctx, tx, source, env, call)
+		case "accept_human_response":
+			result, err = h.acceptHumanText(ctx, tx, source, call)
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, tx, source, env, call)
 		case "steer_task":
@@ -461,6 +466,11 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, tx pgx.Tx, source empl
 	if steps != nil {
 		create.Lifecycle, create.CompletionMode = employeetask.LifecycleV2, employeetask.CompletionExplicitGoal
 	}
+	roundResult := steps == nil && h.worker.humanQuestionsReady(ctx)
+	if roundResult {
+		create.Lifecycle, create.CompletionMode = employeetask.LifecycleV2, employeetask.CompletionExplicitGoal
+		packet.Text += "\n\n" + humanquestion.PromptContract
+	}
 	task, err := employeetask.NewStore(storeDB).Create(ctx, create)
 	if err != nil {
 		return employeeloop.ToolResult{}, err
@@ -493,6 +503,9 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, tx pgx.Tx, source empl
 	delete(taskContext, "execution_update_callback")
 	taskContext["employee_delivery_owner"] = "employee"
 	taskContext["employee_job_id"] = h.job.ID
+	if roundResult {
+		taskContext["employee_round_result_contract"] = humanquestion.Version
+	}
 	taskContext["employee_source_ref"] = source.SourceRef
 	taskContext["employee_context_used"] = packet.ContextUsed
 	if packet.CompletionNotice.Mode != employeetask.CompletionNoticeAlways {

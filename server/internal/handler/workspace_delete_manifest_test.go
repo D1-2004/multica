@@ -110,6 +110,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_task_ready_intent":      workspaceDelete,
 	"employee_task_run":               workspaceDelete,
 	"employee_task_wait":              workspaceDelete,
+	"employee_human_question":         workspaceDelete,
+	"employee_human_response":         workspaceDelete,
 	"employee_task_link":              workspaceDelete,
 	"employee_watchdog_cursor":        workspaceDelete,
 	"employee_watchdog_episode":       workspaceDelete,

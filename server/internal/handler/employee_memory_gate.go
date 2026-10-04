@@ -40,5 +40,9 @@ func (w *EmployeeSceneWorker) newInputTools(ctx context.Context) []employeeloop.
 		ok, err := w.MemoryToolsReady(ctx)
 		ready = err == nil && ok
 	}
-	return employeeSceneToolsForMemory(ready)
+	tools := employeeSceneToolsForMemory(ready)
+	if w.humanQuestionsReady(ctx) {
+		tools = append(tools, employeeHumanTools()...)
+	}
+	return tools
 }

@@ -23,5 +23,8 @@ func (h *Handler) HandleDWSNativeCardAction(ctx context.Context, id dwsclient.Id
 		slog.Warn("DWS native card action has no agent", "event", "a2ui_native_actor_invalid")
 		return nil
 	}
+	if handled, err := h.handleEmployeeHumanCard(ctx, id, line); handled {
+		return err
+	}
 	return h.A2UI.Accept(ctx, a2ui.Actor{AgentID: agentID, UID: id.UID, OrgID: id.OrgID}, line, finish)
 }

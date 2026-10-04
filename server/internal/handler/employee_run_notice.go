@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/humanquestion"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
@@ -99,7 +100,15 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	if err := tx.QueryRow(ctx, `SELECT id::text FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, workspaceID).Scan(&locked); err != nil {
 		return b, err
 	}
-	err := tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text,t.id::text,t.requester_ref,r.id::text,r.queue_task_id::text,r.state,r.result,t.goal_revision,r.goal_revision
+	var sourceScope employeeentry.Scope
+	err := tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.workspace_id=$1::uuid AND r.id=$2::uuid AND t.owner_loop='employee' AND t.scope_kind='scene'`, workspaceID, runID).Scan(&sourceScope.WorkspaceID, &sourceScope.AgentID, &sourceScope.TenantOrgID, &sourceScope.SceneID)
+	if err != nil {
+		return b, err
+	}
+	if err = humanquestion.LockScope(ctx, tx, sourceScope); err != nil {
+		return b, err
+	}
+	err = tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text,t.id::text,t.requester_ref,r.id::text,r.queue_task_id::text,r.state,r.result,t.goal_revision,r.goal_revision
  FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id AND r.tenant_org_id=t.tenant_org_id
  WHERE t.workspace_id=$1::uuid AND r.id=$2::uuid AND t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene'
  AND r.state IN ('succeeded','failed','cancelled') FOR UPDATE OF t,r`, workspaceID, runID).Scan(&b.Scope.WorkspaceID, &b.Scope.AgentID, &b.Scope.TenantOrgID, &b.Scope.Scene.SceneID, &b.TaskID, &b.Requester, &b.RunID, &b.QueueID, &b.ResultState, &b.Result, &b.TaskGoalRevision, &b.RunGoalRevision)
@@ -181,7 +190,7 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding) (dingtalkresponse.ActionInput, bool, error) {
 	var in dingtalkresponse.ActionInput
 	job := employeeentry.Job{ID: b.JobID}
-	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State)
+	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state,kind FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State, &job.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return in, false, holdEmployeeNotice("source_job_missing")
 	}
@@ -196,6 +205,21 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	}
 	if job.State != "completed" {
 		return in, false, holdEmployeeNotice("source_job_not_completed")
+	}
+	if job.Kind == employeeentry.KindHumanResponse {
+		actual := job
+		actual.ID = b.JobID
+		resolved, e := readEmployeeHumanBinding(ctx, tx, actual)
+		if e != nil {
+			return in, false, holdEmployeeNotice("human_response_binding_revoked")
+		}
+		var meta struct {
+			ResponseID string `json:"employee_human_response_id"`
+		}
+		if json.Unmarshal(b.Queue.Context, &meta) != nil || meta.ResponseID != resolved.Response.ID || b.SourceRef != resolved.Question.SourceRef {
+			return in, false, holdEmployeeNotice("human_response_queue_binding_mismatch")
+		}
+		job = resolved.OriginJob
 	}
 	var env employeeDispatchEnvelope
 	var source employeeSourceMessage
@@ -474,7 +498,14 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		if held != nil {
 			state, reason = "suppressed", held.reason
 		} else {
+			roundBody, roundHandled, roundErr := h.materializeEmployeeRoundResultTx(ctx, tx, b, in)
+			if roundErr != nil {
+				return false, roundErr
+			}
 			body = employeeNoticeDeliveryBody(deliveryDecision, b.Result)
+			if roundHandled {
+				body = roundBody
+			}
 			if body == "" {
 				body = employeeNoticeBody(b)
 			}
@@ -517,6 +548,9 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 // notice. It fences a fresh submission; provider-accepted/unknown actions never
 // call it and continue the existing query/receipt reconciliation path.
 func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkresponse.ActionInput) error {
+	if in.A2UICard != nil {
+		return h.BeforeEmployeeHumanQuestionSend(ctx, in)
+	}
 	if in.EmployeeMessageJobID != "" {
 		return h.beforeEmployeeParticipationSend(ctx, in)
 	}

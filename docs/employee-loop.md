@@ -383,3 +383,7 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 参考GawkBot固定71e82a的DisabledMembers/notifier_targets：明确禁用不能被@绕过。stay_quiet只结束当轮；持续安静要求通过原生set_scene_participation记录scene级quiet，只有原发起者当前外层明确恢复或重新要求回应可改active。模型选语义，Host守精确source/quote/权限，不用中文关键词自动写状态。其他账号的会话wake摄入后零模型Quiet；后台Task/routine继续，通知按原授权发送。暂停/恢复有确认回复；quiet下不能通过旧snapshot调用普通工具或发送普通前台回复。状态与journal同事务，重放不增revision。
 
 native foreground action发送前验证其completed message job、scope和notice绑定，quiet压制尚未提交provider的其他job回复；暂停ACK例外仅该控制job。已提交远端请求不保证撤回。同步Router callback在入账时受控，尚缺独立提交前控制；旧多receipt哈希notice没有新job字段也有边界，不签所有前台投递全覆盖。新表及工具需所有live副本epoch18；目前仅本地实现，未部署。不得在quiet控制仍有效时直接回退到不支持该状态的epoch17；恢复active并排空新工具job后才可安排兼容回退，另批审核。
+
+## 人工选择与文字答复（开发分支）
+
+新增能力合同见 [人工交互](employee-human-interaction.md)。新生产者由独立 `[employee-human:1]` 门禁保护，保留旧快照与计划/V1合同；轮末结构、前台询问、typed答复和普通文字均复用本Loop。开发接入不表示已经部署或通过真实IM。
