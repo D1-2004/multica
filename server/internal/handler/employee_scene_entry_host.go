@@ -361,6 +361,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		}
 		return record.Result, err
 	}
+	if call.Name == "accept_human_response" && record.Failure == "" {
+		h.worker.Notify()
+	}
 	if record.Failure != "" {
 		if record.Refused {
 			return record.Result, employeeJournaledRefusal(record.Failure)

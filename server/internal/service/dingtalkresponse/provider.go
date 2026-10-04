@@ -83,7 +83,8 @@ func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dws
 		if err := validateInput(in); err != nil {
 			return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
 		}
-		receipt, err := cli.SendA2UI(ctx, dir, dwsclient.A2UISendRequest{ConversationID: in.ConversationID, BizID: in.A2UICard.QuestionID, RequestID: key, Summary: in.Text, Messages: in.A2UICard.Messages})
+		request := employeeQuestionSendTarget(in, key)
+		receipt, err := cli.SendA2UI(ctx, dir, request)
 		if err != nil {
 			return dwsclient.SendResult{}, err
 		}
@@ -122,6 +123,25 @@ func (p *dwsProvider) Query(ctx context.Context, in ActionInput, taskID string) 
 	}
 	defer cleanup()
 	return cli.QuerySendStatus(ctx, dir, taskID)
+}
+
+func (p *dwsProvider) UpdateQuestionCard(ctx context.Context, in ActionInput, bizID string, messages []string) error {
+	if err := validateQuestionCardUpdate(in, bizID, messages); err != nil {
+		return err
+	}
+	if p == nil {
+		return errors.New("DWS response provider is not configured")
+	}
+	cli, err := p.cliFor(in)
+	if err != nil {
+		return err
+	}
+	dir, cleanup, err := p.authenticateWith(ctx, cli, in)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	return cli.UpdateA2UI(ctx, dir, bizID, "FINISH", messages, nil)
 }
 
 func (p *dwsProvider) authenticate(ctx context.Context, in ActionInput) (string, func(), error) {
@@ -193,4 +213,17 @@ func (p *dwsProvider) mint(ctx context.Context, in ActionInput) (dwsclient.Crede
 		return dwsclient.Credential{}, errors.New("DWS response identity changed during redemption")
 	}
 	return credential, nil
+}
+
+// A DM targets the trusted source speaker in the employee's identity scope.
+// A group targets the scene directory's conversation. Observer-relative DM ids
+// must not be treated as group targets.
+func employeeQuestionSendTarget(in ActionInput, key string) dwsclient.A2UISendRequest {
+	request := dwsclient.A2UISendRequest{BizID: in.A2UICard.QuestionID, RequestID: key, Summary: in.Text, Messages: in.A2UICard.Messages}
+	if in.IsGroup {
+		request.ConversationID = in.ConversationID
+	} else {
+		request.ReceiverOpenDingTalkID = in.SenderOpenDingTalkID
+	}
+	return request
 }

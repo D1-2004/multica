@@ -105,9 +105,10 @@ type EmployeeSceneWorker struct {
 	// MemoryDigest is the scene digest writer (memory M11); nil disables it.
 	MemoryDigest *digest.Writer
 	// origins resolves Tasks for task wakes; producers register their readers.
-	origins *employeeentry.TaskOriginRegistry
-	wake    chan struct{}
-	done    chan struct{}
+	origins  *employeeentry.TaskOriginRegistry
+	cardWake chan struct{}
+	wake     chan struct{}
+	done     chan struct{}
 }
 
 func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeSceneWorker {
@@ -117,11 +118,15 @@ func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeScene
 	for _, namespace := range service.AutomationTaskSourceNamespaces {
 		origins.MustRegister(namespace, employeeRoutineTaskOriginReader{h: h})
 	}
-	return &EmployeeSceneWorker{handler: h, store: employeeentry.NewStore(database), model: model, origins: origins, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	return &EmployeeSceneWorker{handler: h, store: employeeentry.NewStore(database), model: model, origins: origins, cardWake: make(chan struct{}, 1), wake: make(chan struct{}, 1), done: make(chan struct{})}
 }
 func (w *EmployeeSceneWorker) Notify() {
 	if w == nil {
 		return
+	}
+	select {
+	case w.cardWake <- struct{}{}:
+	default:
 	}
 	select {
 	case w.wake <- struct{}{}:
@@ -131,6 +136,25 @@ func (w *EmployeeSceneWorker) Notify() {
 func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 	defer close(w.done)
 	var group sync.WaitGroup
+	// Card closure has its own wake/tick and cannot wait behind task maintenance.
+	group.Go(func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.cardWake:
+			case <-ticker.C:
+			}
+			callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			_, err := w.handler.ReconcileEmployeeHumanCardProjections(callCtx, 5)
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee human card projection reconciliation failed", "error", err)
+			}
+		}
+	})
 	group.Go(func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
