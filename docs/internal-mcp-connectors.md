@@ -49,16 +49,31 @@ shorten the security identifier.
 
 ## Discovery availability boundary
 
+Each task `tools/list` request has its own 10-second discovery budget. Business
+`tools/call` keeps its existing upstream timeouts. OAuth refresh retains its
+independent transactional deadline, but a discovery caller can stop waiting
+without aborting that shared refresh. Explicit recovery gets a separate
+30-second catalog budget; it does not extend startup waiting. The 10-second
+budget is not a shared startup grace period across all servers/pages.
+
 Task discovery distinguishes an external connector's availability from the
 runtime's ability to start. When the first `tools/list` page fails because of
 an upstream availability or credential error, the relay retains its failure
-audit and returns one local read-only tool, `multica_connection_unavailable`.
+audit and returns local diagnostic/recovery tools: `multica_connection_unavailable`,
+`multica_recover_connection` and `multica_call_recovered_tool`.
 Its description contains a safe failure category and explicitly states that
 business tools were unavailable during discovery. This is a diagnostic
 definition, not an empty successful upstream list or a cached business schema.
 Other authorized MCP servers can initialize normally. A task requiring the
 unavailable connector must report that it is blocked; it must not claim the
-requested business work succeeded or use alternate credentials.
+requested business work succeeded or use alternate credentials. Known remote
+protocol/metadata and reserved-name failures also return an explicit unavailable
+catalog; invalid business definitions are never exposed. This also applies to
+later pages: previously validated definitions can remain in the client, while
+`_meta.multica_catalog_complete=false` and the diagnostic make the incomplete
+catalog explicit. Every business invocation still rechecks authorization.
+Missing tools are not evidence of denied permission; use recovery for a complete
+live catalog.
 
 The diagnostic accepts only `{}`. Its call reports the discovery limitation
 as text and structured data, with `business_execution=false`, and performs no
@@ -66,12 +81,34 @@ upstream request, refresh, retry or write. A successful diagnostic call means
 only that this status was delivered, never that the connector recovered.
 Each invocation still rechecks the active task, current connector grant and
 credential resolution, rate limit and durable audit. The name is reserved by
-the relay: an upstream definition using it is rejected as invalid metadata.
+the relay, together with the two recovery names: an upstream definition using
+any of them is rejected as a reserved-name conflict.
 
-Invalid upstream metadata/protocol, an unclassified failure, a failed later page, parent cancellation,
+`multica_recover_connection({})` is an explicit read-only recovery attempt in
+the current Run. It rechecks the current scope and collects the complete live,
+authorized catalog before returning any tool definitions (30 seconds, 2 MiB
+total, bounded pages and cursor-loop detection). Failure returns a sanitized
+status, never partial definitions or an empty successful catalog. Success is
+`status=available, business_execution=false`, and does not execute a business
+tool or verify that business work succeeded.
+
+Because installed Pi clients freeze their tool registry at startup,
+`multica_call_recovered_tool({tool_name, arguments})` lets them explicitly call
+a discovered tool without changing their registry. It unwraps only an object
+argument and a non-control tool name, then uses the same native tool-call
+authorization, official-app pinning, write/owner restrictions, alias resolution,
+rate limiting, durable audit and upstream forwarding. It cannot supply a URL,
+method, token or different identity. There is no automatic replay or extra
+business retry. Healthy catalogs continue exposing their original native tools.
+Custom connector recovery returns original upstream names as invocation
+arguments, so recovered calls do not rediscover aliases. Official-app recovery
+keeps presented names and the existing pinning/alias checks. Normal native tool
+names and alias invocation are unchanged.
+
+An unclassified failure, parent cancellation,
 configuration/authentication/authorization failures, rate-limit failures and
-audit failures remain errors. Later-page failures cannot mix an incomplete
-business catalog with a diagnostic page. Task `tools/call` behavior and its
+audit failures remain errors. Recovery never returns an incomplete business
+catalog as available. Task `tools/call` behavior and its
 no-automatic-retry rule are unchanged. Direct Agent-configured remote MCP
 servers are outside this backend-managed connector boundary.
 
@@ -82,7 +119,8 @@ GawkBot's local broker definition boundary at fixed commit
 `71e82a1809565281cbd0bf8185d3c125b715d934` (`internal/team/mcp_config.go` and
 `internal/teammcp/server.go`), using standard MCP tool schemas rather than
 changing Pi/Daemon protocols. Implementation and acceptance tracking:
-[MCP discovery isolation](plans/2026-10-04/mcp-discovery-isolation.md).
+[MCP discovery isolation](plans/2026-10-04/mcp-discovery-isolation.md) and
+[current-Run recovery](plans/2026-10-05/mcp-live-recovery.md).
 
 ## Configuration and rollout
 
