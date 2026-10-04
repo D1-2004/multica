@@ -1,0 +1,71 @@
+name: Eval catalog
+
+on:
+  pull_request:
+    paths:
+      - 'server/internal/evalcatalog/**'
+      - 'server/cmd/evalcatalog/**'
+      - 'server/internal/handler/*eval*'
+      - 'apps/web/app/evals/**'
+      - 'scripts/check-eval-catalog.py'
+      - 'Makefile'
+      - 'CLAUDE.md'
+      - 'APP-META/docker-config/Dockerfile'
+      - 'apps/web/proxy.ts'
+      - 'apps/web/config/runtime-urls.ts'
+      - 'apps/web/next.config.ts'
+      - 'docs/evals/**'
+      - 'docs/employee-loop.md'
+      - 'docs/agent-scene.md'
+      - 'docs/event-scene-router.md'
+      - 'docs/context-capabilities.md'
+      - 'docs/plans/**/employee-loop-backend-delivery/**'
+      - '.github/workflows/eval-catalog.yml'
+  push:
+    paths:
+      - 'server/internal/evalcatalog/**'
+      - 'server/cmd/evalcatalog/**'
+      - 'server/internal/handler/*eval*'
+      - 'apps/web/app/evals/**'
+      - 'scripts/check-eval-catalog.py'
+      - 'Makefile'
+      - 'CLAUDE.md'
+      - 'APP-META/docker-config/Dockerfile'
+      - 'apps/web/proxy.ts'
+      - 'apps/web/config/runtime-urls.ts'
+      - 'apps/web/next.config.ts'
+      - 'docs/evals/**'
+      - 'docs/employee-loop.md'
+      - 'docs/agent-scene.md'
+      - 'docs/event-scene-router.md'
+      - 'docs/context-capabilities.md'
+      - 'docs/plans/**/employee-loop-backend-delivery/**'
+      - '.github/workflows/eval-catalog.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  definitions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout definition history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate canonical definitions
+        env:
+          EVAL_CATALOG_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$EVAL_CATALOG_BASE_REF" ]; then
+            python3 scripts/check-eval-catalog.py --base-ref "$EVAL_CATALOG_BASE_REF"
+          else
+            python3 scripts/check-eval-catalog.py
+          fi

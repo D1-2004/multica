@@ -24,8 +24,7 @@
       "caseRefs": [
         "office-at-other",
         "office-at-employee",
-        "office-bare-group-greeting",
-        "office-presence-while-busy"
+        "office-bare-group-greeting"
       ],
       "sources": [
         "docs/evals/p0-golden.md",
@@ -200,7 +199,8 @@
       "scenarioRefs": [
         "continuation-steer",
         "progress-wait",
-        "group-participation"
+        "group-participation",
+        "clarification-reference"
       ],
       "caseRefs": [
         "office-continue-success",

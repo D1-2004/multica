@@ -184,7 +184,11 @@ stop: ## Stop backend and frontend processes for the current checkout
 			echo "✓ App processes stopped. Remote PostgreSQL was not affected." ;; \
 	esac
 
-check: coordinator-policy-check ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current checkout
+eval-check: ## Validate canonical evaluation definitions and their read-only presentation
+	python3 scripts/check-eval-catalog.py
+	cd server && go test ./internal/evalcatalog
+
+check: coordinator-policy-check eval-check ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current checkout
 	$(REQUIRE_ENV)
 	@ENV_FILE="$(ENV_FILE)" bash scripts/check.sh
 
@@ -312,6 +316,6 @@ clean: ## Remove build caches, generated binaries, and temp files
 	rm -rf apps/*/*.tsbuildinfo packages/*/*.tsbuildinfo
 	@echo "✓ Clean complete."
 
-.PHONY: coordinator-policy-check
+.PHONY: coordinator-policy-check eval-check
 coordinator-policy-check:
 	python3 scripts/check-coordinator-policy.py

@@ -240,6 +240,13 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
+- Evaluation definitions (`server/internal/evalcatalog/`): `p0-golden.json` and
+  `office-scenarios.json` are the presentation source of truth. Keep stable IDs,
+  roles, observable assertions, verification methods and source/P0 references
+  complete. Follow `docs/evals/CONTRIBUTING.md` and run `make eval-check` whenever
+  changing definitions, references or their rendering. Markdown is developer
+  context, never a second editable catalog or a user-facing document dump.
+
 - Provider event admission (`docs/event-scene-router.md`): `internal/eventrouter`
   persists one `scene_event_receipt` envelope/routing receipt per owner/source/id before
   scene business handling. Host supplies authenticated owner/principal/tenant;

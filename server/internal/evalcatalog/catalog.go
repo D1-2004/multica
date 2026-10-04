@@ -1,4 +1,4 @@
-// Package evalcatalog serves the repository-linked evaluation documentation.
+// Package evalcatalog serves the repository-backed golden sets and scenarios.
 package evalcatalog
 
 import (
@@ -8,16 +8,11 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
 )
 
-//go:embed p0-golden.json office-scenarios.json document-index.json documents/*.md page.gohtml style.css
+//go:embed p0-golden.json office-scenarios.json page.gohtml style.css
 var assets embed.FS
 
 type TestCase struct {
@@ -40,33 +35,18 @@ type Scenario struct {
 	Cases       []TestCase `json:"cases"`
 }
 
-type Document struct {
-	Path         string        `json:"path"`
-	Title        string        `json:"title"`
-	Category     string        `json:"category"`
-	Kind         string        `json:"kind"`
-	Historical   bool          `json:"historical"`
-	File         string        `json:"file"`
-	SourceSHA256 string        `json:"sourceSHA256"`
-	Body         template.HTML `json:"-"`
-}
-
 type page struct {
-	Tab           string
-	Golden        []TestCase
-	Scenarios     []Scenario
-	Scenario      *Scenario
-	Documents     []Document
-	Document      *Document
-	Guide         template.HTML
-	CaseCount     int
-	DocumentCount int
+	Golden       []TestCase
+	Scenarios    []Scenario
+	CaseCount    int
+	OpenScenario string
+	OpenGolden   string
 }
 
 type handler struct {
 	data      page
-	documents map[string]Document
-	scenarios map[string]Scenario
+	scenarios map[string]bool
+	golden    map[string]bool
 	tmpl      *template.Template
 	css       []byte
 }
@@ -74,24 +54,14 @@ type handler struct {
 func readJSON(name string, target any) {
 	data, err := assets.ReadFile(name)
 	if err != nil {
-		panic(fmt.Errorf("read evaluation asset: %w", err))
+		panic(fmt.Errorf("read evaluation definition: %w", err))
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		panic(fmt.Errorf("decode %s: %w", name, err))
 	}
 }
 
-func renderMarkdown(data []byte) (template.HTML, error) {
-	var out bytes.Buffer
-	renderer := goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID()))
-	if err := renderer.Convert(data, &out); err != nil {
-		return "", err
-	}
-	// Goldmark's default renderer rejects raw HTML and dangerous URL schemes.
-	return template.HTML(out.String()), nil
-}
-
-// NewHandler loads only checked-in definitions and Markdown snapshots.
+// NewHandler reads only the canonical JSON definitions, without runtime state.
 func NewHandler() http.Handler {
 	var golden struct {
 		Cases []TestCase `json:"cases"`
@@ -99,44 +69,22 @@ func NewHandler() http.Handler {
 	var office struct {
 		Scenarios []Scenario `json:"scenarios"`
 	}
-	var docs struct {
-		Assets []Document `json:"assets"`
-	}
 	readJSON("p0-golden.json", &golden)
 	readJSON("office-scenarios.json", &office)
-	readJSON("document-index.json", &docs)
 	if len(golden.Cases) != 20 {
 		panic("P0 catalog must contain exactly 20 golden cases")
 	}
-	h := &handler{data: page{Golden: golden.Cases, Scenarios: office.Scenarios, DocumentCount: len(docs.Assets)}, documents: map[string]Document{}, scenarios: map[string]Scenario{}}
-	labels := map[string]string{}
+	h := &handler{data: page{Golden: golden.Cases, Scenarios: office.Scenarios}, scenarios: map[string]bool{}, golden: map[string]bool{}}
+	titles := map[string]string{}
 	for _, s := range office.Scenarios {
-		h.scenarios[s.ID] = s
-		labels[s.ID] = s.Title
+		h.scenarios[s.ID] = true
+		titles[s.ID] = s.Title
 		h.data.CaseCount += len(s.Cases)
 	}
-	if h.data.CaseCount < 100 {
-		panic("office scenario inventory must contain at least 100 cases")
+	for _, c := range golden.Cases {
+		h.golden[c.ID] = true
 	}
-	for _, d := range docs.Assets {
-		content, err := assets.ReadFile("documents/" + d.File)
-		if err != nil {
-			panic(err)
-		}
-		body, err := renderMarkdown(content)
-		if err != nil {
-			panic(err)
-		}
-		d.Body = body
-		h.documents[d.Path] = d
-		h.data.Documents = append(h.data.Documents, d)
-	}
-	h.tmpl = template.Must(template.New("page.gohtml").Funcs(template.FuncMap{
-		"scenarioTitle": func(id string) string { return labels[id] },
-		"docURL": func(path, tab string) string {
-			return "/evals?tab=" + url.QueryEscape(tab) + "&doc=" + url.QueryEscape(path)
-		},
-	}).ParseFS(assets, "page.gohtml"))
+	h.tmpl = template.Must(template.New("page.gohtml").Funcs(template.FuncMap{"scenarioTitle": func(id string) string { return titles[id] }}).ParseFS(assets, "page.gohtml"))
 	var err error
 	h.css, err = assets.ReadFile("style.css")
 	if err != nil {
@@ -165,42 +113,24 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data := h.data
-	data.Tab = r.URL.Query().Get("tab")
-	if data.Tab == "" {
-		data.Tab = "evals"
-	}
-	if data.Tab != "evals" && data.Tab != "tools" && data.Tab != "runtime" {
-		http.Error(w, "unknown tab", http.StatusBadRequest)
+	query := r.URL.Query()
+	if query.Has("doc") || query.Has("tab") {
+		http.NotFound(w, r)
 		return
 	}
-	if id := r.URL.Query().Get("scenario"); id != "" {
-		s, ok := h.scenarios[id]
-		if !ok || data.Tab != "evals" {
-			http.NotFound(w, r)
-			return
-		}
-		data.Scenario = &s
+	data := h.data
+	data.OpenScenario = query.Get("scenario")
+	data.OpenGolden = query.Get("golden")
+	if data.OpenScenario != "" && !h.scenarios[data.OpenScenario] || data.OpenGolden != "" && !h.golden[data.OpenGolden] {
+		http.NotFound(w, r)
+		return
 	}
-	if path := r.URL.Query().Get("doc"); path != "" {
-		d, ok := h.documents[path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		data.Document = &d
-		data.Tab = d.Category
-	}
-	if data.Document == nil && data.Tab != "evals" {
-		guide := map[string]string{"tools": "docs/evals/evaluation-tools.md", "runtime": "docs/evals/evaluation-runtime.md"}[data.Tab]
-		data.Guide = h.documents[guide].Body
-	}
-	var page bytes.Buffer
-	if err := h.tmpl.Execute(&page, data); err != nil {
+	var body bytes.Buffer
+	if err := h.tmpl.Execute(&body, data); err != nil {
 		http.Error(w, "could not render evaluation page", http.StatusInternalServerError)
 		return
 	}
-	send(w, r, page.Bytes(), "text/html; charset=utf-8")
+	send(w, r, body.Bytes(), "text/html; charset=utf-8")
 }
 
 func send(w http.ResponseWriter, r *http.Request, body []byte, contentType string) {

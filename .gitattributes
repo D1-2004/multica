@@ -4,6 +4,3 @@ docker/entrypoint.sh text eol=lf
 
 # Default behavior
 * text=auto
-
-# Preserve Markdown hard breaks and original endings in generated snapshots.
-server/internal/evalcatalog/documents/*.md whitespace=-blank-at-eol,-blank-at-eof

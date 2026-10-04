@@ -1,174 +1,289 @@
 #!/usr/bin/env python3
-"""Validate the reviewed inventory and its source-case coverage without executing evals."""
+"""Check canonical eval definitions and references without running evaluations."""
 
+import argparse
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import subprocess
 import sys
+import unicodedata
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG = ROOT / "server/internal/evalcatalog"
-STATUS = {"defined", "planned", "historical", "needs-migration"}
-errors = []
+CATALOG_PATH = "server/internal/evalcatalog"
+OFFICE_PATH = f"{CATALOG_PATH}/office-scenarios.json"
+P0_PATH = f"{CATALOG_PATH}/p0-golden.json"
+ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+P0_IDS = [f"G{i:02}" for i in range(1, 21)]
+DEFINITION_FIELDS = ("roles", "verifies", "method")
+RESULT_FIELDS = {"status", "pass", "passed", "result", "results", "score", "history", "runId", "traceId", "evidence"}
+SENSITIVE_PATTERNS = {
+    "live UUID": r"\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b",
+    "live conversation locator": r"\bcid[+A-Za-z0-9/_=-]{12,}",
+    "account email": r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+    "local account path": r"(?:/Users/|/home/)[^\s\"']+",
+    "private key": r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    "credential token": r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|LTAI[A-Za-z0-9]{12,})\b",
+    "JWT": r"\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b",
+    "credential assignment": r"\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|client[_-]?secret|secret)\s*[:=]\s*[\"']?[^\s\"',;]{8,}",
+    "account locator assignment": r"\b(?:staffId|userId|uid|agent_id|workspace_id|tenant_id|openConversationId|openMsgId)\s*[:=]\s*[\"']?[A-Za-z0-9+/=_-]{6,}",
+}
 
 
-def require(condition, message):
-    if not condition:
-        errors.append(message)
+def normalized_behavior(item):
+    """Ignore titles, role aliases and fixture numbers for exact clone detection."""
+    values = item.get("verifies", []) + item.get("method", [])
+    text = unicodedata.normalize("NFKC", " ".join(values)).casefold()
+    text = re.sub(r"小[甲乙丙丁]", "测试角色", text)
+    text = re.sub(r"\d+", "#", text)
+    return re.sub(r"\s+", "", text)
 
 
-def strings(value):
-    return isinstance(value, list) and bool(value) and all(isinstance(s, str) and s.strip() for s in value)
+class Checker:
+    def __init__(self, root=ROOT):
+        self.root = root.resolve()
+        self.errors = []
+        self.source_ids = set()
+        self.scenario_ids = set()
+        self.case_owners = {}
+        self.behaviors = {}
+
+    def require(self, condition, message):
+        if not condition:
+            self.errors.append(message)
+        return bool(condition)
+
+    def load(self, relative, required=True):
+        path = self.root / relative
+        if not path.is_file() and not required:
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            self.errors.append(f"{relative}: cannot read JSON ({type(exc).__name__})")
+            return None
+
+    def text(self, value, label):
+        return self.require(isinstance(value, str) and bool(value.strip()), f"{label}: expected nonempty text")
+
+    def strings(self, value, label, allow_empty=False):
+        valid = isinstance(value, list) and (allow_empty or bool(value)) and all(isinstance(x, str) and x.strip() for x in value)
+        if not self.require(valid, f"{label}: expected {'a' if allow_empty else 'a nonempty'} string list"):
+            return []
+        self.require(len(value) == len(set(value)), f"{label}: duplicate entries")
+        return value
+
+    def scan_text(self, value, label):
+        # Scan definitions, never load source contents, credentials or account profiles.
+        if isinstance(value, dict):
+            for key, child in value.items():
+                self.scan_text(child, f"{label}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                self.scan_text(child, f"{label}[{index}]")
+        elif isinstance(value, str):
+            for kind, pattern in SENSITIVE_PATTERNS.items():
+                if re.search(pattern, value, re.I):
+                    self.errors.append(f"{label}: {kind} is not allowed in definitions")
+
+    def sources(self, item, label):
+        for value in self.strings(item.get("sources"), f"{label}.sources"):
+            path = PurePosixPath(value)
+            valid = (
+                not path.is_absolute()
+                and not PureWindowsPath(value).is_absolute()
+                and ".." not in path.parts
+                and not value.startswith("~")
+                and "\\" not in value
+                and ":" not in value
+                and "\x00" not in value
+            )
+            if not self.require(valid, f"{label}.sources: source must be repo-relative and cannot escape the repository"):
+                continue
+            name = path.name.lower()
+            credential_file = (
+                name == ".env"
+                or (name.startswith(".env.") and not name.endswith((".example", ".sample", ".template")))
+                or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx", ".keystore"}
+                or name in {"credentials.json", "credentials", "token.json", "tokens.json"}
+                or ".git" in path.parts
+            )
+            if not self.require(not credential_file, f"{label}.sources: credential or Git metadata file cannot be a definition source"):
+                continue
+            candidate = self.root / value
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(self.root)
+                inside = True
+            except (OSError, RuntimeError, ValueError):
+                inside = False
+            if self.require(inside, f"{label}.sources: symlink/path escapes the repository"):
+                self.require(candidate.is_file(), f"{label}.sources: file does not exist: {value}")
+
+    def common(self, item, label):
+        self.text(item.get("title"), f"{label}.title")
+        for field in DEFINITION_FIELDS:
+            self.strings(item.get(field), f"{label}.{field}")
+        self.sources(item, label)
+        self.require(not set(item).intersection(RESULT_FIELDS), f"{label}: definitions cannot contain run results, status, or evidence")
+        self.scan_text(item, label)
+
+    def source_pool(self):
+        # Legacy files are reference indexes only: no version, shape, UI or coverage gates.
+        inventory = self.load(f"{CATALOG_PATH}/suites.json", required=False)
+        if isinstance(inventory, dict):
+            for suite in inventory.get("suites", []):
+                if isinstance(suite, dict):
+                    for case in suite.get("cases", []):
+                        if isinstance(case, dict) and isinstance(case.get("id"), str):
+                            self.source_ids.add(case["id"])
+        legacy = self.load(f"{CATALOG_PATH}/golden.json", required=False)
+        if isinstance(legacy, dict):
+            rows = list(legacy.get("cases", []))
+            for group in legacy.get("groups", []):
+                if isinstance(group, dict):
+                    rows.extend(group.get("cases", []))
+            for case in rows:
+                if isinstance(case, dict) and isinstance(case.get("id"), str):
+                    self.source_ids.add(case["id"])
+
+    def validate(self, office, p0):
+        self.source_pool()
+        if not self.require(isinstance(office, dict), f"{OFFICE_PATH}: expected an object"):
+            return
+        self.require(office.get("version") == 1, f"{OFFICE_PATH}: version must be 1")
+        scenarios = office.get("scenarios")
+        if not self.require(isinstance(scenarios, list) and bool(scenarios), f"{OFFICE_PATH}: missing scenarios"):
+            return
+        cases = []
+        for index, scenario in enumerate(scenarios):
+            label = f"scenario[{index}]"
+            if not self.require(isinstance(scenario, dict), f"{label}: expected an object"):
+                continue
+            sid = scenario.get("id")
+            if not self.require(isinstance(sid, str) and bool(ID_PATTERN.fullmatch(sid)), f"{label}: invalid stable scenario ID"):
+                continue
+            self.require(sid not in self.scenario_ids, f"{sid}: duplicate scenario ID")
+            self.scenario_ids.add(sid)
+            self.text(scenario.get("title"), f"{sid}.title")
+            self.text(scenario.get("description"), f"{sid}.description")
+            self.scan_text({"title": scenario.get("title"), "description": scenario.get("description")}, sid)
+            rows = scenario.get("cases")
+            if not self.require(isinstance(rows, list) and bool(rows), f"{sid}: missing cases"):
+                continue
+            for row in rows:
+                if not self.require(isinstance(row, dict), f"{sid}: case must be an object"):
+                    continue
+                cid = row.get("id")
+                if not self.require(isinstance(cid, str) and bool(ID_PATTERN.fullmatch(cid)), f"{sid}: invalid stable case ID"):
+                    continue
+                self.require(cid not in self.case_owners, f"{cid}: duplicate case ID")
+                self.case_owners[cid] = sid
+                cases.append(row)
+                self.common(row, cid)
+                self.require(row.get("origin") in {"existing", "defined"}, f"{cid}: origin must be existing or defined")
+                refs = self.strings(row.get("sourceCases"), f"{cid}.sourceCases", allow_empty=True)
+                self.require(row.get("origin") != "existing" or bool(refs), f"{cid}: existing origin needs a sourceCase reference")
+                self.require(cid not in refs, f"{cid}: sourceCases cannot cite itself")
+                if all(isinstance(row.get(k), list) and all(isinstance(x, str) for x in row[k]) for k in ("verifies", "method")):
+                    fingerprint = normalized_behavior(row)
+                    if fingerprint:
+                        previous = self.behaviors.get(fingerprint)
+                        self.require(previous is None, f"{cid}: exact behavior clone of {previous}; define a distinct behavior risk")
+                        self.behaviors[fingerprint] = cid
+        self.require(len(cases) >= 100, f"{OFFICE_PATH}: at least 100 scenario cases are required; growth is not capped")
+        self.require(not self.scenario_ids.intersection(self.case_owners), "scenario IDs and case IDs must not collide")
+        self.source_ids.update(self.case_owners)
+        self.source_ids.update(P0_IDS)
+        for case in cases:
+            refs = case.get("sourceCases", [])
+            if isinstance(refs, list):
+                for ref in refs:
+                    if isinstance(ref, str):
+                        self.require(ref in self.source_ids, f"{case['id']}: unknown sourceCase {ref}")
+        if not self.require(isinstance(p0, dict), f"{P0_PATH}: expected an object"):
+            return
+        self.require(p0.get("version") == 1, f"{P0_PATH}: version must be 1")
+        rows = p0.get("cases")
+        if not self.require(isinstance(rows, list), f"{P0_PATH}: missing cases"):
+            return
+        self.require([x.get("id") if isinstance(x, dict) else None for x in rows] == P0_IDS, f"{P0_PATH}: exactly 20 ordered IDs G01-G20 are required")
+        for row in rows:
+            if not self.require(isinstance(row, dict), "P0 case must be an object"):
+                continue
+            label = row.get("id", "P0")
+            self.common(row, label)
+            self.require(row.get("priority") == "P0", f"{label}: priority must be P0")
+            scenario_refs = self.strings(row.get("scenarioRefs"), f"{label}.scenarioRefs")
+            case_refs = self.strings(row.get("caseRefs"), f"{label}.caseRefs")
+            for sid in scenario_refs:
+                self.require(sid in self.scenario_ids, f"{label}: unknown scenarioRef {sid}")
+            for cid in case_refs:
+                owner = self.case_owners.get(cid)
+                if self.require(owner is not None, f"{label}: unknown caseRef {cid}"):
+                    self.require(owner in scenario_refs, f"{label}: {cid} belongs to {owner}; add its scenarioRef or fix caseRefs")
+
+    def stable_ids(self, base_ref):
+        if not base_ref or re.fullmatch(r"0{40,64}", base_ref):
+            return
+        try:
+            result = subprocess.run(["git", "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}"], cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True)
+            sha = result.stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            self.errors.append("--base-ref must resolve to an available commit")
+            return
+        baseline = {}
+        for relative in (OFFICE_PATH, P0_PATH):
+            probe = subprocess.run(["git", "cat-file", "-e", f"{sha}:{relative}"], cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if probe.returncode:
+                # A verified commit without this module permits initial publication.
+                continue
+            old = subprocess.run(["git", "show", f"{sha}:{relative}"], cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            if not self.require(old.returncode == 0, f"{relative}: cannot read an existing base file"):
+                continue
+            try:
+                baseline[relative] = json.loads(old.stdout)
+            except json.JSONDecodeError:
+                self.errors.append(f"{relative}: base JSON cannot be interpreted for stable-ID checking")
+        if OFFICE_PATH in baseline:
+            try:
+                for scenario in baseline[OFFICE_PATH]["scenarios"]:
+                    sid = scenario["id"]
+                    self.require(sid in self.scenario_ids, f"{sid}: stable scenario ID removed; preserve its definition instead of reusing an ID")
+                    for case in scenario["cases"]:
+                        cid = case["id"]
+                        owner = self.case_owners.get(cid)
+                        self.require(owner is not None, f"{cid}: stable case ID removed; preserve its behavior definition")
+                        self.require(owner is None or owner == sid, f"{cid}: stable case ID moved from {sid} to {owner}; retain ownership or use a controlled migration")
+            except (KeyError, TypeError):
+                self.errors.append("base office catalog cannot be interpreted for stable-ID checking")
+        if P0_PATH in baseline:
+            try:
+                prior_ids = [case["id"] for case in baseline[P0_PATH]["cases"]]
+                self.require(set(prior_ids).issubset(P0_IDS), "base P0 IDs differ from the fixed G01-G20 contract; review migration")
+            except (KeyError, TypeError):
+                self.errors.append("base P0 catalog cannot be interpreted for stable-ID checking")
 
 
-def sources(item, label):
-    require(strings(item.get("sources")), f"{label}: missing sources")
-    for source in item.get("sources", []):
-        path = Path(source)
-        require(not path.is_absolute() and ".." not in path.parts, f"{label}: source must be repo-relative: {source}")
-        require((ROOT / path).is_file(), f"{label}: source does not exist: {source}")
-
-
-def unique(items, label):
-    seen = set()
-    for item in items:
-        name = item.get("id", "")
-        require(bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)), f"{label}: invalid id {name!r}")
-        require(name not in seen, f"{label}: duplicate id {name}")
-        seen.add(name)
-    return seen
-
-
-def check_coverage(path, expected, cases):
-    actual = [c["sourceCase"] for c in cases if path in c["sources"]]
-    require(set(actual) == set(expected), f"{path}: source coverage missing={sorted(set(expected) - set(actual))}, extra={sorted(set(actual) - set(expected))}")
-    require(len(actual) == len(set(actual)), f"{path}: duplicate source cases")
-
-
-def main():
-    inventory = json.loads((CATALOG / "suites.json").read_text())
-    environment = json.loads((CATALOG / "environment.json").read_text())
-    ids = {}
-    required = {
-        "profiles": ("title", "purpose", "proves", "limits"),
-        "identities": ("title", "grant", "scope", "proof", "limits"),
-        "tools": ("name", "phase", "purpose", "access", "readback"),
-    }
-    for collection, fields in required.items():
-        items = environment[collection]
-        ids[collection] = unique(items, collection)
-        for item in items:
-            label = item["id"]
-            for field in fields:
-                require(isinstance(item.get(field), str) and item[field].strip(), f"{label}: missing {field}")
-            sources(item, label)
-            if collection == "profiles":
-                for field in ("components", "gates"):
-                    require(strings(item.get(field)), f"{label}: missing {field}")
-    for collection, fields in {"stages": ("title", "artifact", "requirement"), "gates": ("title", "rule")}.items():
-        require(bool(environment.get(collection)), f"missing {collection}")
-        for item in environment.get(collection, []):
-            for field in fields:
-                require(isinstance(item.get(field), str) and item[field].strip(), f"{collection}: missing {field}")
-
-    suites = inventory["suites"]
-    unique(suites, "suites")
-    cases = [case for suite in suites for case in suite["cases"]]
-    unique(cases, "cases")
-    refs = {"environmentIds": "profiles", "identityIds": "identities", "toolIds": "tools"}
-    for item in suites + cases:
-        label = item["id"]
-        require(item.get("status") in STATUS, f"{label}: invalid status")
-        sources(item, label)
-        for field, collection in refs.items():
-            require(strings(item.get(field)), f"{label}: missing {field}")
-            for ref in item.get(field, []):
-                require(ref in ids[collection], f"{label}: unknown {field} {ref}")
-        fields = ("project", "title", "description") if "cases" in item else ("title", "module", "why", "sourceCase")
-        for field in fields:
-            require(isinstance(item.get(field), str) and item[field].strip(), f"{label}: missing {field}")
-        if "cases" in item:
-            require(bool(item["cases"]), f"{label}: empty suite")
-        else:
-            for field in ("method", "verify", "evidence", "boundaries"):
-                require(strings(item.get(field)), f"{label}: missing {field}")
-            require(isinstance(item.get("history"), str), f"{label}: history must be explicit")
-            require(item["status"] != "historical" or bool(item.get("history")), f"{label}: historical case needs dated explanation")
-
-    for spec in sorted((ROOT / "e2e").glob("*.spec.ts")):
-        titles = re.findall(r'\btest\s*\(\s*"([^"\n]+)"', spec.read_text())
-        require(bool(titles), f"{spec.name}: no test titles found; update coverage parser")
-        check_coverage(spec.relative_to(ROOT).as_posix(), titles, cases)
-    for name in ("assoc-scene-eval-suite", "coordinator-collect-e2e", "coordinator-progressive-smoke"):
-        path = f"docs/evals/{name}.json"
-        source = json.loads((ROOT / path).read_text())
-        check_coverage(path, [c["id"] for c in source["cases"]], cases)
-    for name in ("2026-09-08-coordinator-policy-v2-full", "20260910T033123Z-generic-proactive-gate"):
-        path = f"docs/evals/results/{name}.json"
-        source = json.loads((ROOT / path).read_text())
-        rows = source if isinstance(source, list) else source.get("results", source.get("cases", []))
-        expected = [c.get("id", c.get("case_id", c.get("case"))) for c in rows]
-        require(bool(expected) and all(expected), f"{path}: source shape changed; update coverage parser")
-        check_coverage(path, expected, cases)
-
-    plan = "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
-    expected = []
-    for cell in re.findall(r"^\| ([A-Z]+-[A-Z0-9/-]+) \|", (ROOT / plan).read_text(), re.M):
-        first, *rest = cell.split("/")
-        expected += [first] + [suffix if "-" in suffix else first.split("-")[0] + "-" + suffix for suffix in rest]
-    check_coverage(plan, expected, cases)
-    require(bool(expected), "Employee acceptance table has no parsed case IDs; review source format")
-
-    mcp = "scripts/agent-mcp-deep-e2e.mjs"
-    segments = sorted(set(re.findall(r"\breport\.([A-Za-z]+)(?:\.|\s*=)", (ROOT / mcp).read_text())))
-    require(bool(segments), "MCP report has no parsed sections; review source format")
-    check_coverage(mcp, segments, cases)
-
-    golden = json.loads((CATALOG / "golden.json").read_text())
-    groups = golden.get("groups", [])
-    require(golden.get("version") == 1 and len(groups) == 4, "golden catalog must define version 1 and four groups")
-    golden_cases = [case for group in groups for case in group.get("cases", [])]
-    require([c.get("id") for c in golden_cases] == [f"G{i:02}" for i in range(1, 21)], "golden definitions must be ordered G01 through G20")
-    source_ids = {c["id"] for c in cases}
-    for level, group in enumerate(groups, start=1):
-        require(group.get("level") == level and len(group.get("cases", [])) == 5, f"golden complexity {level}: expected five cases in order")
-        for case in group.get("cases", []):
-            label = case["id"]
-            for field in ("title", "module", "definition"):
-                require(isinstance(case.get(field), str) and case[field].strip(), f"{label}: missing {field}")
-            for field in ("setup", "actors", "grants", "steps", "verify", "evidence", "tools", "cleanup", "sourceCases"):
-                require(strings(case.get(field)), f"{label}: missing {field}")
-            sources(case, label)
-            for ref in case.get("sourceCases", []):
-                require(ref in source_ids, f"{label}: unknown source case {ref}")
-            require(not set(case).intersection({"why", "history", "status"}), f"{label}: golden cases only define scenarios")
-
-    office = json.loads((CATALOG / "office-scenarios.json").read_text())["scenarios"]
-    office_cases = [c for scenario in office for c in scenario["cases"]]
-    office_ids = unique(office_cases, "office cases")
-    require(len(office_cases) >= 100, "office catalog must contain at least 100 definitions")
-    for case in office_cases:
-        for field in ("roles", "verifies", "method"):
-            require(strings(case.get(field)), f"{case['id']}: missing {field}")
-        sources(case, case["id"])
-        require(case.get("origin") in {"existing", "defined"}, f"{case['id']}: invalid definition origin")
-    p0 = json.loads((CATALOG / "p0-golden.json").read_text())["cases"]
-    require([c["id"] for c in p0] == [f"G{i:02}" for i in range(1, 21)], "P0 must be ordered G01-G20")
-    scenario_ids = {s["id"] for s in office}
-    for case in p0:
-        for field in ("roles", "verifies", "method", "caseRefs", "scenarioRefs"):
-            require(strings(case.get(field)), f"{case['id']}: missing {field}")
-        require(set(case["caseRefs"]).issubset(office_ids), f"{case['id']}: unknown office case")
-        require(set(case["scenarioRefs"]).issubset(scenario_ids), f"{case['id']}: unknown scenario")
-        sources(case, case["id"])
-
-    metadata = (CATALOG / "suites.json").read_text() + (CATALOG / "environment.json").read_text() + (CATALOG / "golden.json").read_text()
-    require(not re.search(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|cid[A-Za-z0-9+/=]{15,}", metadata), "live object identifier found in public metadata")
-    if errors:
-        for error in errors:
-            print(error, file=sys.stderr)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-ref", help="Compare stable IDs against this available Git commit (used by CI).")
+    args = parser.parse_args(argv)
+    checker = Checker()
+    office = checker.load(OFFICE_PATH)
+    p0 = checker.load(P0_PATH)
+    checker.validate(office, p0)
+    checker.stable_ids(args.base_ref)
+    if checker.errors:
+        for error in checker.errors:
+            safe = error
+            for pattern in SENSITIVE_PATTERNS.values():
+                safe = re.sub(pattern, "[redacted]", safe, flags=re.I)
+            print(safe, file=sys.stderr)
         return 1
-    print(f"P0 + office definitions valid: 20 Golden / {len(office_cases)} office cases; source inventory: {len(suites)} suites / {len(cases)} cases; all references covered.")
+    origin = {kind: sum(c.get("origin") == kind for s in office["scenarios"] for c in s["cases"]) for kind in ("existing", "defined")}
+    print(f"Definitions valid: 20 P0 Golden / {len(checker.scenario_ids)} scenarios / {len(checker.case_owners)} cases (existing={origin['existing']}, defined={origin['defined']}).")
+    print("Structure, references and stable IDs only; no runner, model, DWS or real evaluation executed.")
     return 0
 
 
