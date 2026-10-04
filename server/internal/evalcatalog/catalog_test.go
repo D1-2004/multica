@@ -54,6 +54,44 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 			t.Fatal("missing case field", field)
 		}
 	}
+	if strings.Contains(body, "FD Workbench") || strings.Contains(body, `class="topbar"`) {
+		t.Fatal("workbench bar should be gone")
+	}
+	readyCases := map[string]bool{}
+	for _, scenario := range h.data.Scenarios {
+		for _, item := range scenario.Cases {
+			readyCases[item.ID] = item.LiveReady
+		}
+	}
+	for _, id := range []string{"office-at-employee", "office-python-real", "office-cron-real-due", "office-file-native-delivery", "office-collection-two-task-person"} {
+		if !readyCases[id] {
+			t.Fatal("expected a conversation-checkable case", id)
+		}
+	}
+	for _, id := range []string{"office-at-other", "office-json-only", "office-hook-signature", "office-memory-capture-private", "office-structured-completion-continue", "office-continue-success", "office-direct-without-issue"} {
+		if readyCases[id] {
+			t.Fatal("case is not verifiable from the conversation", id)
+		}
+	}
+	readyGolden := map[string]bool{}
+	for _, item := range h.data.Golden {
+		readyGolden[item.ID] = item.LiveReady
+	}
+	if !readyGolden["G04"] || !readyGolden["G12"] {
+		t.Fatal("expected ready golden combinations")
+	}
+	for id, ready := range readyGolden {
+		if id != "G04" && id != "G12" && ready {
+			t.Fatal("unexpected ready golden", id)
+		}
+	}
+	readyMarks := strings.Count(body, `class="ready-mark"`)
+	if h.data.ReadyGolden != 2 || h.data.ReadyCases != 33 || readyMarks != h.data.ReadyGolden+h.data.ReadyCases {
+		t.Fatalf("ready marks golden=%d cases=%d rendered=%d", h.data.ReadyGolden, h.data.ReadyCases, readyMarks)
+	}
+	if !strings.Contains(body, `id="G04"`) || !strings.Contains(body, "可跑可验证") {
+		t.Fatal("ready mark missing")
+	}
 	for _, bad := range []string{"Markdown", "仓库资产", "评测工具", "评测运行时", "为什么", "<script", "<form", "<button", "<iframe", "<no value>", "ZgotmplZ"} {
 		if strings.Contains(body, bad) {
 			t.Fatal("unexpected overview content", bad)
@@ -71,7 +109,7 @@ func TestSpecRequirementsLinkToEvaluationScenarios(t *testing.T) {
 	if strings.Count(body, `class="spec-item"`) != len(h.data.Requirements) || !strings.Contains(body, `href="/evals?tab=spec" aria-current="page"`) {
 		t.Fatal("SPEC requirements or active navigation missing")
 	}
-	if strings.Contains(body, `class="golden-item"`) || strings.Contains(body, `class="scenario-item"`) {
+	if strings.Contains(body, `class="golden-item"`) || strings.Contains(body, `class="scenario-item"`) || strings.Contains(body, "可跑可验证") || strings.Contains(body, "FD Workbench") {
 		t.Fatal("SPEC should show requirements, without duplicating evaluations")
 	}
 	for _, requirement := range h.data.Requirements {
@@ -149,7 +187,7 @@ func TestReportsTabSeparatesUnavailableEmptyAndFrozenDetail(t *testing.T) {
 		if response.Code != 200 || !strings.Contains(response.Body.String(), test.want) {
 			t.Fatal("report availability is misrepresented")
 		}
-		if strings.Contains(response.Body.String(), "QwenTag 的") || !strings.Contains(response.Body.String(), "QwenTag SPEC &amp; EVALS") {
+		if strings.Contains(response.Body.String(), "QwenTag 的") || !strings.Contains(response.Body.String(), "QwenTag SPEC &amp; EVALS") || strings.Contains(response.Body.String(), "FD Workbench") || strings.Contains(response.Body.String(), "可跑可验证") {
 			t.Fatal("page title not simplified")
 		}
 	}

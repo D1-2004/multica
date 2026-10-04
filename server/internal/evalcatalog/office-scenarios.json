@@ -60,7 +60,8 @@
           "origin": "existing",
           "sourceCases": [
             "proactive-proactive-mixed-recipients"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-bare-group-greeting",
@@ -259,7 +260,8 @@
           "origin": "existing",
           "sourceCases": [
             "progressive-missing-payload"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-missing-material",
@@ -282,7 +284,8 @@
             "server/internal/service/inboundcoord/policy_replay_test.go"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-ambiguous-reference",
@@ -305,7 +308,8 @@
             "server/internal/service/inboundcoord/policy_replay_test.go"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-latest-reset",
@@ -331,7 +335,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-history"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-one-field-correction",
@@ -357,7 +362,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-history"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-approval-vs-closing",
@@ -383,7 +389,8 @@
           "sourceCases": [
             "policy-approval-good",
             "policy-closing-good"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-json-only",
@@ -434,7 +441,8 @@
           "origin": "existing",
           "sourceCases": [
             "proactive-generic-output-question"
-          ]
+          ],
+          "liveReady": true
         }
       ],
       "categoryRef": "communication"
@@ -682,7 +690,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-task"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-new-goal-same-person",
@@ -763,7 +772,8 @@
           "origin": "existing",
           "sourceCases": [
             "policy-two-continuations"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-direct-without-issue",
@@ -1000,7 +1010,8 @@
           "origin": "existing",
           "sourceCases": [
             "progressive-presence"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-waiting-input-count",
@@ -1027,7 +1038,8 @@
           "sourceCases": [
             "employee-col-01",
             "employee-wd-04"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-scheduled-wait-honesty",
@@ -1127,7 +1139,8 @@
             "docs/evals/coordinator-collect-e2e.json"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-first-feedback-stream",
@@ -1338,7 +1351,8 @@
             "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-continue-own-file-receipt",
@@ -1365,7 +1379,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-file"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-continue-stale-read",
@@ -1502,7 +1517,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-stop"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-stop-old-output-suppressed",
@@ -1529,7 +1545,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-stop"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-stop-steer-predecessor",
@@ -1628,7 +1645,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-stop"
-          ]
+          ],
+          "liveReady": true
         }
       ],
       "categoryRef": "delivery"
@@ -1663,7 +1681,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-file"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-file-no-extra-summary",
@@ -1690,7 +1709,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-base-file"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-attachment-hidden-code",
@@ -1716,7 +1736,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-res-01"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-image-pixels-relations",
@@ -1768,7 +1789,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-res-03"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-resource-permission",
@@ -1842,7 +1864,8 @@
             "docs/workspace-storage-boundaries.md"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         }
       ],
       "categoryRef": "delivery"
@@ -1877,7 +1900,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-col-01"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-collection-two-task-person",
@@ -1904,7 +1928,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-col-02"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-collection-unreferenced-ambiguity",
@@ -1931,7 +1956,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-col-02"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-collection-replay-count",
@@ -1983,7 +2009,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-col-03"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-collection-pending-dm-scene",
@@ -2031,7 +2058,8 @@
             "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-collection-answer-not-learning",
@@ -2228,7 +2256,8 @@
             "docs/workspace-storage-boundaries.md"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-shared-disk-private-workdir",
@@ -2404,7 +2433,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-follow-01"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-terminal-without-plan",
@@ -2430,7 +2460,8 @@
             "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-followup-stale-revision",
@@ -2522,7 +2553,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-cron-01"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-cron-timezone",
@@ -2629,7 +2661,8 @@
           "origin": "existing",
           "sourceCases": [
             "employee-cron-03"
-          ]
+          ],
+          "liveReady": true
         },
         {
           "id": "office-cron-decision",
