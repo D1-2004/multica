@@ -54,7 +54,7 @@ import (
 // Marker 17 reads same-owner private tombstones across source scenes in a DM.
 // Mixed 16/17 readers pause admission, recovery and sending at the existing gate.
 // Marker 19 adds source-bound steer_task references and legacy alias resolution.
-// Older workers cannot safely execute the newly frozen task_ref tool calls.
+// This integration also retains disclosure-only progress wakes and current-Run send fences.
 const EmployeeLoopReplicaMarker = "[employee-loop:19]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails

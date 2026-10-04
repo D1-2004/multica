@@ -1,0 +1,117 @@
+{
+  "schema": "employee-short-selected-rounds.v1",
+  "planning_baseline": "f4c4790cbea1066857f96d4b6468c9710d77646b",
+  "user_selected": [
+    "B",
+    "C",
+    "D"
+  ],
+  "selection_source": "用户在本session明确回复 B C D",
+  "status": "implementation_local_verified_live_pending",
+  "session_scope": "用户最新授权已进入独立开发和远端提交；原交付会话负责共享集成发布及真实验收",
+  "user_task_scope": "同会话、一名请求人、一件通常1–2小时内能办完的工作",
+  "baseline_resolution_on_start": "实施前重新读远端、部署与其他session当版证据；已完成且未受影响的范围不重复开发/验证",
+  "rounds": [
+    {
+      "round": 1,
+      "items": [
+        "B",
+        "C"
+      ],
+      "result": "用户能查真实进度，并在原任务完成后追加一个短步骤或修改",
+      "case_refs": [
+        "GP-34",
+        "BASE-TASK",
+        "T-01",
+        "T-16"
+      ],
+      "case_selection": "GP-34覆盖B+C；其余只取必要对照/受影响回归，不全跑",
+      "scenario": [
+        "保留同goal旧候选，当前用户在原会话创建命名的一件任务",
+        "实际执行一个简单步骤；运行期间问当前进度并独立读回状态",
+        "原步骤完成后，明确对同一件事追加计算/整理步骤",
+        "确认初始Task同ID产生新Run，原执行方法和要求被继承",
+        "问已交报告的解释作为对照，允许直接回答且无新执行"
+      ],
+      "hard_acceptance": [
+        "进度有当前正确Task的真实读取，不把旧候选snapshot当现在状态",
+        "原初始Task同ID至少2Run，新结果来自真实执行；数字正确或ACK不替代",
+        "相似目标不串任务；无法定位时最小澄清，不默认最新",
+        "结果解释/独立简单问题不误派新工作；用户看到的状态/结果与事实相符"
+      ],
+      "evidence": [
+        "原请求/进度/续接精确消息ID和IM回读",
+        "初始Task与全部关联Run/queue及真实结果",
+        "前台实际read/continue参数与模型输入",
+        "有效部署窗口及必要后台执行证据"
+      ],
+      "status": "not_run"
+    },
+    {
+      "round": 2,
+      "items": [
+        "D"
+      ],
+      "result": "用户在同一件工作执行中改一个要求，最终结果按新要求交付",
+      "case_refs": [
+        "T-03",
+        "BASE-STEER"
+      ],
+      "case_selection": "复用当前原场景；按用户效果与时态/真正续接分别判，不仅修regex",
+      "scenario": [
+        "在同会话开启一个具有可观察执行窗口的简单汇总工作",
+        "独立证明任务确实仍在运行，再补一个具体纠正要求",
+        "确认纠正归原Task，旧执行按现有退出屏障被处理",
+        "读回新执行结果和实际交付，核新要求已应用"
+      ],
+      "hard_acceptance": [
+        "仅正确原目标被纠正；新要求实际生效，不仅说已收到",
+        "旧writer有现有合同所需退出证明，新writer不与旧writer共写",
+        "过时结果不冒充新完成，不重复创建无关工作或重复交付",
+        "保留原source/权限/交付约定，不顺带引入完整Capsule或跨场域协议"
+      ],
+      "evidence": [
+        "纠正前运行事实及对应消息",
+        "原Task目标版本/纠正输入/新旧Run关联",
+        "真实退出/新结果/交付事实",
+        "必要IM/API/SLS/LF及窗口证明"
+      ],
+      "status": "not_run"
+    }
+  ],
+  "completion_flow": "每小轮反馈用户效果、证据和限制；推进已选队列；BCD全部完成后再提供新选项",
+  "unselected_items": [
+    "A",
+    "E",
+    "F"
+  ],
+  "deferred_capability_pool": [
+    "完整Capsule",
+    "任意长Run人机等待",
+    "多Task共写",
+    "跨场域协作/私有共享",
+    "共享经验晋级",
+    "扩源",
+    "视觉"
+  ],
+  "common_boundary": "只解决选中切片的必要改动与前置；缺证标未完成，不以局部通过签收；不替其他session集成/发布，不自动扩全量88条",
+  "research_followups": [
+    {
+      "id": "P",
+      "subject": "后台可读进展进入EmployeeLoop，选择展示或静默",
+      "status": "source_review_and_design_complete",
+      "implementation_selected": false,
+      "plan": "proactive-progress-design.md",
+      "cases": "progress-research-cases.json",
+      "scope": "单scene/单Task阶段回报，不含HumanQuestion等待或完整Capsule"
+    }
+  ],
+  "implementation_baseline": "79645b5b7b176ab36aa73a38bf9493ce4c8dd105",
+  "current_status_entry": "implementation.md",
+  "integration_owner": {
+    "thread_id": "01a10278-0dd8-7a83-be4c-72fc351bbecf",
+    "current_title": "发布和验收",
+    "authorization": "用户已授权同步给原交付会话并由其集成发布"
+  },
+  "progress_slice": "专用report_progress→持久候选→display-only Loop→既有outbox已实现，本地验证通过，真实Runtime/模型/钉钉待验"
+}

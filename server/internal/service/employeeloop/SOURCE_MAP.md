@@ -395,3 +395,24 @@ into current-scene filtering. Frozen manifests match ID plus actual originScene;
 existing tool IDs/ancestor closure retain their authorization and bounds. Lookup
 scope and stored snapshots/journals are unchanged; canonical EmployeeLoop epoch17
 pauses mixed privacy readers. See employee-private-withdrawal.md.
+
+
+### Executor progress is a display-only task wake
+
+The fixed GawkBot source separates activity, readable live chat and selected
+task notifications (`headless_live_chat_relay.go`, `server_messages.go`,
+`notifier_targets.go`). Multica adopts that separation: raw thinking/tool events
+do not become new coordinating turns. Its interrupting IM surface instead
+passes explicit readable candidates through one bounded EmployeeLoop decision.
+
+`employee_progress_mcp.go` exposes only `report_progress` to compatible Employee
+Direct claims through `runner_mcp.go`, without restoring generic workflow tools.
+The task token authenticates the Runtime owner; the original TaskOrigin
+independently supplies the business principal and scene.Ref. Candidate/wake
+admission is atomic and idempotent in PostgreSQL. `execution.progress` reuses
+the task-wake journal and HostNotice/outbox, with only reply/quiet; it skips
+autonomous rounds and the work ledger. Current Run/revision, authority, identity
+and live reader compatibility are checked again before a new send. Only actual
+delivered reply text enters the already-shown context. Final delivery remains
+independent. See `docs/employee-progress.md` and its implementation/evidence
+entry; local scripted-model/provider checks do not prove live semantic quality.

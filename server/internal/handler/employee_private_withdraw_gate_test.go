@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -18,7 +20,8 @@ func TestEmployeePrivateWithdrawalEpochRejectsMixedReaders(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM deployment_fence_replica_ack WHERE instance_id=ANY($1::text[])`, []string{current, old})
 	})
-	if EmployeeLoopReplicaMarker != "[employee-loop:18]" {
+	version, parseErr := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(EmployeeLoopReplicaMarker, "[employee-loop:"), "]"))
+	if parseErr != nil || version < 18 {
 		t.Fatal("cross-origin privacy reader epoch is not advertised")
 	}
 	if _, err := testPool.Exec(ctx, `INSERT INTO deployment_fence_replica_ack(instance_id,build_id,state,revision,last_seen_at) VALUES($1,'previous [employee-loop:17]','normal',1,now())`, old); err != nil {
