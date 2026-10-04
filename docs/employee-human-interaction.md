@@ -1,6 +1,6 @@
 # Employee 人工选择与文字答复
 
-本页描述当前源码行为；部署与真实IM验收分别以当波交付记录为准。生产者须等待所有副本具备 `[employee-human:2]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
+本页描述当前源码行为；部署与真实IM验收分别以当波交付记录为准。生产者须等待所有副本具备 `[employee-human:3]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
 
 ## 询问与索引
 
@@ -76,4 +76,12 @@ Employee专用compact投影按用户确认的模板选择，卡内不拼原消�
 
 禁用复用scope/question锁和question answered终态，response intent=dismiss只是关闭审计，不创建typed human_response wake/Task，不释放必需等待或停止后台Task。原Task停止仍用stop_task。native点击与dismiss竞争只一个终态；重复disable不覆盖先前答案，旧卡迟点拒绝。a2ui存储status沿用answered，result.outcome=disabled区分显示，持久原卡projection outbox按原bizId更新FINISH；模型不能指定bizId/场域或人员权限。发送尚未完成时先关闭状态，晚回执后补锁卡；未知投递不重发新卡。
 
-新dismiss/disabled生产者须等待全部live副本支持human:2；混版1/2双方暂停新人工生产者，避免旧关闭reader将disabled更新永久标blocked。旧native submit协议不变；工具snapshot仍冻结，不热改旧journal。
+新引用绑定生产者须等待全部live副本支持human:3；混版2/3双方暂停新人工生产者，防止旧reader忽略引用约束。旧native submit协议不变；工具snapshot仍冻结，不热改旧journal。
+
+## 原消息引用到问题的索引
+
+每个当前source独立携带冻结的quoted_human_questions。Host同时查询同workspace/agent/tenant/scene/requester的response_action.provider_message_id与a2ui_interaction.message_id，不按题目或时间猜。命中唯一问题后，以员工身份重新读取outer和quoted消息，验证发送者、引用ID、当前CID和员工自身发送事实，才得到exact question_ref。多匹配为ambiguous；卡片占位引用缺消息身份为unresolved；普通引用为not_question，沿用原有文字语义。模型对精确引用的“先不管”先调用失效工具，提交成功后再回复。
+
+Host写前检查冻结绑定，引用A不能操作B；原快照没有绑定时不现场添加新授权。关闭事务重新检查映射与来源权限。没有精确消息ID不创建假绑定，也不重发未知卡。
+
+生产发送服务构造后才安装OnA2UIAccepted，否则成功发卡的真实BizId不会落盘。已记录BizId/MID不能被不同回执覆盖，空BizId拒绝。SDK发卡在原client/原凭据内最多3秒补查一次真实送达MID/CID；失败不撤销成功创建，不重发。CLI跨进程无法保证异步任务原token，仍保留缺MID的限制。安全日志dws_a2ui_receipt_identity仅记录transport、request ID及身份字段是否存在，真实验收必须证明目标实际使用SDK及得到MID。历史已丢失BizId的卡不能由本次修改恢复，原卡更新不能被新卡样式测试替代。

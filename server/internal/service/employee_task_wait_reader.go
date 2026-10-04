@@ -35,10 +35,17 @@ func (EmployeeTaskWaitFacts) ReadEmployeeTaskWait(ctx context.Context, tx pgx.Tx
 	scope := task.Scope
 	var id, kind, ref string
 	var since time.Time
-	err := tx.QueryRow(ctx, `SELECT id::text,kind,ref_id,created_at FROM employee_task_wait
+	// Dismissing a question mutes only that question's reminder. Its durable
+	// wait and Task remain unchanged; select another open wait if one exists.
+	err := tx.QueryRow(ctx, `SELECT w.id::text,w.kind,w.ref_id,w.created_at FROM employee_task_wait w
  WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid
  AND state='open' AND mandatory AND goal_revision=$5
- ORDER BY opened_seq,id LIMIT 1`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, task.ID, task.GoalRevision).Scan(&id, &kind, &ref, &since)
+ AND NOT (w.kind='human_input' AND EXISTS (
+ SELECT 1 FROM employee_human_question q JOIN employee_human_response r ON r.id=q.response_id AND r.question_id=q.id
+ WHERE q.id::text=w.ref_id AND q.workspace_id=w.workspace_id AND q.agent_id=w.agent_id
+ AND q.tenant_org_id=w.tenant_org_id AND q.scene_id=$6::uuid AND q.task_id=w.task_id
+ AND q.goal_revision=w.goal_revision AND q.state='answered' AND r.body->>'intent'='dismiss'))
+ ORDER BY opened_seq,w.id LIMIT 1`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, task.ID, task.GoalRevision, scope.Scene.SceneID).Scan(&id, &kind, &ref, &since)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EmployeeTaskWait{}, false, nil
 	}

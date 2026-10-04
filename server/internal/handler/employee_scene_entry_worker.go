@@ -307,6 +307,8 @@ func (w *EmployeeSceneWorker) WaitWithTimeout(timeout time.Duration) bool {
 }
 
 type employeeSavedInput struct {
+	// HumanQuotes freezes exact source-to-question authority before inference.
+	HumanQuotes  []employeeHumanQuote           `json:"human_quotes,omitempty"`
 	Input        employeeloop.Input             `json:"input"`
 	Config       employeeloop.Config            `json:"config"`
 	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
