@@ -870,6 +870,75 @@
           "sourceCases": [
             "proactive-generic-same-marker-different-work"
           ]
+        },
+        {
+          "id": "office-independent-repeat-execution",
+          "title": "相同目标明确另开新事项",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "执行资源：专用候选Runtime及实际Python"
+          ],
+          "verifies": [
+            "当前本人明确要求独立新工作，即使与旧成功工作的目标和数值相同，也新建Task和Run并继承本次实际执行要求；不复述旧报告。"
+          ],
+          "method": [
+            "保留原场域、原请求人和已成功的Python计算历史，再用原失败台词要求另开新工作，实际sleep后计算同一输入。不得清历史或换群。",
+            "独立核current source绑定的新Task/Run、Python实跑和等待事实；旧Task版本不变。答案数值正确但无新执行判失败。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-task-lookup-owner-first",
+          "title": "优先查当前请求人在本群发起的事项",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "其他发言者：测试真人小乙"
+          ],
+          "verifies": [
+            "旧事项查找先在本场域匹配当前发言者；其他人更近的同名事项不能挤掉本人的匹配。独立新工作不先查旧事项去重。"
+          ],
+          "method": [
+            "同群准备小甲较早的匹配事项、小乙更近的同名事项和小甲无关事项；小甲询问该事项进度，再明确另开同名工作。",
+            "核原生查找的来源和候选层、后续读取及Task归属：进度绑定小甲的匹配；新工作产生新Run，无旧报告候选默认注入。用错源或按时间选小乙判失败。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-task-shared-metadata-only",
+          "title": "本人未命中时只读本群共享摘要",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "其他发言者：测试真人小乙"
+          ],
+          "verifies": [
+            "本人没有匹配才查本群其他人事项的目标、状态和时间；不展示执行指令、结果、历史或私有资料，也不取得修改权。单聊不跨人查询。"
+          ],
+          "method": [
+            "在同群让小乙建立相关事项并放入专用私有标记，小甲只有无关事项；小甲查询相关目标，再尝试续接、停止、调整、查完整历史或依赖其结果。",
+            "核共享层仅返回安全元数据，所有控制和执行材料读取被拒且Task/Run不变；单聊同样查询零跨人候选。对照工具journal、API和消息正文检查私有标记零泄露。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "delivery"
@@ -1056,6 +1125,79 @@
             "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md",
             "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md",
             "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-stream",
+          "title": "必要查找时首轮自然反馈和最终答复",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹"
+          ],
+          "verifies": [
+            "首轮模型在必要查找前生成一条自然公开首句，完整帧可在模型流结束前入队；同一请求完成必要工具和最终答复，不新增反馈专用模型轮次。",
+            "首句只表达准备核对，不能代替执行、接单或最终结果；直答、严格数字或JSON、安静和直接受理不额外反馈。"
+          ],
+          "method": [
+            "单一真人在已知工作存在的会话询问需查找的进度，用真实模型和可观测的流式provider；另测直答、严格格式、quiet和直接受理。",
+            "核首个generation、完整first_feedback帧和首句投递、后续工具及最终消息的独立账本；首句在流结束前可入队，业务读取只在整批完成后执行。HTTP SSE夹具只证明时序，不代替真实IM自然表达通过。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/service/employeeloop/stream_test.go",
+            "server/internal/handler/employee_stream_integration_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-incomplete-plan",
+          "title": "流截断或非法计划不提前执行业务",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "故障资源：隔离SSE provider"
+          ],
+          "verifies": [
+            "仅完整、明确来源的公开反馈帧可早接收；半个参数、普通正文和推理不外发。之后的截断、length或非法业务批次零业务调用，最终如实说明未完成。"
+          ],
+          "method": [
+            "隔离provider依次返回半个反馈参数、有效反馈后截断读取、length、错误字段和终结工具混批。保留已提交公开意图与整轮失败的分别记录。",
+            "逐例联合读模型journal、native调用与业务变化：未完成帧零发送，非法整批零业务效果，已完整接收的首句不冒充执行成功。对照最终回复和剩余预算。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/service/employeeloop/stream_test.go",
+            "server/pkg/llm/stream_collect_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-recovery-final",
+          "title": "重启与最终答复竞态不重复首句",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "故障执行者：隔离环境owner"
+          ],
+          "verifies": [
+            "仅第一次实际模型请求可新建首句；重发未完成首请求不能再首次创建。已入账首句可幂等重放，最终答复独立完成且取消尚未提交的首句。",
+            "发送状态不明或已接受只查询不重发，不关闭原请求callback；已经外部提交的首句可能迟到，应保留这一限制。"
+          ],
+          "method": [
+            "隔离环境分别在首响应保存前重启、反馈事务提交后重放、发送门通过但尚未reserve时完成最终答复；再模拟unknown或已接受。",
+            "联合核model_attempts、稳定反馈key、native journal、response_action状态及真实发送次数；pending被final取消且不复活，unknown不重发，final可发送一次且不被首句阻塞。本地provider替身不证明第三方到达次序。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_first_feedback_test.go",
+            "server/internal/service/dingtalkresponse/first_feedback_test.go"
           ],
           "origin": "defined",
           "sourceCases": []

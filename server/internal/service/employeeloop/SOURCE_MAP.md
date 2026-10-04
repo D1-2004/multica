@@ -416,3 +416,23 @@ and live reader compatibility are checked again before a new send. Only actual
 delivered reply text enters the already-shown context. Final delivery remains
 independent. See `docs/employee-progress.md` and its implementation/evidence
 entry; local scripted-model/provider checks do not prove live semantic quality.
+
+
+### On-demand task discovery and first-request public stream frame
+
+The fixed GawkBot RuleZero (`internal/team/prompt_builder.go`) puts work intent
+before persona and capabilities. New Multica inputs adopt this ordering through
+optional trusted DecisionRules and avoid unconditional old-report candidates.
+Native find_tasks binds current scene plus sender first; group fallback exposes
+metadata only, never control authority. Prior t/q snapshots retain their bytes.
+
+GawkBot's `headless_live_chat_relay.go` separates public content from tool syntax,
+but its text buffering and final suppression cannot prove a Multica final reply.
+The PRI-101 instance record documents intermediate public messages without proving
+first-model timing or backend cancellation. Multica therefore uses one explicit
+native first_feedback frame in the existing first provider stream, with a durable
+nonterminal notification and independent final delivery. Complete-frame parsing,
+whole business-batch validation, physical-request gating, source authorization and
+unknown reconciliation remain Host responsibilities. No extra display model is
+added. See docs/employee-loop.md and the 2026-10-04 implementation Plan; real-model
+intent and IM timing still require the release owner's original-scene verification.

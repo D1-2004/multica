@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -74,6 +75,49 @@ func TestEmployeeFirstFeedbackEarlyFrameAndJournalReplay(t *testing.T) {
 	if _, err = h.Execute(ctx, id, call); !errors.Is(err, employeeloop.ErrToolRefused) {
 		t.Fatal("second first feedback accepted", err)
 	}
+}
+
+func TestEmployeeFirstFeedbackRecoveryDoesNotCreateOnSecondPhysicalRequest(t *testing.T) {
+	for _, alreadyAccepted := range []bool{false, true} {
+		t.Run(fmt.Sprint(alreadyAccepted), func(t *testing.T) {
+			_, h, id, source := firstFeedbackFixture(t)
+			ctx := context.Background()
+			call := firstFeedbackCall(source)
+			if alreadyAccepted {
+				if _, err := h.Execute(ctx, id, call); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var journal []employeeentry.ModelTurn
+			if err := testPool.QueryRow(ctx, `SELECT model_journal FROM employee_scene_job WHERE id=$1`, h.job.ID).Scan(&journal); err != nil {
+				t.Fatal(err)
+			}
+			// The process died before saving its response. Recovering ordinal zero
+			// consumes a second HTTP reservation, not a new first-request window.
+			if _, err := h.worker.store.BeginModel(ctx, h.job, 0, journal[0].Request); err != nil {
+				t.Fatal(err)
+			}
+			out, err := h.Execute(ctx, id, call)
+			if alreadyAccepted {
+				if err != nil || out.Receipt == "" {
+					t.Fatal("accepted journal replay lost idempotency", out, err)
+				}
+			} else if !errors.Is(err, employeeloop.ErrToolRefused) {
+				t.Fatal("second physical request created first feedback", out, err)
+			}
+			var rows int
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM employee_first_feedback WHERE job_id=$1`, h.job.ID).Scan(&rows); err != nil || rows != boolCount(alreadyAccepted) {
+				t.Fatal(rows, err)
+			}
+		})
+	}
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 func TestEmployeeFirstFeedbackFinalSupersedesPendingOnly(t *testing.T) {
 	for _, state := range []string{"pending", "unknown", "provider_accepted"} {

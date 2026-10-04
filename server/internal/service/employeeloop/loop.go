@@ -144,6 +144,9 @@ func (l *Loop) callModel(ctx context.Context) error {
 	l.state.ModelCalls++
 	l.mu.Unlock()
 	params := openai.ChatCompletionNewParams{Model: shared.ChatModel(l.config.Model), Messages: messages, Tools: allowedTools}
+	if l.config.StreamedFeedback {
+		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
+	}
 	if l.config.StreamedFeedback && l.GetState().ModelCalls > 1 {
 		filtered := params.Tools[:0]
 		for _, t := range params.Tools {

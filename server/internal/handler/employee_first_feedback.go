@@ -19,6 +19,38 @@ import (
 
 var firstFeedbackNamespace = uuid.MustParse("28e0f78f-5856-49de-aef6-d8ea326edbdb")
 
+// Use the already chosen discovery tool version, not a second readiness read.
+// Old inputs, automation and ambiguous multi-source windows keep their wire bytes.
+func employeeConfigureFirstFeedback(cfg *employeeloop.Config, job employeeentry.Job, messages []employeeSourceMessage, envelopes []employeeDispatchEnvelope) {
+	if job.Kind != employeeentry.KindMessage || len(messages) != 1 || messages[0].RequesterRef == "" || messages[0].SourceRef == "" || messages[0].Message.Reaction != nil || strings.TrimSpace(messages[0].Message.Text) == "" {
+		return
+	}
+	addressed := false
+	for i, item := range job.Items {
+		if i < len(envelopes) && item.ReceiptID == messages[0].ReceiptID {
+			addressed = employeeParticipationAddressed(envelopes[i], messages[0])
+		}
+	}
+	if !addressed {
+		return
+	}
+	for _, env := range envelopes {
+		if env.Command.Continuation != nil {
+			return
+		}
+	}
+	discovery := false
+	for _, tool := range cfg.Tools {
+		discovery = discovery || tool.Name == "find_tasks"
+	}
+	if !discovery {
+		return
+	}
+	cfg.StreamedFeedback = true
+	cfg.Tools = append(cfg.Tools, employeeFirstFeedbackTool())
+	cfg.Persona.DecisionRules += "\nPUBLIC FIRST-REQUEST FEEDBACK: Only when this current human request needs an earlier Task lookup, emit first_feedback first with one short natural public sentence describing what you are about to check, then the necessary find_tasks/read_task calls in the same response. This uses the same model request, never an extra round. Do not claim work was executed, accepted or finished. Direct answers, strict number/JSON formats, dispatch/stop/steer acknowledgments and quiet decisions need no feedback. Never expose reasoning, private material, code or tool syntax. The feedback is nonterminal and never replaces the eventual answer or failure."
+}
+
 func employeeFirstFeedbackTool() employeeloop.Tool {
 	return employeeloop.Tool{Name: "first_feedback", Effect: true, Description: "On the first model request only, publish one short natural sentence about your intended lookup of this human's Task before a necessary find_tasks/read_task plan. This is public intent, never a work execution receipt, completed result or acceptance ACK. Use exactly one source. Do not use for direct answers, dispatch/stop/steer ACKs, strict number/JSON output, quiet, reactions or automation. No tool names, JSON, code or private details. Continue the same model response with the necessary read plan; this never finishes the request.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": map[string]any{"type": "string"}, "text": map[string]any{"type": "string", "maxLength": 80}, "intent": map[string]any{"type": "string", "enum": []string{"lookup"}}}, "required": []string{"source_ref", "text", "intent"}, "additionalProperties": false}}
 }
@@ -65,12 +97,13 @@ func (h *employeeSceneHost) firstFeedbackEligible(ctx context.Context, tx pgx.Tx
 		return firstFeedbackRefused("feedback requires exactly one frozen source")
 	}
 	var journal []employeeentry.ModelTurn
+	var attempts int
 	var state string
 	var unfinished bool
-	if err := tx.QueryRow(ctx, `SELECT state,outcome IS NULL,model_journal FROM employee_scene_job WHERE id=$1::uuid`, h.job.ID).Scan(&state, &unfinished, &journal); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT state,outcome IS NULL,model_journal,model_attempts FROM employee_scene_job WHERE id=$1::uuid`, h.job.ID).Scan(&state, &unfinished, &journal, &attempts); err != nil {
 		return err
 	}
-	if state != "running" || !unfinished || len(journal) != 1 || journal[0].Failure != "" {
+	if state != "running" || !unfinished || len(journal) != 1 || attempts != 1 || journal[0].Failure != "" {
 		return firstFeedbackRefused("feedback is only allowed in the first unfinished model request")
 	}
 	var request struct {

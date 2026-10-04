@@ -58,7 +58,9 @@ import (
 // Older workers cannot safely execute the newly frozen task_ref tool calls.
 // Marker 20 combines marker 19 steer support with disclosure-only progress wakes
 // and their current-Run send fence.
-const EmployeeLoopReplicaMarker = "[employee-loop:20]"
+// Marker 21 adds source-bound task discovery and the explicit first-request
+// feedback frame, its running send fence and the frozen streaming request flag.
+const EmployeeLoopReplicaMarker = "[employee-loop:21]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -596,6 +598,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 			break
 		}
 	}
+	employeeConfigureFirstFeedback(&input.Config, job, messages, envelopes)
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
