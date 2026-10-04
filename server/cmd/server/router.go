@@ -2552,6 +2552,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Handle("/api/employee-progress/mcp", http.HandlerFunc(h.EmployeeProgressMCP))
 		// config-qwen-tag-scene: one task's current scene, bound by the scene
 		// token in the path (task token only).
 		r.Handle("/api/scene-config/mcp/{sceneToken}", http.HandlerFunc(h.SceneConfigMCP))

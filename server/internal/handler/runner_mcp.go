@@ -326,6 +326,15 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 		}
 		routes["multica"] = MCPRelayRoute{Path: "/api/mcp", Authorization: "Bearer " + taskToken}
 	}
+	if employeeProgressDirectQueue(task) && h.EmployeeSceneWorker != nil {
+		if ready, readyErr := h.EmployeeSceneWorker.TaskWakeProducerReady(ctx); readyErr == nil && ready {
+			managedServers[employeeProgressMCPServerName] = map[string]any{
+				"type": "http", "url": publicURL + employeeProgressMCPPath,
+				"headers": map[string]string{"Authorization": "Bearer " + taskToken},
+			}
+			routes[employeeProgressMCPServerName] = MCPRelayRoute{Path: employeeProgressMCPPath, Authorization: "Bearer " + taskToken}
+		}
+	}
 	// The current scene's configuration server, bound to this task and scene
 	// by the scene token in its path (scene_config_mcp.go).
 	if path, ok := h.sceneConfigMCPRoute(ctx, runtime.WorkspaceID, task); ok {

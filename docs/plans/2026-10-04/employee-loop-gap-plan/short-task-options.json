@@ -1,0 +1,128 @@
+{
+  "schema": "employee-short-task-options.v1",
+  "source_commit": "f4c4790cbea1066857f96d4b6468c9710d77646b",
+  "status": "implementation_local_verified_live_pending",
+  "user_task_horizon": "通常1–2小时内完成的一件工作",
+  "recommended": [
+    "B",
+    "C"
+  ],
+  "current_round": 1,
+  "note": "BCD已选，最新用户授权开发；复用已提交路径并验证影响范围。本轮新增主动进展最小链路，本地通过，等待原交付会话集成和真实验收。",
+  "items": [
+    {
+      "id": "A",
+      "title": "收到一份真实成果文件",
+      "example": "把这些材料整理成一页周报，发我文件",
+      "benefit": "交办后有可用成果，文件实际收到",
+      "acceptance": "实际执行与文件读回、内容和次数符合交付约定",
+      "gap": "GAP-02",
+      "cases": [
+        "T-06",
+        "BASE-FILE"
+      ],
+      "selected": false
+    },
+    {
+      "id": "B",
+      "title": "问到真实进度",
+      "example": "刚才那件现在做到哪了？",
+      "benefit": "知道当前排队、运行、完成或失败状态",
+      "acceptance": "读取当前正确Task，不把旧快照当进度，不编造百分比/ETA",
+      "gap": "GAP-02",
+      "cases": [
+        "GP-34",
+        "BASE-TASK"
+      ],
+      "selected": true
+    },
+    {
+      "id": "C",
+      "title": "同一件事完成后继续改",
+      "example": "这份再按客户排一下",
+      "benefit": "沿原工作继续，保留原来的要求",
+      "acceptance": "同一Task真实新增Run并继承执行方法；不把直接答案当执行",
+      "gap": "GAP-02",
+      "cases": [
+        "GP-34",
+        "T-01",
+        "T-16"
+      ],
+      "selected": true
+    },
+    {
+      "id": "D",
+      "title": "执行中改一个要求",
+      "example": "先按客户，别按负责人汇总",
+      "benefit": "新要求进入正在做的那件事",
+      "acceptance": "正确原目标、新要求实际应用、旧结果不冒充新完成",
+      "gap": "GAP-02",
+      "cases": [
+        "T-03",
+        "BASE-STEER"
+      ],
+      "selected": true
+    },
+    {
+      "id": "E",
+      "title": "停止后不再往下做",
+      "example": "不用了，停一下",
+      "benefit": "停止正确工作，后续不再继续执行或交付",
+      "acceptance": "停止和退出有事实依据，迟到旧结果不当新完成",
+      "gap": "GAP-02",
+      "cases": [
+        "T-04",
+        "T-14",
+        "BASE-STOP"
+      ],
+      "selected": false
+    },
+    {
+      "id": "F",
+      "title": "开工前问一次澄清",
+      "example": "按客户汇总，还是按负责人？",
+      "benefit": "少问、问准，选好再做",
+      "acceptance": "补一个缺失选择后按答案执行，不反复追问或误开任务",
+      "gap": "GAP-01",
+      "cases": [
+        "foreground_ambiguity"
+      ],
+      "selected": false
+    }
+  ],
+  "user_selected": [
+    "B",
+    "C",
+    "D"
+  ],
+  "planned_rounds": [
+    {
+      "round": 1,
+      "items": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "round": 2,
+      "items": [
+        "D"
+      ]
+    }
+  ],
+  "suggested_round_size": 2,
+  "research_followups": [
+    {
+      "id": "P",
+      "subject": "后台可读进展进入EmployeeLoop，选择展示或静默",
+      "status": "implemented_local_verified_live_pending",
+      "implementation_selected": true,
+      "plan": "proactive-progress-design.md",
+      "cases": "progress-research-cases.json",
+      "scope": "单scene/单Task阶段回报，不含HumanQuestion等待或完整Capsule",
+      "implementation": "implementation.md"
+    }
+  ],
+  "implementation_baseline": "79645b5b7b176ab36aa73a38bf9493ce4c8dd105",
+  "current_status_entry": "implementation.md"
+}

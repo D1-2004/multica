@@ -1063,6 +1063,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 				for _, statement := range []string{
 					`DELETE FROM employee_event_consumption WHERE workspace_id=$1`,
 					`DELETE FROM employee_host_notice WHERE workspace_id=$1`,
+					`DELETE FROM employee_progress_report WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_follow_up WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_plan WHERE workspace_id=$1`,
 					`DELETE FROM employee_scene_participation WHERE workspace_id=$1`,

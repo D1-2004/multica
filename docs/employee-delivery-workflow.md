@@ -20,4 +20,5 @@
 
 共享发布/Apply和真实测试窗口有明确负责人；实现、独立审查和只读取证按各自边界推进。产品行为、观测完整性与Runtime状态分别签收。长等待及新发现按通用合同形成检查点和接手包。
 
-已有交付历史与未完成项可从 [Employee 执行表](employee-delivery-execution.md) 查询；它描述对应波次，不是所有任务的固定流程。
+
+对应已完成批次的实际轨迹见[收口效率沿革](plans/2026-10-04/employee-closeout-efficiency-history.md)，当前交付事实见[执行表](employee-delivery-execution.md)。这些是批次记录，不作为固定账号、路径或截止的项目政策。

@@ -56,7 +56,9 @@ import (
 // Marker 18 adds durable scene participation and its Host tool/send guard.
 // Marker 19 adds source-bound steer_task references and legacy alias resolution.
 // Older workers cannot safely execute the newly frozen task_ref tool calls.
-const EmployeeLoopReplicaMarker = "[employee-loop:19]"
+// Marker 20 combines marker 19 steer support with disclosure-only progress wakes
+// and their current-Run send fence.
+const EmployeeLoopReplicaMarker = "[employee-loop:20]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

@@ -1,0 +1,178 @@
+{
+  "schema": "employee-progress-research.contract-cases.v1",
+  "note": "7条仍为设计与真实证据合同，未接入live driver/未运行真实E2E。本轮最小实现及定向本地结果见implementation-acceptance.json；合并候选/通用抽取不在本轮切片。",
+  "source_commit": "f4c4790cbea1066857f96d4b6468c9710d77646b",
+  "research_subject": "P：后台可读进展进入EmployeeLoop，决定展示或静默",
+  "user_selected_implementation": [
+    "B",
+    "C",
+    "D"
+  ],
+  "status": "implemented_local_verified_live_pending",
+  "case_count": 7,
+  "required_before_live": [
+    "真实可调用的report_progress producer或经验证的等价端口",
+    "新progress reader与全副本就绪门",
+    "同Task/Run/版本/scene的候选和决定存储",
+    "中间notice/outbox与实际钉钉readback消费者",
+    "专用场域和可保持非终态执行窗口的测试Runtime"
+  ],
+  "evidence_consumers": {
+    "candidate_lineage": "获准只读API/测试库核report/receipt/Task/Run/goal revision/scene与正文hash；不以任意body声称的scope为真",
+    "model_decision": "精确progress wake的employee_model完整输入/实际tools/result/journal与calls；排除截断和模型proposed未受理参数",
+    "effect_and_delivery": "progress决定与action同Tx，outbox/attempt/receipt/目标会话原生messageId和分页完整readback；accepted不是delivered",
+    "execution_boundary": "原Run活动/真实退出/当前版本/最终result的业务事实，及相关SLS窗口；不以completed或文字自述替代",
+    "semantic_review": "基于上述事实判信息新意、业务价值、适当受众与真实措辞；安全/幂等硬失败不被质量分抵消"
+  },
+  "cases": [
+    {
+      "id": "PRG-01",
+      "title": "真正中途的阶段报告经Loop后可见",
+      "primary_failure": "最终通知被当作中途进展，或执行器直发被当作Loop决定",
+      "user_text": "先核对这份报销明细，有缺项时告诉我，全部核完再给我文件。",
+      "setup": "真实Run完成一个可验证阶段后提report并继续运行；阻止final在中途观察前完成，不伪造provider事件。",
+      "reported_progress": "12笔已核对，2笔缺日期；我正在继续检查其他项。",
+      "hard_assertions": [
+        "原Run仍非终态时有真实candidate→receipt→progress wake",
+        "模型只允许展示或静默；本例在有用事实/权限成立下选择展示",
+        "实际原scene收到一次有依据消息，原Task/Run继续且无新执行/完成/memory写入"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "execution_boundary",
+        "semantic_review"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-02",
+      "title": "原始噪声、重复和无新意候选不刷屏",
+      "primary_failure": "每个token/tool/heartbeat都变模型job或钉钉消息",
+      "user_text": "帮我整理这份周报，关键变化再告诉我。",
+      "setup": "有顺序地注入真实执行产生的thinking/tool_use/tool_result、完整合法进展及重复/常规候选；含低敏合成私有哨兵以检查展示边界。",
+      "reported_progress": "第一段真实阶段后连续多条“还在检查”，其中一条相同report_id重投。",
+      "hard_assertions": [
+        "非业务原始事件不进入展示候选/LLM，thinking和原始工具敏感正文不公开",
+        "同report_id重放不多一次generation或action；合法多候选保留来源并有界合并",
+        "无新信息Quiet有持久reason/covered refs，用户实际消息次数不随片段数增长"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "semantic_review"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-03",
+      "title": "同一任务中有用新发现与常规更新分开判断",
+      "primary_failure": "看关键词/长度就发，或有关键发现也静默",
+      "user_text": "核对这些费用，影响最终结果的缺口及时告诉我。",
+      "setup": "两条不同report_id，第一条只有进行中陈述，第二条有工具结果/真实材料引用支持的重复票据发现；model材料包含此前实际送达内容。",
+      "reported_progress": [
+        "我还在核对费用。",
+        "发现一张票据重复计入，合计会多算120元；这部分正在按原记录核对。"
+      ],
+      "hard_assertions": [
+        "前者可Quiet，后者有真实事实与受众资格时展示；允许自然同义表达",
+        "不把正在核对说成已改好，不自行新增120元以外结论",
+        "展示判断使用信息变化/原约定，不能只按字数、词表或kind自报"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "semantic_review"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-04",
+      "title": "重投、决定后崩溃和unknown发送仍一次效果",
+      "primary_failure": "恢复重新推理/改文案并重复新发",
+      "user_text": "关键阶段说一次就行。",
+      "setup": "真实candidate同ID/body重复提交；另做相同ID冲突body对照；在决定/outbox事务后、发送前置故障，并对一次provider提交未确认结果留unknown再对账。",
+      "reported_progress": "费用清单已核完，正在生成草稿。",
+      "hard_assertions": [
+        "重复返回原receipt，冲突拒绝；原candidate不被覆盖",
+        "决定/journal/outbox原意图恢复，不追加generation或另建action",
+        "unknown按实际receipt/readback对账而非盲目重发；发送失败不变人已看见"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "execution_boundary"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-05",
+      "title": "D纠正或停止后的旧进展不新发",
+      "primary_failure": "旧Run/目标版本pending在纠正后继续展示",
+      "user_text": "这份改按客户汇总，别按负责人。",
+      "setup": "旧Run候选已入库/已决定未发，与D纠正和新Run/goal revision交错；另做停止边界。已提交unknown的旧发送单列，不断言可以撤回。",
+      "reported_progress": "旧报告称负责人汇总已整理；新Run报告按客户汇总正在生成。",
+      "hard_assertions": [
+        "旧source保留审计但发送前被当前Run/revision/stop guard拒绝或supersede",
+        "新版本进展归原Task/正确scene，不被旧进度覆盖",
+        "已发生或unknown效果按真实提交顺序对账，不用quiescent承诺已撤回外部消息"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "execution_boundary"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-06",
+      "title": "中间进展与final独立覆盖，尊重明确安静约定",
+      "primary_failure": "进展送达抑制最终成果，或终态后还发旧阶段",
+      "user_text": "先给我一条关键进展，做好后把文件交给我。",
+      "setup": "先送progress再真实final；另做final事务先于旧pending progress；第三对照源明确“不要中间消息，只交最终文件”。",
+      "reported_progress": "数据核对完成，草稿还在生成。",
+      "hard_assertions": [
+        "progress delivered不能作为final已覆盖；最终文件实际可收到并核内容",
+        "final已提交后未提交旧progress失效，已提交unknown另行对账",
+        "明确不要中间消息时Pquiet，但最终约定保持；不能泛化任何仅文件请求都自动授权静音"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "execution_boundary",
+        "semantic_review"
+      ],
+      "execution_status": "not_run"
+    },
+    {
+      "id": "PRG-07",
+      "title": "B查询与C/D续改不受push静默或governor污染",
+      "primary_failure": "push Quiet吞用户询问，或进展唤醒推进/暂停目标",
+      "user_text": "刚才那件现在做到哪了？",
+      "setup": "原Task多条候选Quiet/合并之后用户问B，接着C完成后续改；保留原Task正确来源、当前状态及过往实际delivered进展。",
+      "reported_progress": "尚无新的阶段成果，后台仍在检查。",
+      "hard_assertions": [
+        "B实际read正确当前Task并回复，即使P之前Quiet也不静默明确询问",
+        "C真实同Task新Run，旧报告不灌新版本；D行为仍按现有控制合同",
+        "display-only wake不新增执行、不CompleteGoal、不写人类记忆，不消耗执行推进的autonomous rounds或无故转wait",
+        "自身送达回流只ack，不生成再次展示的循环"
+      ],
+      "requires_evidence": [
+        "candidate_lineage",
+        "model_decision",
+        "effect_and_delivery",
+        "execution_boundary",
+        "semantic_review"
+      ],
+      "execution_status": "not_run"
+    }
+  ],
+  "implementation_baseline": "79645b5b7b176ab36aa73a38bf9493ce4c8dd105",
+  "current_status_entry": "implementation.md"
+}

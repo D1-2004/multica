@@ -1,14 +1,14 @@
 # Employee 本轮唯一执行表
 
-当前摘要唯一权威；最后更新：2026-10-04 09:28，Asia/Shanghai。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
+当前摘要唯一权威；最后更新：2026-10-04 10:30，Asia/Shanghai。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
 
 ## 当前交付版本
 
 | 对象 | 当前事实 |
 | --- | --- |
-| Multica源码 | 已部署功能基线f4c4790；本轮本地修复候选788088f2d4/epoch18，未推送未部署 |
-| Release / 预发 | a4c7b77e9225290e91de8ed1d0cafde611011225；pipeline66 / run3110369623，07:00:25部署成功，验证门未关闭 |
-| Live副本 | pod149134 06:58:47.051、pod56137 06:59:57.988启动；normal，两epoch17/webhook1/memory1–3 |
+| Multica源码 | 已部署source11d6eb5061，含四项修复/epoch18；最后报告提交仅文档 |
+| Release / 预发 | 74802f18290a36adce1e348870cc31b8d6a7fc5f；pipeline66 / run3110373861，10:00:29部署成功，验证门未关闭 |
+| Live副本 | pod149134 09:58:52.009、pod56137 10:00:02.429本次启动；normal，两epoch18/webhook1/memory1–3 |
 | 测试Agent | workspace5f8b5b73 / agent33af235e；RealNiubility rev11；runtime461aabb2，原Template4osx6sfmkew1ysmdck4n未切 |
 | Runtime交付候选 | source55ac122f（实现2b463197）；内网CLI32feedf1；CI314792/run77295044 SUCCESS；Template53zkmuykn69wy7nhidpv；private Pi Runtime14835d95 |
 | Runtime应用边界 | 独立cold/warm真实Task与11generation完整可读通过；未晋级到Employee461；candidate未宣称employee-direct-v1兼容 |
@@ -66,3 +66,24 @@
 | 本地清理 | 三独立DB已drop且回读0，配置未动 | EMPLOYEE-FOUR-FIXES-20261004/cleanup.json | 开发worktree保留审计，未新增远端对象 |
 
 当前行动已结束；发布/真实四例复验需另批授权。本轮无新增全仓migration冲突，已有lint失败保留，不扩大修复。
+
+
+## 09:58 本轮部署与短E2E进行中
+用户已授权部署及简单真实E2E。独立CR36362030、run3110373861；source11d6eb5061，release74802f1829含本轮四项代码。代码合并成功，构建进行中；两个live仍17，不开始业务测试。Runtime461、Tag rev11、hourly未更改。演员Director/冬翔/dxxh已在私有prod DWS配置核对刷新；无新消息。当前证据EMPLOYEE-FOUR-FIXES-PRE-20261004/manifest.json，root是发布/测试/恢复唯一执行者。
+
+10:07：发布成功10:00:29，release74802f1829，两live epoch18启动09:58:52.009/10:00:02.429（SLS+tail已证），normal。NEW-TASK原台词/原Director DM真实FAIL：直接复述旧结果，0新Task，旧版本未改变；trace699e4889。已保存new-task-result.json，不再次修复或发布。其他三个短例进行中。
+
+
+## 10:30 最终部署与短E2E结论（当前摘要）
+[报告](plans/2026-10-04/employee-four-fixes-pre-report.md)。一轮发布成功，业务测试已结束，不再推进新范围。
+
+| 项 | 当前结论 | 证据/边界 |
+| --- | --- | --- |
+| 新Task | 真实FAIL | 原台词/原场域直接复述旧结果，0新Task/Run；699e4889 |
+| 遗忘TaskWake | 完整输入限定PASS，记忆交互仍FAIL | 71d89856可读未截断，private旧值/旧派生答复剔除，正常History保留；96aac456 lookup为空与背景m1矛盾；43145832 forget已提交但报失败 |
+| 收集/事实 | 短无提醒路径PASS | 7/9/16、真实时间、process_facts及Task终态；真实催促没跑不签 |
+| 安静恢复 | 实际另账号引用→Quiet→本人active→答16 PASS | SLS0模型/0action、LF/IM闭环，DEAP actor未使用 |
+| 恢复清理 | 已完成 | 新memory精确forgotten、active rev2、collection0 open waits，hourly true/11:00、Runtime461不变 |
+| 发布窗口routine | Runtime准备失败保留 | 10:00运行a5c3e376未重跑，不新增Runtime修复/镜像 |
+
+之前的08:39/09:28/09:58摘要只作沿革，不是当前部署事实；功能整体不签收，未关闭人工预发验证。

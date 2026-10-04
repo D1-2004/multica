@@ -253,9 +253,10 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 				return false, w.store.Hold(ctx, job, "task_wake_target_changed")
 			}
 		} else {
-			// Every non-human wake is one autonomous round of its Task; past the
-			// governor's limit the Task waits for a human instead of the model.
-			limited, err = w.noteTaskWakeRound(runCtx, database, job, wake, binding)
+			// Disclosure-only progress does not advance work or spend its rounds.
+			if wake.Kind != employeeentry.TaskWakeExecutionProgress {
+				limited, err = w.noteTaskWakeRound(runCtx, database, job, wake, binding)
+			}
 			if err == nil && !limited {
 				input, err = w.buildTaskWakeInput(runCtx, job, wake, binding)
 				if err == nil {
@@ -382,6 +383,11 @@ func (w *EmployeeSceneWorker) taskWakeBinding(ctx context.Context, database empl
 		return b, holdTaskWake("task_wake_receipt_mismatch")
 	}
 	b.origin = origin
+	if wake.Kind == employeeentry.TaskWakeExecutionProgress {
+		if _, err = employeeProgressCurrent(ctx, database, job); err != nil {
+			return b, err
+		}
+	}
 	b.target = employeeTaskWakeTarget{WakeKind: wake.Kind, TaskID: origin.Task.ID, SceneID: job.Scope.SceneID, OriginNamespace: origin.Request.Source.Namespace, OriginReceiptID: origin.ReceiptID, OriginJobID: origin.JobID, RequesterRef: origin.Anchor.RequesterRef, Conversation: origin.Anchor.Conversation, History: origin.History, HistoryPrincipalID: origin.HistoryPrincipalID}
 	return b, nil
 }
@@ -485,6 +491,8 @@ func employeeTaskWakeFraming(kind string) string {
 		return "Every invited person has answered, or the requester closed the collection early. The authorized answers are in the snapshot's collection section; send the requester one summary of them now."
 	case employeeentry.TaskWakeExecutionFollowUp:
 		return "A background execution of this Task reached a terminal state."
+	case employeeentry.TaskWakeExecutionProgress:
+		return "A still-running execution reported progress. Decide only whether to disclose a useful new update; this is not a new work request or completion."
 	case employeeentry.TaskWakeRoutineDecision:
 		return "A routine occurrence of this Task needs a decision."
 	case employeeentry.TaskWakeWebhookDecision:
@@ -988,6 +996,9 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 				return err
 			}
 		}
+		if wake.Kind == employeeentry.TaskWakeExecutionProgress {
+			return nil
+		}
 		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, nil, string(wake.Kind), saved, actionIDs))
 	})
 	if err == nil {
@@ -1066,7 +1077,7 @@ func (h *Handler) beforeEmployeeTaskWakeSend(ctx context.Context, in dingtalkres
 	if in.WorkspaceID != job.Scope.WorkspaceID || in.AgentID != job.Scope.AgentID || in.SceneID != job.Scope.SceneID || in.SceneNoticeID != job.ID {
 		return suppress("task_wake_binding_mismatch")
 	}
-	err = h.DB.QueryRow(ctx, `SELECT items FROM employee_scene_job WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4 AND scene_id=$5::uuid AND kind='task_wake'`, job.ID, job.Scope.WorkspaceID, job.Scope.AgentID, job.Scope.TenantOrgID, job.Scope.SceneID).Scan(&job.Items)
+	err = h.DB.QueryRow(ctx, `SELECT items,principal_id::text FROM employee_scene_job WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4 AND scene_id=$5::uuid AND kind='task_wake'`, job.ID, job.Scope.WorkspaceID, job.Scope.AgentID, job.Scope.TenantOrgID, job.Scope.SceneID).Scan(&job.Items, &job.PrincipalID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return suppress("task_wake_job_missing")
 	}
@@ -1099,6 +1110,9 @@ func (h *Handler) beforeEmployeeTaskWakeSend(ctx context.Context, in dingtalkres
 		return suppress("tenant_revoked")
 	} else if err != nil {
 		return true, err
+	}
+	if wake.Kind == employeeentry.TaskWakeExecutionProgress {
+		return true, h.beforeEmployeeProgressSend(ctx, job, in)
 	}
 	return true, nil
 }
