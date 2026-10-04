@@ -1,18 +1,33 @@
 # Employee 本轮唯一执行表
 
-当前摘要唯一权威；最后更新：2026-10-04 10:30，Asia/Shanghai。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
+当前摘要唯一权威；最后更新：2026-10-04 13:30，Asia/Shanghai。最新批次为后台进展预发交付，以下旧批次段落保留历史。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
 
 ## 当前交付版本
 
 | 对象 | 当前事实 |
 | --- | --- |
-| Multica源码 | 已部署source11d6eb5061，含四项修复/epoch18；最后报告提交仅文档 |
-| Release / 预发 | 74802f18290a36adce1e348870cc31b8d6a7fc5f；pipeline66 / run3110373861，10:00:29部署成功，验证门未关闭 |
-| Live副本 | pod149134 09:58:52.009、pod56137 10:00:02.429本次启动；normal，两epoch18/webhook1/memory1–3 |
-| 测试Agent | workspace5f8b5b73 / agent33af235e；RealNiubility rev11；runtime461aabb2，原Template4osx6sfmkew1ysmdck4n未切 |
-| Runtime交付候选 | source55ac122f（实现2b463197）；内网CLI32feedf1；CI314792/run77295044 SUCCESS；Template53zkmuykn69wy7nhidpv；private Pi Runtime14835d95 |
-| Runtime应用边界 | 独立cold/warm真实Task与11generation完整可读通过；未晋级到Employee461；candidate未宣称employee-direct-v1兼容 |
-| 总签收 | 不能整体签收。交付/发布及若干机制成立；P1权限上下文遗漏和显式新Task错误仍阻断完整验收 |
+| 预发release | f9a6d687a346c5175f65a88a43a1e35f7da5c6ca；app342160 / pipeline66 / CR36362274 / Run3110378343，13:16:09部署成功 |
+| 本批源/组合 | 冻结e5ef5adbea6f628efba623cf8c73d38f37d71381；组合f84f629789564108e9a29281d68bd0bc0f12cf35；保留steer，平台并入eval78fffd467 |
+| Live | 两副本employee-loop:20 / eval-report:1 / normal；13:14:27与13:15:38实际启动SLS已证 |
+| Runtime / Agent | 原461aabb2未切；33af235e idle；新Task a9af04a2 succeeded、唯一Run31f720c9、0等待 |
+| 本批验收 | 首轮ACK约6秒、真实Python/sleep60、report_progress同ID两次幂等、最终文件650通过；阶段展示未通过（Loop quiet），整体不签收 |
+| 恢复/清理 | 本批无routine暂停/Runtime修改；3隔离DB已drop；hourly原autopilot12:02:30归档属本批前变更，未擅自恢复 |
+| 当前报告 | [后台进展预发报告](plans/2026-10-04/employee-progress-pre-report.md)；人工预发验收门保留 |
+| 开放项 | 阶段quiet展示P2、迁移10020–10023数字前缀碰撞P2；历史新蓝杉/记忆交互FAIL保留；不追加部署/镜像/长等待 |
+
+## 13:30 本批窄验收清单
+
+| 项 | 当前结论 | 证据与下一步 |
+| --- | --- | --- |
+| 发布生效 | PASS | 精确Run及两live20；manifest/pipeline-watch/startups-sls |
+| 接单反馈与最终执行 | 真实PASS | PRG-LIVE-01 IM/API/沙箱TOOL；ACK约6秒、真实60秒、文件650 |
+| 原生进展上报幂等 | 真实PASS | 同report_ref、replayed false/true、一次wake，Task/Run不因上报推进 |
+| 阶段展示 | 未通过 | f7fb76f2 quiet_committed，无阶段IM；先校正原请求展示约定并原例复验 |
+| 取消/终态旧上报/禁中间消息 | 真实未跑 | 本地检查/review与真实验收分别记录，不升级 |
+| LF/SLS | 部分可读/查询缺证 | 沙箱TOOL及Host generation可读，沙箱generation输出仍乱码；业务SLS精确ID查询空，不证明事件未发生 |
+| SPEC/EVALS | 已随平台部署、整体验收未跑 | eval78ff已在构建祖先；不提交虚假全量PASS |
+
+## 以下为旧批次冻结清单与沿革（不代表当前版本）
 
 ## 冻结验收清单
 
@@ -74,7 +89,7 @@
 10:07：发布成功10:00:29，release74802f1829，两live epoch18启动09:58:52.009/10:00:02.429（SLS+tail已证），normal。NEW-TASK原台词/原Director DM真实FAIL：直接复述旧结果，0新Task，旧版本未改变；trace699e4889。已保存new-task-result.json，不再次修复或发布。其他三个短例进行中。
 
 
-## 10:30 最终部署与短E2E结论（当前摘要）
+## 10:30 四项修复部署与短E2E历史结论
 [报告](plans/2026-10-04/employee-four-fixes-pre-report.md)。一轮发布成功，业务测试已结束，不再推进新范围。
 
 | 项 | 当前结论 | 证据/边界 |

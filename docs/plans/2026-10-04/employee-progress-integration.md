@@ -34,3 +34,10 @@
 本轮仅准备本地可审查 release；主代理负责后续唯一发布与真实验收。验收标准为三源 ancestry 完整、P 接缝之外保留已发布业务、唯一 reader20、格式检查与 server 编译通过。`go test ./cmd/server -run '^$'` 只编译，不当行为测试；既有独立 PG 的 16 项顶层 PASS 日志位于 `/Users/yuanzhan/d1/employee-e2e-evidence/EMPLOYEE-PROGRESS-INTEGRATION-20261004/combined-tests.log`，按不受本次接缝影响的范围复用。本轮不使用共享 DB、不发消息、不做 Aone 或真实 canary 动作；未部署、真实 Runtime 工具调用与 IM/API/SLS/LF 验收仍由主代理接续。
 
 本地完成结果：指定 `MULTICA_HANDLER_UNIT_TESTS_ONLY=1 go -C server test ./cmd/server -run '^$'` 返回 exit0 / `[no tests to run]`（仅 server 编译）；全部受影响 Go 文件 gofmt 检查和 `git diff --check` 通过。已核对复用日志为 16 项顶层 PASS、0 skip。冻结 P 的业务实现与源一致；router 仅保留已发布 eval 路由并追加 progress 路由，worker 只组合注释与 marker20，两处 reader 混版夹具改为旧19/组合20。已发布 steer 的 task-ref/legacy alias 文件无业务差异。本轮未运行这些夹具，不把旧日志当 reader20 行为的新执行证据。
+
+13:05用户明确要求不再确认、直接预发。shared release已push f84，精确merge-task回读后执行CODE_MERGE_RESOLVE_CONFLICT恢复同run3110378343。没有重新submit/rerun新发布，没有改Runtime或发验收消息；等待部署成功/两个live20再做实际新claim。
+
+
+## 最终结果（13:30）
+
+预发最终构建f9a6d687、run3110378343于13:16:09成功，两live reader20/normal。真实新claim原生进展MCP两次调用同ID/正文返回同ref/replayed，Python/sleep60/文件650与最终IM完成；约6秒首轮ACK成立。阶段wake实际quiet，无阶段IM，因此展示验收未通过，不关闭总体门。终态旧报告/明确禁中间消息反例未跑。Runtime未改；三隔离DB已drop；Task终态且0 waits/Agent idle。原hourly于12:02:30已被归档，本批未暂停且不恢复他人变更。eval随平台并入已部署，10020–10023重复数字前缀记录维护风险，不追加发布。详见employee-progress-pre-report.md和唯一执行表。本批收口。
