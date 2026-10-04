@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -166,5 +167,48 @@ func TestEmployeeHumanTextIsOrdinaryMessageAndPreservesConstraints(t *testing.T)
 	var saved employeeSavedInput
 	if json.Unmarshal(input, &saved) != nil || saved.Input.TaskBrief == "" {
 		t.Fatal("pending questions were not explicitly available", string(input))
+	}
+}
+
+// First questions have no pending ledger entry yet. Their frozen input still
+// needs the policy that keeps missing pre-execution answers out of auto plans.
+func TestEmployeeHumanFirstQuestionFreezesPolicyWithoutPendingAndOnReplay(t *testing.T) {
+	f, _, q := humanCardFixture(t)
+	ctx := context.Background()
+	var raw []byte
+	if err := testPool.QueryRow(ctx, `SELECT input_snapshot FROM employee_scene_job WHERE id=$1::uuid`, q.SourceJobID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var saved employeeSavedInput
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(saved.Config.Persona.Instructions, "HUMAN INTERACTION:") || !strings.Contains(saved.Config.Persona.Instructions, "never a human-input wait") || strings.Contains(saved.Input.TaskBrief, `"pending_human_questions":`) {
+		t.Fatal("first-question policy omitted or invented pending question data", saved.Config.Persona.Instructions, saved.Input.TaskBrief)
+	}
+	original := string(raw)
+	f.h.EmployeeSceneWorker.HumanQuestionsReady = func(context.Context) (bool, error) { return false, nil }
+	if _, err := testPool.Exec(ctx, `UPDATE employee_scene_job SET state='pending',outcome=NULL,available_at=now() WHERE id=$1::uuid`, q.SourceJobID); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); err != nil || !worked {
+		t.Fatal(worked, err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT input_snapshot FROM employee_scene_job WHERE id=$1::uuid`, q.SourceJobID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatal("new policy hot-rewrote a frozen input on replay")
+	}
+}
+
+func TestEmployeeHumanPolicyDoesNotUpgradeUnsupportedProducer(t *testing.T) {
+	w := &EmployeeSceneWorker{HumanQuestionsReady: func(context.Context) (bool, error) { return false, nil }}
+	in := employeeSavedInput{}
+	if err := w.appendHumanQuestions(context.Background(), employeeentry.Job{}, nil, &in); err != nil {
+		t.Fatal(err)
+	}
+	if in.Config.Persona.Instructions != "" {
+		t.Fatal("human policy was injected without the producer gate")
 	}
 }
