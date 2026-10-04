@@ -193,6 +193,7 @@ describe("context capability mobile client", () => {
         repositories: [],
         repositoryCount: 0,
         repositoriesTruncated: false,
+        missingPermissions: [],
       },
     ]);
     expect(result.totalCount).toBe(0);

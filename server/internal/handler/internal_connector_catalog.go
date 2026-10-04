@@ -355,6 +355,22 @@ func pinnedCatalogTools(discovered []discoveredConnectorTool, writeEnabled bool)
 	return out
 }
 
+// pinnedCatalogToolsForSlug applies the same cap, and for GitHub drops tools
+// outside the Contents / Pull requests / Issues / Metadata set before the cap
+// so a write the connector does use is not pushed out by Copilot or reactions.
+func pinnedCatalogToolsForSlug(slug string, discovered []discoveredConnectorTool, writeEnabled bool) []string {
+	if slug != "github" {
+		return pinnedCatalogTools(discovered, writeEnabled)
+	}
+	kept := make([]discoveredConnectorTool, 0, len(discovered))
+	for _, tool := range discovered {
+		if githubProductTool(tool.Name) {
+			kept = append(kept, tool)
+		}
+	}
+	return pinnedCatalogTools(kept, writeEnabled)
+}
+
 // catalogSessionKey scopes a cached MCP session to one connector and one
 // access token, so a refreshed or different account never reuses it.
 func catalogSessionKey(connectorID, token string) string {
@@ -416,14 +432,14 @@ func (h *Handler) discoverCatalogConnectorTools(ctx context.Context, c *internal
 	if err != nil {
 		return catalogToolRefresh{}, credentialFailure(err)
 	}
-	listed, truncated, err := mcp.ListTools(ctx, catalogSessionKey(c.ID, token), bearerHeader(token), maxDiscoveredConnectorTools)
+	listed, truncated, err := mcp.ListTools(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, token), catalogMCPHeaders(c.CatalogSlug, token), maxDiscoveredConnectorTools)
 	var status *remotemcp.StatusError
 	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
 		next, refreshErr := h.freshConnectorToken(ctx, c, token)
 		if refreshErr != nil {
 			return catalogToolRefresh{}, credentialFailure(refreshErr)
 		}
-		listed, truncated, err = mcp.ListTools(ctx, catalogSessionKey(c.ID, next), bearerHeader(next), maxDiscoveredConnectorTools)
+		listed, truncated, err = mcp.ListTools(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, next), catalogMCPHeaders(c.CatalogSlug, next), maxDiscoveredConnectorTools)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "official app tool discovery failed", "connector_id", c.ID, "catalog_slug", c.CatalogSlug, "failure_class", connectorTestFailureMessage(catalogUpstreamError(err)))
@@ -455,7 +471,7 @@ func (h *Handler) storeCatalogConnectorTools(ctx context.Context, c *internalCon
 	} else if err != nil {
 		return catalogToolRefresh{}, err
 	}
-	allowed := pinnedCatalogTools(discovered, writeEnabled)
+	allowed := pinnedCatalogToolsForSlug(c.CatalogSlug, discovered, writeEnabled)
 	discoveredRaw, err := json.Marshal(discovered)
 	if err != nil {
 		return catalogToolRefresh{}, err
@@ -577,7 +593,7 @@ func (h *Handler) setCatalogConnectorWriteEnabled(ctx context.Context, workspace
 	if slug == "" {
 		return nil, errConnectorNotCatalog
 	}
-	allowed := pinnedCatalogTools(decodeDiscoveredTools(discoveredRaw), enabled)
+	allowed := pinnedCatalogToolsForSlug(slug, decodeDiscoveredTools(discoveredRaw), enabled)
 	allowedRaw, err := json.Marshal(allowed)
 	if err != nil {
 		return nil, err

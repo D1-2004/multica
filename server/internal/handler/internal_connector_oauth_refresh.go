@@ -141,14 +141,14 @@ func (h *Handler) callCatalogConnector(ctx context.Context, c *internalConnector
 	if err != nil {
 		return nil, err
 	}
-	result, err := mcp.Call(ctx, catalogSessionKey(c.ID, token), bearerHeader(token), method, params)
+	result, err := mcp.Call(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, token), catalogMCPHeaders(c.CatalogSlug, token), method, params)
 	var status *remotemcp.StatusError
 	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
 		next, refreshErr := h.freshConnectorToken(ctx, c, token)
 		if refreshErr != nil {
 			return nil, refreshErr
 		}
-		result, err = mcp.Call(ctx, catalogSessionKey(c.ID, next), bearerHeader(next), method, params)
+		result, err = mcp.Call(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, next), catalogMCPHeaders(c.CatalogSlug, next), method, params)
 	}
 	if err != nil {
 		return nil, catalogUpstreamError(err)

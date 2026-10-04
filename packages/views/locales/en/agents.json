@@ -2400,6 +2400,7 @@
     "install_reconnect": "The GitHub authorization expired or was revoked. Connect it again.",
     "install_pat": "GitHub did not return this app's installations. A personal access token works that way: which repositories appear depends on the token's own permissions. If this is a GitHub App authorization, connect it again.",
     "install_covers": "This connection covers these accounts and organizations:",
+    "install_permission_notice": "This installation is still missing {{missing}}. Writing files, opening pull requests, and editing issues stay unavailable until an admin approves the new permissions. Raising the app's permissions does not update an existing installation; an admin of this account or organization has to approve them on the GitHub installation page. Change repositories only changes which repositories are included.",
     "install_empty": "No repositories have been selected yet. Use “Add an account or organization” to open the install page, then choose a personal account or an organization and all repositories or selected repositories.",
     "install_org": "Organization",
     "install_user": "Personal account",
