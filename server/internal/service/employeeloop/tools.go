@@ -107,6 +107,9 @@ func (r *ToolRegistry) ValidateBatch(calls []ToolCall) error {
 		if !ok {
 			continue
 		}
+		if tool.Exclusive && len(calls) != 1 {
+			return ErrTerminalConflict
+		}
 		hasEffect = hasEffect || tool.Effect
 		if !tool.Effect && tool.Terminal != "" {
 			if terminal != "" && terminal != tool.Terminal {

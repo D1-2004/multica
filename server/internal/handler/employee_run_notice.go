@@ -517,6 +517,9 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 // notice. It fences a fresh submission; provider-accepted/unknown actions never
 // call it and continue the existing query/receipt reconciliation path.
 func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkresponse.ActionInput) error {
+	if in.EmployeeMessageJobID != "" {
+		return h.beforeEmployeeParticipationSend(ctx, in)
+	}
 	if h == nil || h.DB == nil || h.TxStarter == nil {
 		return errors.New("employee notice authority is unavailable")
 	}
@@ -530,7 +533,7 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 		if handled, wakeErr := h.beforeEmployeeTaskWakeSend(ctx, in); handled {
 			return wakeErr
 		}
-		return nil
+		return h.beforeEmployeeParticipationSend(ctx, in)
 	}
 	if err != nil {
 		return err

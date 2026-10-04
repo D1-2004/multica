@@ -2,6 +2,8 @@
 
 2026-10-04 冬翔确认：接续开发要先明确工作流、环境和验收方法，对照 session 目标与实际代码交付推进；每次测试后独立观测 IM、SLS、Langfuse 和执行事实。本文件记录这套做法，不替代当前产品合同或赋予额外发布/外联权限。
 
+近期收口与成本纪律见 [交付效率](employee-delivery-efficiency.md)；当前状态唯一入口为 [本轮执行表](employee-delivery-execution.md)。范围冻结、一次全行为清单和产品/观测分面是执行要求。
+
 ## 1. 从目标与地面事实开始
 
 读取根 `CLAUDE.md`、当前模块合同、session Plan、用户后续纠正和交接材料。用提交、源码与实时配置逐项判断 implemented / integrated / deployed / e2e_verified；历史计划和模型口述只作线索。
@@ -99,4 +101,6 @@ LF 用本仓 `inspect-langfuse` / `inspect-langfuse-trace` 和 `scripts/query-la
 
 交付材料包含本次代码/部署 manifest、测试名单与边界、逐例 IM/API/SLS/LF 证据、清理/恢复、开放承诺和下步。临时材料尽快转存持久证据目录，认证目录不入库、不分享；只读 token 不落正文。
 
-当前 Employee 第五批续接详情见 [15 接续核对](plans/2026-10-03/employee-loop-backend-delivery/15-codex-resume-assessment.md) 与 [执行板](plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md)。具体账号、群、run、runtime、marker 以当波 manifest 的实时读取为准，不能从个人 skill 永久抄固定值。
+当前状态唯一入口见 [执行表](employee-delivery-execution.md)，本轮结论见 [最终验收报告](plans/2026-10-03/employee-loop-backend-delivery/23-acceptance-report.md)；15接续核对与11执行板仅作历史沿革。具体账号、群、run、runtime、marker 以当波 manifest 的实时读取为准，不能从个人 skill 永久抄固定值。
+
+最近独立修复批次：[四项局部修复交付报告](plans/2026-10-04/employee-four-fixes-report.md)。当前版本及部署事实仍以[唯一执行表](employee-delivery-execution.md)为准，不能把本地候选当已发布。

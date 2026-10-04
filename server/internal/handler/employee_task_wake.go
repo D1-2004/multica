@@ -632,7 +632,7 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if origin.History != employeeentry.HistoryNotApplicable {
 		// The origin scene's dialogue up to the wake's acceptance, read for the
 		// principal the origin reader validated.
-		history, e := w.store.RecentConversation(ctx, employeeentry.RecentConversationRequest{Scope: job.Scope, PrincipalID: origin.HistoryPrincipalID, Before: job.CreatedAt})
+		history, e := w.store.RecentConversation(ctx, employeeentry.RecentConversationRequest{Scope: job.Scope, PrincipalID: origin.HistoryPrincipalID, MemoryPrincipal: employeeTaskWakePrivateRequester(registered, origin), Before: job.CreatedAt})
 		if e == nil {
 			for i := range history.Messages {
 				history.Messages[i].Text = employeeConfigLinksInText(history.Messages[i].Text)

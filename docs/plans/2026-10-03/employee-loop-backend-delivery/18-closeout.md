@@ -59,3 +59,16 @@
 Langfuse后台gzip损坏已定位自有Runtime代理UTF8替换与AE大小写重复，不是helper。按fc-runtime-dev-loop在内网Runtime独立分支制作有界遥测解码、wire流式不变候选；publisher只读true、provider保持pi、CLI pin authoritative develop32feed40，私有canary和READY/template/readback后才切本次Agent，另租户与formal master不动。旧损坏不可恢复；新的完整generation必须真实检验。
 
 wave优先22已执行11：7权威语义pass、2真实fail(G02/C03)、1softreview(G05)、1partial(T03UI/时间)。88不加Golden/R0，MF42独立memory仍partial(旧admittedassistant还在且空lookup)，G15第二段最早10-05 05:18:38，WD04缺第四真人；用户异步未答不假设授权或造pass。hourly仍临时paused，最终恢复责任归root。
+
+
+## 08:14 范围冻结与30分钟收口（用户明确指令）
+
+停止新增真实测试、长等待、镜像构建及部署轮次；08:43前必须结束并报告。后续新发现分阻断/可后续处理，不滚动扩大本轮。复杂跨日、多真人、长等待以代码review验收，不冒称真实E2E。唯一当前执行表改为 `docs/employee-delivery-execution.md`；历史进度/本Plan只保留沿革并指向该表。
+
+冻结交付：Multica source f4c4790cbea1066857f96d4b6468c9710d77646b，release a4c7b77e9225290e91de8ed1d0cafde611011225，run3110369623，epoch17，07:00:25部署成功；两backend06:58:47.051/06:59:57.988。Runtime source55ac122f、CLI32feed、CI314792/run77295044、Template53zkmuykn69wy7nhidpv、private Pi候选14835，真实cold/warm可读LF已验证；未切461旧Template4osx、未Apply Tag。
+
+0–5分钟统一版本和当前表；5–20分钟只读关键路径与复杂场景review；20–30分钟routine恢复/临时Agent-Issue清理回读/最终报告与效率文档。TaskWake私有撤销参数缺失、新Goal误continue等真实阻断只登记精确代码位置和后续动作，不再派新长切片；旧冻结unsafe快照的治理单独待办。
+
+
+## 08:39 最终收口回填
+本轮已结束，整体验收不通过。当前唯一执行表为 [employee-delivery-execution](../../../employee-delivery-execution.md)，最终报告为 [23-acceptance-report](23-acceptance-report.md)。WD04/G15代码review接受，未冒称真实E2E；P1及其他开放项冻结登记不继续R5。hourly恢复及测试对象回读已完成，限制见报告。

@@ -377,3 +377,9 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 
 
 **本人跨源私人记录撤销（`[employee-loop:17]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
+
+## 持续会话安静（epoch18）
+
+参考GawkBot固定71e82a的DisabledMembers/notifier_targets：明确禁用不能被@绕过。stay_quiet只结束当轮；持续安静要求通过原生set_scene_participation记录scene级quiet，只有原发起者当前外层明确恢复或重新要求回应可改active。模型选语义，Host守精确source/quote/权限，不用中文关键词自动写状态。其他账号的会话wake摄入后零模型Quiet；后台Task/routine继续，通知按原授权发送。暂停/恢复有确认回复；quiet下不能通过旧snapshot调用普通工具或发送普通前台回复。状态与journal同事务，重放不增revision。
+
+native foreground action发送前验证其completed message job、scope和notice绑定，quiet压制尚未提交provider的其他job回复；暂停ACK例外仅该控制job。已提交远端请求不保证撤回。同步Router callback在入账时受控，尚缺独立提交前控制；旧多receipt哈希notice没有新job字段也有边界，不签所有前台投递全覆盖。新表及工具需所有live副本epoch18；目前仅本地实现，未部署。不得在quiet控制仍有效时直接回退到不支持该状态的epoch17；恢复active并排空新工具job后才可安排兼容回退，另批审核。
