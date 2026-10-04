@@ -35,5 +35,22 @@
       "local_path": "/tmp/tag-human-integration-human-final.jsonl",
       "sha256": "9a511566d96bf102829f86033cb79e668e2463cbff934210b104ad0b37f2cd25"
     }
+  },
+  "observability_followup": {
+    "human_and_existing_trace_named_pass": 37,
+    "top_level_pass": 18,
+    "fail": 0,
+    "skip": 0,
+    "server_compile_only": "passed",
+    "proves": [
+      "actual typed Host effect exposes committed Run/queue",
+      "replay produces no new tool observation/effect",
+      "question/response/source lookup IDs",
+      "existing redaction excludes secret sentinel"
+    ],
+    "log": {
+      "local_path": "/tmp/tag-human-trace-handler-final.jsonl",
+      "sha256": "4ca1e8503d83860facb105a06a09260cfc8e757c7e85f89a34bbe71d0a6af588"
+    }
   }
 }

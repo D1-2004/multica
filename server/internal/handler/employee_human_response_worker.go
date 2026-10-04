@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/humanquestion"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
@@ -49,6 +50,9 @@ func (w *EmployeeSceneWorker) processHumanResponse(ctx context.Context, job empl
 	if err != nil {
 		return false, w.humanResponseFailure(ctx, job, err)
 	}
+	trace := langfuse.TraceFromContext(ctx)
+	trace.AddMetadata(map[string]any{"question_id": binding.Question.ID, "response_id": binding.Response.ID, "source_job_id": binding.OriginJob.ID, "source_receipt_id": binding.Question.SourceReceiptID})
+	trace.Index(map[string]string{"question_id": binding.Question.ID, "response_id": binding.Response.ID, "source_job_id": binding.OriginJob.ID, "source_receipt_id": binding.Question.SourceReceiptID})
 	quiet, err := employeeHumanQuiet(ctx, database, job.Scope)
 	if err != nil {
 		return false, w.store.Retry(ctx, job, err.Error())
@@ -422,7 +426,10 @@ func (h *employeeHumanResponseHost) Execute(ctx context.Context, identity employ
 		_, err := readEmployeeHumanBinding(ctx, tx, h.job)
 		return raw, err
 	}
-	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, validate, func(tx pgx.Tx) (json.RawMessage, error) {
+	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, validate, func(tx pgx.Tx) (record json.RawMessage, recordErr error) {
+		var result employeeloop.ToolResult
+		observation := employeeTraceTool(ctx, h.job, call)
+		defer func() { employeeTraceToolResult(ctx, observation, call, result, recordErr) }()
 		b, err := readEmployeeHumanBinding(ctx, tx, h.job)
 		if err != nil {
 			return nil, err
@@ -439,7 +446,6 @@ func (h *employeeHumanResponseHost) Execute(ctx context.Context, identity employ
 				return nil, fmt.Errorf("%w: scene participation is quiet; an old question cannot restore it", employeeloop.ErrToolRefused)
 			}
 		}
-		var result employeeloop.ToolResult
 		switch call.Name {
 		case "reply":
 			reply, e := argument(call.Arguments, "reply")

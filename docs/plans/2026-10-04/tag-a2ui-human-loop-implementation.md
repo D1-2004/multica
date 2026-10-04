@@ -65,3 +65,7 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 ## 验收设计收紧（用户要求完成真实闭环）
 
 固定[真实验收合同](tag-a2ui-human-acceptance.md)与docs/evals/tag-human-real-cases.json。9场景/10入口：H03文字和真实多选点击分开；H05分两次建题；H06用有Task的必需wait停止；H08独立验completed-suggest→新Task/builds_on；H09验scene/requester隔离。每例必须到最终通知/Goal，不以ACK、新Run创建或原型签收。稳定发布后预计60–90分钟，优先两个成功入口，关键反例与补证按受影响范围。非法控制、真实网络重投不可自然制造的边界单列本地确定性证据，不冒称客户端E2E。
+
+真实取证面检查发现typed终态工具未导出LF Host结果，虽然journal落库，但真实验证不能直接从终态generation读取receipt/Task/Run/queue。先更新LF合同，再补同已有frontend一致的工具观测与question/response来源索引；只在实际journal回调执行时记录，replay不制造工具调用，不增加模型请求或改变派发。该有限观测改动随候选交付，验证脱敏、实际结果IDs与重放次数。
+
+有限取证补充验证完成：Human全部＋既有frontend trace共18顶层/37命名通过，零fail/skip；真实DB journal重放不增加tool span/Run，Host receipt与实际Task/Run/queue一致，秘钥哨兵经既有脱敏消失，server compile-only通过。仍是独立本地scripted model/provider，未签真实IM。
