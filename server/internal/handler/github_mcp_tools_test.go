@@ -17,7 +17,7 @@ func TestGitHubToolBlockReasonMatchesCurrentApp(t *testing.T) {
 			t.Fatalf("%s should be callable: %s", name, reason)
 		}
 	}
-	for _, name := range []string{"push_files", "create_or_update_file", "delete_file", "create_branch", "create_pull_request", "merge_pull_request", "issue_read", "create_issue", "assign_copilot_to_issue", "get_teams", "create_repository", "fork_repository", "add_issue_reaction"} {
+	for _, name := range []string{"push_files", "create_or_update_file", "delete_file", "create_branch", "delete_branch", "create_pull_request", "merge_pull_request", "issue_read", "create_issue", "assign_copilot_to_issue", "get_teams", "create_repository", "fork_repository", "add_issue_reaction"} {
 		reason := githubToolBlockReason(name, current)
 		if reason == "" {
 			t.Fatalf("%s should be blocked", name)
@@ -41,7 +41,7 @@ func TestGitHubToolBlockReasonAfterReapproval(t *testing.T) {
 	granted := githubAccess{kind: githubGrantApp, ceiling: map[string]string{
 		"contents": "write", "metadata": "read", "pull_requests": "write", "issues": "write",
 	}}
-	for _, name := range []string{"push_files", "create_or_update_file", "create_pull_request", "merge_pull_request", "issue_read", "create_issue"} {
+	for _, name := range []string{"push_files", "create_or_update_file", "delete_branch", "create_pull_request", "merge_pull_request", "issue_read", "create_issue"} {
 		if reason := githubToolBlockReason(name, granted); reason != "" {
 			t.Fatalf("%s still blocked: %s", name, reason)
 		}
@@ -197,7 +197,127 @@ func TestGitHubOwnerBlockNamesTheInstallation(t *testing.T) {
 		t.Fatalf("refusal must keep the text and leave isError false: %+v", refusal)
 	}
 	upstream := githubUpstreamPermissionMessage("create_branch", "dingtalk-fde")
-	if !strings.Contains(upstream, "@dingtalk-fde") || !strings.Contains(upstream, "Contents 写") {
+	if !strings.Contains(upstream, "@dingtalk-fde") || !strings.Contains(upstream, "Contents 写") || !strings.Contains(upstream, "不要寻找或使用本机的 gh") {
 		t.Fatalf("upstream message = %s", upstream)
+	}
+	if !strings.Contains(denied, "不要寻找或使用本机的 gh") {
+		t.Fatalf("owner block missing credential boundary: %s", denied)
+	}
+}
+
+func TestGitHubPresentToolsAddsDeleteBranchAndBoundary(t *testing.T) {
+	write := githubAccess{kind: githubGrantApp, ceiling: map[string]string{"contents": "write", "metadata": "read"}}
+	tools := []map[string]any{
+		{"name": "get_file_contents", "description": "Read a file."},
+		{"name": "create_branch", "description": "Create a branch."},
+	}
+	shown := githubPresentTools(tools, write, true)
+	var names []string
+	for _, item := range shown {
+		name, _ := item["name"].(string)
+		names = append(names, name)
+		description, _ := item["description"].(string)
+		if !strings.Contains(description, "不要寻找或使用本机的 gh") {
+			t.Fatalf("%s description = %s", name, description)
+		}
+	}
+	if !slices.Contains(names, "delete_branch") || !slices.Contains(names, "create_branch") || !slices.Contains(names, "get_file_contents") {
+		t.Fatalf("shown = %v", names)
+	}
+	off := githubPresentTools([]map[string]any{{"name": "create_branch", "description": "Create a branch."}}, write, false)
+	for _, item := range off {
+		if item["name"] == "delete_branch" {
+			t.Fatal("writes disabled still offered delete_branch")
+		}
+	}
+	read := githubAccess{kind: githubGrantApp, ceiling: map[string]string{"contents": "read", "metadata": "read"}}
+	hidden := githubPresentTools(tools, read, true)
+	for _, item := range hidden {
+		name, _ := item["name"].(string)
+		if name == "create_branch" || name == "delete_branch" {
+			t.Fatalf("read-only ceiling kept %s", name)
+		}
+	}
+}
+
+func TestGitHubDeleteBranchRefusesDefaultAndBadNames(t *testing.T) {
+	oldBase := githubAPIBase
+	deleted := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer ghu_test" {
+			t.Errorf("authorization %q", r.Header.Get("Authorization"))
+		}
+		if r.Method == http.MethodDelete {
+			deleted++
+			t.Errorf("deleted %s", r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/xdxer/dsh-github-agent-lab" {
+			_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = oldBase })
+
+	defaultBranch := githubDeleteBranch(t.Context(), "ghu_test", []byte(`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"MAIN"}`))
+	if defaultBranch.ok || !strings.Contains(defaultBranch.text, "不能删除默认分支 main") || !strings.Contains(defaultBranch.text, "不要寻找或使用本机的 gh") {
+		t.Fatalf("default branch = %+v", defaultBranch)
+	}
+	for _, raw := range []string{
+		`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"refs/heads/main"}`,
+		`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"../main"}`,
+		`{"owner":"../xdxer","repo":"dsh-github-agent-lab","branch":"e2e"}`,
+		`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":""}`,
+	} {
+		bad := githubDeleteBranch(t.Context(), "ghu_test", []byte(raw))
+		if bad.ok || !strings.Contains(bad.text, "不合法") {
+			t.Fatalf("bad name %s -> %+v", raw, bad)
+		}
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted %d times", deleted)
+	}
+}
+
+func TestGitHubDeleteBranchRemovesFeatureBranch(t *testing.T) {
+	oldBase := githubAPIBase
+	deleted := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer ghu_test" {
+			t.Errorf("authorization %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/xdxer/dsh-github-agent-lab":
+			_, _ = w.Write([]byte(`{"default_branch":"codex/agent-body"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/xdxer/dsh-github-agent-lab/git/refs/heads/e2e-pri104-2113":
+			deleted = r.URL.RequestURI()
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/xdxer/dsh-github-agent-lab/git/refs/heads/feature/e2e":
+			deleted = r.URL.Path
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Cannot delete this protected branch"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = oldBase })
+
+	removed := githubDeleteBranch(t.Context(), "ghu_test", []byte(`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"e2e-pri104-2113"}`))
+	if !removed.ok || !strings.Contains(removed.text, "已删除 xdxer/dsh-github-agent-lab 的分支 e2e-pri104-2113") || !strings.Contains(removed.text, "默认分支 codex/agent-body") {
+		t.Fatalf("removed = %+v", removed)
+	}
+	if deleted != "/repos/xdxer/dsh-github-agent-lab/git/refs/heads/e2e-pri104-2113" {
+		t.Fatalf("deleted %s", deleted)
+	}
+	protected := githubDeleteBranch(t.Context(), "ghu_test", []byte(`{"owner":"xdxer","repo":"dsh-github-agent-lab","branch":"feature/e2e"}`))
+	if protected.ok || !strings.Contains(protected.text, "受保护") || !strings.Contains(protected.text, "没有删除") {
+		t.Fatalf("protected = %+v", protected)
 	}
 }

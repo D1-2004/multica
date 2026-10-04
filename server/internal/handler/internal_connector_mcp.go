@@ -352,13 +352,16 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		}
 		if c.CatalogSlug != "" {
 			// External official apps keep their pinned tools (read-only unless
-			// writes are enabled).
+			// writes are enabled). delete_branch is implemented here because
+			// the upstream GitHub MCP server does not offer it.
 			original, allowed := connectorOriginalTool(c.AllowedTools, params.Name)
-			if !allowed {
+			if !allowed && !githubLocalTool(c.CatalogSlug, params.Name, c.WriteEnabled) {
 				h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed")
 				return
 			}
-			params.Name = original
+			if allowed {
+				params.Name = original
+			}
 		} else if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
 			// Resolve compact aliases against live metadata, never a saved allowlist.
 			names, listErr := h.discoverInternalConnectorTools(r.Context(), *c)
@@ -406,6 +409,11 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		result = githubAgentRefusal(denied)
 		err = nil
 		agentRefusal = true
+	} else if request.Method == "tools/call" && params.Name == "delete_branch" && c.CatalogSlug == "github" {
+		var refusal bool
+		result, refusal = h.githubDeleteBranchCall(r.Context(), c, params.Arguments)
+		err = nil
+		agentRefusal = refusal
 	} else {
 		result, err = h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
 	}
@@ -467,14 +475,7 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		}
 		if c.CatalogSlug == "github" {
 			access := h.githubGrantView(ctx, &c)
-			kept := make([]map[string]any, 0, len(tools))
-			for _, item := range tools {
-				name, _ := item["name"].(string)
-				if githubToolBlockReason(name, access) == "" {
-					kept = append(kept, item)
-				}
-			}
-			tools = kept
+			tools = githubPresentTools(tools, access, c.WriteEnabled)
 		}
 		list["tools"] = tools
 	}
