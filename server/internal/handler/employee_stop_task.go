@@ -188,6 +188,7 @@ func employeeStopRefusal(err error) employeeloop.ToolResult {
 }
 func employeeStopFailureReply(outcome employeeloop.Outcome) string {
 	found := false
+	stateChanged := false
 	for _, effect := range outcome.ToolOutcomes {
 		if effect.Result.Receipt != "" {
 			return ""
@@ -201,13 +202,15 @@ func employeeStopFailureReply(outcome employeeloop.Outcome) string {
 		var denied struct {
 			Reason string `json:"stop_not_requested"`
 		}
-		if json.Unmarshal([]byte(effect.Result.Content), &denied) != nil || denied.Reason != "state_changed" {
-			return ""
-		}
+		stateChanged = json.Unmarshal([]byte(effect.Result.Content), &denied) == nil && denied.Reason == "state_changed"
 		found = true
 	}
-	if found {
+	if found && stateChanged {
 		return "这项工作的状态已变化，本次没有发出新的停止请求。"
+	}
+	if found {
+		// A failed effect without a receipt does not establish cancellation or exit.
+		return "这次未能取消任务，任务可能仍在执行。"
 	}
 	return ""
 }

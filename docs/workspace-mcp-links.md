@@ -4,6 +4,16 @@ Settings → MCP connections manages revocable links bound to the current worksp
 The agent's MCP access page continues to issue its existing agent-only links.
 Workspace links never replace or widen an agent credential.
 
+Hosted Agent MCP `describe_agent` reads the authenticated endpoint's public
+card independently of its runtime's A2A execution adapters. It still verifies
+the current endpoint, workspace, agent and owner binding, the owner's current
+workspace membership, and the agent's active (not archived) state. An active
+MCP credential remains usable when the A2A publication switch is disabled;
+that existing MCP contract is unchanged. Runtime admission remains enforced
+when delegating actual work, so a successful profile read proves no execution
+capability. This keeps MCP discovery separate from invocation, as specified by
+the [MCP tools contract](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).
+
 Workspace MCP is enabled by default in every environment, including production.
 The API authentication gate and the frontend public flag use the same default.
 Operators can explicitly disable it with `FF_WORKSPACE_MCP_ENDPOINT_ENABLED=false`

@@ -38,9 +38,15 @@ type githubToolSpec struct {
 	Needs []githubPermNeed
 }
 
+type githubInstallGrant struct {
+	login       string
+	permissions map[string]string
+}
+
 type githubAccess struct {
 	kind     string
 	ceiling  map[string]string
+	installs []githubInstallGrant
 	cachedAt time.Time
 }
 
@@ -214,6 +220,53 @@ func githubToolBlockReason(name string, access githubAccess) string {
 	return "GitHub 安装权限不够，不能调用 " + name + "。需要 " + need + "，当前安装没有。App 所有者把权限调高之后，已有安装不会自动升级，要由这个账号或组织的管理员在 GitHub 安装页重新批准。"
 }
 
+// githubOwnerBlockReason names the installation the arguments point at.
+// The ceiling used by githubToolBlockReason is the highest grant on the
+// token, so an approved account would otherwise let a call through to an
+// account that has not re-approved the new permissions.
+func githubOwnerBlockReason(name string, arguments json.RawMessage, access githubAccess) string {
+	if access.kind != githubGrantApp {
+		return ""
+	}
+	owner := githubArgumentOwner(arguments)
+	if owner == "" {
+		return ""
+	}
+	spec, ok := githubMCPTools[name]
+	if !ok {
+		return ""
+	}
+	var matched []githubInstallGrant
+	for _, install := range access.installs {
+		if install.login != "" && strings.EqualFold(install.login, owner) {
+			matched = append(matched, install)
+		}
+	}
+	if len(matched) == 0 {
+		return ""
+	}
+	for _, install := range matched {
+		if len(spec.missing(install.permissions)) == 0 {
+			return ""
+		}
+	}
+	missing := spec.missing(matched[0].permissions)
+	return "GitHub 安装 @" + matched[0].login + " 还没有 " + strings.Join(missing, "、") + "，不能调用 " + name + "。写文件、建分支、建 PR、改 Issue 在这个账号或组织的管理员于 GitHub 安装页重新批准前不会执行。修改仓库范围不会补上这些权限。不要改用本机的 gh、git 或环境变量里的令牌。"
+}
+
+func githubArgumentOwner(arguments json.RawMessage) string {
+	if strings.TrimSpace(string(arguments)) == "" || string(arguments) == "null" {
+		return ""
+	}
+	var payload struct {
+		Owner string `json:"owner"`
+	}
+	if json.Unmarshal(arguments, &payload) != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Owner)
+}
+
 func githubPermissionCeiling(levels []map[string]string) map[string]string {
 	ceiling := map[string]string{}
 	for _, one := range levels {
@@ -297,7 +350,7 @@ func fetchGitHubGrantCeiling(ctx context.Context, token string) githubAccess {
 			return http.ErrUseLastResponse
 		},
 	}
-	var levels []map[string]string
+	var grants []githubInstallGrant
 	for page := 1; page <= githubUserInstallationPageCap; page++ {
 		endpoint := fmt.Sprintf("%s/user/installations?per_page=%d&page=%d", strings.TrimRight(githubAPIBase, "/"), githubUserInstallationPageSize, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -321,41 +374,51 @@ func fetchGitHubGrantCeiling(ctx context.Context, token string) githubAccess {
 		if resp.StatusCode != http.StatusOK || readErr != nil {
 			return githubAccess{kind: githubGrantUnknown}
 		}
-		pageLevels, count, err := parseGitHubInstallationPermissionPage(body)
+		pageGrants, count, err := parseGitHubInstallationPermissionPage(body)
 		if err != nil {
 			return githubAccess{kind: githubGrantUnknown}
 		}
-		levels = append(levels, pageLevels...)
+		grants = append(grants, pageGrants...)
 		if count < githubUserInstallationPageSize {
 			break
 		}
 	}
-	return githubAccess{kind: githubGrantApp, ceiling: githubPermissionCeiling(levels)}
+	levels := make([]map[string]string, 0, len(grants))
+	for _, grant := range grants {
+		levels = append(levels, grant.permissions)
+	}
+	return githubAccess{kind: githubGrantApp, ceiling: githubPermissionCeiling(levels), installs: grants}
 }
 
-func parseGitHubInstallationPermissionPage(body []byte) ([]map[string]string, int, error) {
+func parseGitHubInstallationPermissionPage(body []byte) ([]githubInstallGrant, int, error) {
 	var payload struct {
 		Installations []struct {
 			ID          int64             `json:"id"`
 			SuspendedAt *string           `json:"suspended_at"`
 			Permissions map[string]string `json:"permissions"`
+			Account     struct {
+				Login string `json:"login"`
+			} `json:"account"`
 		} `json:"installations"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, 0, err
 	}
-	levels := make([]map[string]string, 0, len(payload.Installations))
+	grants := make([]githubInstallGrant, 0, len(payload.Installations))
 	for _, item := range payload.Installations {
 		if item.SuspendedAt != nil || item.ID == 0 || item.Permissions == nil {
 			continue
 		}
-		levels = append(levels, item.Permissions)
+		grants = append(grants, githubInstallGrant{
+			login:       strings.TrimSpace(item.Account.Login),
+			permissions: item.Permissions,
+		})
 	}
-	if len(payload.Installations) > 0 && len(levels) == 0 {
+	if len(payload.Installations) > 0 && len(grants) == 0 {
 		// A page of installations with no permissions object is not a grant.
 		return nil, len(payload.Installations), errors.New("GitHub installation permissions missing")
 	}
-	return levels, len(payload.Installations), nil
+	return grants, len(payload.Installations), nil
 }
 
 func githubUpstreamPermissionFailure(result multicaMCPToolResult) bool {
@@ -368,7 +431,7 @@ func githubUpstreamPermissionFailure(result multicaMCPToolResult) bool {
 	return strings.Contains(body, "resource not accessible") || strings.Contains(body, "not accessible by integration")
 }
 
-func githubUpstreamPermissionMessage(name string) string {
+func githubUpstreamPermissionMessage(name, owner string) string {
 	spec, ok := githubMCPTools[name]
 	if !ok || len(spec.Needs) == 0 {
 		return ""
@@ -377,7 +440,18 @@ func githubUpstreamPermissionMessage(name string) string {
 	for _, need := range spec.Needs {
 		labels = append(labels, githubPermLabel(need.Key, need.Level))
 	}
-	return "GitHub 拒绝了 " + name + "。这个安装没有 " + strings.Join(labels, "、") + "。已有安装要管理员在 GitHub 安装页重新批准后才会带上新权限。"
+	who := "这个安装"
+	if login := strings.TrimSpace(owner); login != "" {
+		who = "@" + login
+	}
+	return "GitHub 拒绝了 " + name + "。" + who + " 没有 " + strings.Join(labels, "、") + "。已有安装要管理员在 GitHub 安装页重新批准后才会带上新权限。不要改用本机的 gh、git 或环境变量里的令牌。"
+}
+
+// githubAgentRefusal is an ordinary tool result. The sandbox MCP bridge
+// replaces an isError result's text with "MCP tool reported an error", so a
+// permission explanation has to travel in content with isError left false.
+func githubAgentRefusal(text string) multicaMCPToolResult {
+	return multicaMCPToolResult{Content: []multicaMCPContent{{Type: "text", Text: text}}}
 }
 
 func (h *Handler) githubGrantView(ctx context.Context, c *internalConnector) githubAccess {

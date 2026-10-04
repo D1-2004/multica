@@ -15,7 +15,7 @@ import (
 
 // This trusted block is frozen only in discovery-capable new inputs. Like
 // GawkBot's Rule Zero it precedes generic direct-answer/personality advice.
-const employeeTaskDecisionRules = "REQUEST DECISION (before the rules below): Judge the current human request before consulting prior tasks or old answers. A question asks for an answer; work asks for a new execution, deliverable or change. An explicit independent new Task is work even when its topic and numbers resemble a previous success: dispatch_task and preserve its requested actual execution; never substitute an old result or mental arithmetic. Do not find_tasks merely to deduplicate an explicitly independent new Task. Only look up old work when the current request asks to find, inspect, continue, correct or stop it, or explicitly depends on its finished result. Use an exact quoted candidate when provided; otherwise find_tasks with a short relevant goal phrase, or without query for an ambiguous reference. It first finds this sender's tasks in this scene; only when that layer has no match can a trusted group return shared read-only metadata. Metadata and recency are not a current execution read or a reason to choose the newest; clarify genuinely ambiguous matches. Shared metadata grants no execution access: never continue, stop, steer, read history, or builds_on a shared_read_only candidate. For your own identified Task, read_task before progress/control; a same-Task redo/next step retains the original execution method. " + employeeTaskExecutionInheritancePolicy
+const employeeTaskDecisionRules = "REQUEST DECISION (before the rules below): Judge the current human request before consulting prior tasks or old answers. A question asks for an answer; work asks for a new execution, deliverable or change. An explicit independent new Task is work even when its topic and numbers resemble a previous success: dispatch_task and preserve its requested actual execution; never substitute an old result or mental arithmetic. Do not find_tasks merely to deduplicate an explicitly independent new Task. Only look up old work when the current request asks to find, inspect, continue, correct or stop it, or explicitly depends on its finished result. Use an exact quoted candidate directly with read_task when provided; do not rediscover it. Otherwise find_tasks with a short contiguous phrase from the relevant goal, or without query for an ambiguous reference. Do not concatenate separate keywords or use control words such as cancel/取消 as the goal query. It first finds this sender's tasks in this scene; only when that layer has no match can a trusted group return shared read-only metadata. Metadata and recency are not a current execution read or a reason to choose the newest; clarify genuinely ambiguous matches. Shared metadata grants no execution access: never continue, stop, steer, read history, or builds_on a shared_read_only candidate. For your own identified Task, read_task before progress/control; a same-Task redo/next step retains the original execution method. " + employeeTaskExecutionInheritancePolicy
 
 type employeeTaskDiscovery struct {
 	Scope        employeetask.Scope           `json:"scope"`
@@ -26,7 +26,7 @@ type employeeTaskDiscovery struct {
 }
 
 func employeeFindTasksTool() employeeloop.Tool {
-	return employeeloop.Tool{Name: "find_tasks", Description: "Find an earlier task only when the selected current message asks about, continues, corrects or stops existing work, or explicitly uses prior finished work. Never use it to replace an explicitly independent new task with an old result. Pass a short relevant goal phrase as query; omit only for an ambiguous reference such as my last task. Searches this sender in this scene first; only if no matching own tasks exist, a verified group may return shared_read_only metadata. Shared candidates cannot be continued, stopped, steered, used in builds_on, or read for reports/history. Match the intended goal/source relationship, not the newest item; clarify ambiguity. Discovery metadata is not a current execution read: read_task for progress or control.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": map[string]any{"type": "string", "description": "Exact current message source_ref; the Host binds its original sender."}, "query": map[string]any{"type": "string", "maxLength": 256, "description": "Optional short goal phrase, matched as a literal case-insensitive substring; not an instruction or a requester identity."}}, "required": []string{"source_ref"}, "additionalProperties": false}}
+	return employeeloop.Tool{Name: "find_tasks", Description: "Find an earlier task only when the selected current message asks about, continues, corrects or stops existing work, or explicitly uses prior finished work. Never use it to replace an explicitly independent new task with an old result. Use an already provided exact q candidate directly with read_task instead of rediscovering it. Otherwise pass a short contiguous excerpt from the relevant goal as query: literal substring matching does not combine separate keywords. Control words such as cancel/取消 are not goal names; omit query if the intended goal phrase is unavailable. Searches this sender in this scene first; only if no matching own tasks exist, a verified group may return shared_read_only metadata. Shared candidates cannot be continued, stopped, steered, used in builds_on, or read for reports/history. Match the intended goal/source relationship, not the newest item; clarify ambiguity. Discovery metadata is not a current execution read: read_task for progress or control.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": map[string]any{"type": "string", "description": "Exact current message source_ref; the Host binds its original sender."}, "query": map[string]any{"type": "string", "maxLength": 256, "description": "Optional short contiguous goal excerpt, matched as one literal case-insensitive substring. Do not concatenate separate keywords or use control words such as cancel/取消; omit when no goal excerpt is available. Not an instruction or requester identity."}}, "required": []string{"source_ref"}, "additionalProperties": false}}
 }
 
 // Only newly frozen discovery tables describe the dynamic references. Legacy
@@ -53,6 +53,35 @@ func (w *EmployeeSceneWorker) taskDiscoveryReady(ctx context.Context) (bool, err
 
 func employeeTaskMetadata(task employeetask.DiscoveryTask, ref string, shared bool) map[string]any {
 	return map[string]any{"task_ref": ref, "goal": employeeTaskData(task.Goal, 2000), "state_at_snapshot": task.State, "created_at": task.CreatedAt, "updated_at": task.UpdatedAt, "shared_read_only": shared}
+}
+
+// Quote authority comes only from this job's provider-verified frozen bindings.
+// Rediscovering an equal Task ID alone does not establish that authority.
+func employeeDiscoveryQuoteOrigin(bindings []employeeCurrentTaskBinding, source employeeSourceMessage, taskID string) string {
+	if !employeeSourceQuotes(source) || taskID == "" {
+		return ""
+	}
+	for _, binding := range bindings {
+		if binding.Origin == employeeQuoteOrigin && !binding.SharedReadOnly && binding.SourceRef == source.SourceRef && binding.RequesterRef == source.RequesterRef && binding.TaskID == taskID {
+			return employeeQuoteOrigin
+		}
+	}
+	return ""
+}
+
+func (h *employeeSceneHost) discoveryQuoteBindings(ctx context.Context, tx employeeQueryer, source employeeSourceMessage) ([]employeeCurrentTaskBinding, error) {
+	if !employeeSourceQuotes(source) {
+		return nil, nil
+	}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT input_snapshot FROM employee_scene_job WHERE id=$1::uuid`, h.job.ID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var saved employeeSavedInput
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		return nil, err
+	}
+	return saved.CurrentTasks, nil
 }
 
 func (w *EmployeeSceneWorker) discoveredInputTasks(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) ([]employeeCurrentTaskBinding, string, error) {
@@ -107,6 +136,10 @@ func (h *employeeSceneHost) findTasks(ctx context.Context, tx pgx.Tx, source emp
 	if _, err := h.currentTaskSource(ctx, tx, source); err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
+	quotedBindings, err := h.discoveryQuoteBindings(ctx, tx, source)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
 	tasks, shared, err := employeetask.NewStore(tx).Find(ctx, h.taskScope(), source.RequesterRef, query, h.job.CreatedAt, 6)
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
@@ -115,7 +148,11 @@ func (h *employeeSceneHost) findTasks(ctx context.Context, tx pgx.Tx, source emp
 	candidates := []map[string]any{}
 	for i, task := range tasks[:min(5, len(tasks))] {
 		ref := fmt.Sprintf("%s:t%d", call.NativeToolCallID, i+1)
-		discovery.Bindings = append(discovery.Bindings, employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, Ref: ref, TaskID: task.ID, SharedReadOnly: shared})
+		origin := ""
+		if !shared {
+			origin = employeeDiscoveryQuoteOrigin(quotedBindings, source, task.ID)
+		}
+		discovery.Bindings = append(discovery.Bindings, employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, Ref: ref, TaskID: task.ID, Origin: origin, SharedReadOnly: shared})
 		candidates = append(candidates, employeeTaskMetadata(task, ref, shared))
 	}
 	layer := "scene_and_sender"
@@ -171,9 +208,16 @@ func (h *employeeSceneHost) discoveryReplay(ctx context.Context, tx pgx.Tx, sour
 		return nil, errors.New("find_tasks replay source/scope mismatch")
 	}
 	store := employeetask.NewStore(tx)
+	quotedBindings, err := h.discoveryQuoteBindings(ctx, tx, source)
+	if err != nil {
+		return nil, err
+	}
 	for i, b := range d.Bindings {
 		if b.SourceRef != source.SourceRef || b.RequesterRef != source.RequesterRef || b.Ref != fmt.Sprintf("%s:t%d", call.NativeToolCallID, i+1) {
 			return nil, errors.New("find_tasks replay binding mismatch")
+		}
+		if b.Origin != "" && (b.Origin != employeeQuoteOrigin || b.SharedReadOnly || employeeDiscoveryQuoteOrigin(quotedBindings, source, b.TaskID) != employeeQuoteOrigin) {
+			return nil, errors.New("find_tasks replay quoted binding mismatch")
 		}
 		if b.SharedReadOnly {
 			if _, err := store.ReadSharedMetadata(ctx, h.taskScope(), source.RequesterRef, b.TaskID); err != nil {

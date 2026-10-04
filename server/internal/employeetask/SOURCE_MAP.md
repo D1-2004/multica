@@ -94,3 +94,13 @@ symbol carries the Sustainable Use License.
 Deliberately not ported: in-memory indexes, the unknown-state migration shim
 (PostgreSQL CHECKs reject unknown states instead), review/approval states, and
 the per-process governor pause channel.
+
+## Frozen recent conversation at scene dispatch (2026-10-04)
+
+The scene Host now supplies its already-frozen bounded recent conversation to
+the existing packet history section, retaining roles, observations and omitted
+coverage. The compiler still performs no retrieval or authorization. The
+`recent_conversation_v1` projection is frozen with new scene inputs; old inputs
+without that version retain unavailable history so effect replay does not
+silently rebuild a different packet. Scope and principal validation remain on
+each history material, and the current SOURCE remains the authorization anchor.

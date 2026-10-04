@@ -920,7 +920,22 @@ func maskMCPServerURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return "[hidden]"
 	}
-	masked := u.Scheme + "://" + u.Host + u.EscapedPath()
+	segments := strings.Split(u.EscapedPath(), "/")
+	for i, segment := range segments {
+		decoded, err := neturl.PathUnescape(segment)
+		if err != nil {
+			return "[hidden]"
+		}
+		// Capability links carry the credential in the path, not the query.
+		// Decode for detection while retaining ordinary escaped path display.
+		for _, prefix := range []string{"mca2a_", "wmcp_", "sct_"} {
+			if strings.HasPrefix(strings.ToLower(decoded), prefix) {
+				segments[i] = "[hidden]"
+				break
+			}
+		}
+	}
+	masked := u.Scheme + "://" + u.Host + strings.Join(segments, "/")
 	if u.RawQuery != "" || u.Fragment != "" {
 		masked += "?…"
 	}

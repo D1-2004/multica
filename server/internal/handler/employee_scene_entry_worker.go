@@ -62,7 +62,9 @@ import (
 // feedback frame, its running send fence and the frozen streaming request flag.
 // Marker 22 combines source-bound discovery/streaming and human:1 with
 // immutable routine source and atomic once admission; old 21 lacks once.
-const EmployeeLoopReplicaMarker = "[employee-loop:22]"
+// Marker 23 preserves frozen dialogue in new dispatch packets and combines
+// current-message intent with recent confirmation context and person capability fixes.
+const EmployeeLoopReplicaMarker = "[employee-loop:23]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -307,6 +309,9 @@ type employeeSavedInput struct {
 	Config       employeeloop.Config            `json:"config"`
 	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
 	CurrentTasks []employeeCurrentTaskBinding   `json:"current_tasks,omitempty"`
+	// WorkHistoryVersion freezes the dispatch projection; legacy snapshots
+	// keep unavailable history even when they contain foreground dialogue.
+	WorkHistoryVersion string `json:"work_history_version,omitempty"`
 	// Invitations freezes the Host's binding of each source message to its
 	// sender's own collection invitations (accept_collection_input).
 	Invitations []employeeInvitationBinding `json:"invitations,omitempty"`
@@ -474,7 +479,7 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 				if err != nil {
 					return true, w.store.Retry(ctx, job, err.Error())
 				}
-				host := &employeeSceneHost{worker: w, job: job, envelopes: workEnvelopes, abort: cancel}
+				host := &employeeSceneHost{worker: w, job: job, envelopes: workEnvelopes, abort: cancel, workHistoryVersion: input.WorkHistoryVersion, recentConversation: input.Input.RecentConversation}
 				durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
 				input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
 				saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
@@ -628,6 +633,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: w.newInputTools(ctx)}}
 	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
+	input.WorkHistoryVersion = employeeWorkHistoryV1
 	for _, tool := range input.Config.Tools {
 		if tool.Name == "find_tasks" {
 			input.Config.Persona.DecisionRules = employeeTaskDecisionRules
@@ -653,6 +659,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if err != nil {
 		return employeeSavedInput{}, err
 	}
+	// Interpret the current message before task selection, without changing
+	// the existing discovery mode or any already-frozen Persona.
+	input.Config.Persona.DecisionRules = employeeConversationIntentRules + input.Config.Persona.DecisionRules
 	var invitations string
 	if input.Invitations, invitations, err = w.invitationContext(ctx, job, envelopes); err != nil {
 		return employeeSavedInput{}, err

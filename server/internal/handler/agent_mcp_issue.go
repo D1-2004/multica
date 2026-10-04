@@ -587,10 +587,16 @@ func (h *Handler) readAgentMCPArtifact(ctx context.Context, artifactID pgtype.UU
 }
 
 func (h *Handler) describeAgentMCP(ctx context.Context, principal a2aintegration.Principal, ids agentMCPPrincipalIDs) (map[string]any, error) {
-	endpoint, err := h.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, db.GetPublishedAgentA2AEndpointByPublicIDParams{
-		PublicAgentID: principal.PublicAgentID, AllowDisabledEndpoint: true,
-	})
-	if err != nil || !sameUUIDValue(endpoint.AgentID, ids.AgentID) || !sameUUIDValue(endpoint.WorkspaceID, ids.WorkspaceID) {
+	// Public metadata needs the current authenticated binding, not an A2A
+	// execution adapter. Runtime admission stays on the delegation path.
+	endpoint, err := h.Queries.GetAgentA2AEndpointByPublicID(ctx, principal.PublicAgentID)
+	if err != nil || !sameUUIDValue(endpoint.ID, ids.EndpointID) ||
+		!sameUUIDValue(endpoint.AgentID, ids.AgentID) || !sameUUIDValue(endpoint.WorkspaceID, ids.WorkspaceID) ||
+		!sameUUIDValue(endpoint.AgentOwnerID, ids.OwnerID) || !sameUUIDValue(endpoint.DelegatedByUserID, ids.OwnerID) ||
+		endpoint.AgentArchivedAt.Valid || (!endpoint.Enabled && !principal.AllowDisabledEndpoint) {
+		return nil, errors.New("Agent profile is unavailable")
+	}
+	if _, err = h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: ids.OwnerID, WorkspaceID: ids.WorkspaceID}); err != nil {
 		return nil, errors.New("Agent profile is unavailable")
 	}
 	var skills any = []any{}

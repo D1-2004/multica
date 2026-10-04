@@ -1411,6 +1411,32 @@ arrives. There are no org-level or person-level routines.
 
 ## 10. Scene configuration from a conversation (config-qwen-tag-scene)
 
+### Employee foreground configuration projection
+
+The foreground `scene_config_get` retains its scene-only `mcp_servers`,
+`prompts`, switches and routines. An empty scene list does not mean that the
+executor has no inherited capabilities. Its additional `effective_context`
+reports configured MCP names, source layers and enabled states from the same
+global → org → scene → person merge as task claim; `personal_mcp_servers`
+reports the selected person's stored MCP names and switches. These projections
+contain no URLs, headers, credentials or person identifiers. `personal_scope`
+is `selected` only when every admitted message has the same verified requester
+and person key; a mixed or unknown sender window is `not_selected` and reads no
+personal layer. Current principal and scene fences still apply.
+
+The existing scene-only MCP URL display also masks known credential-bearing
+path segments (`mca2a_`, `wmcp_`, `sct_`), including percent-encoded segments,
+alongside user info, queries and fragments. Ordinary non-secret paths stay
+visible. Masking affects projections and change notices only; stored addresses
+and the actual runtime connection are unchanged.
+
+Configuration is distinct from runtime mounting, authorization and successful
+tool execution. The foreground must describe the queried layer explicitly and
+cannot infer missing personal MCP from an empty scene-only list, or infer tool
+authorization from HTTP 200. This follows the MCP [tools contract](https://modelcontextprotocol.io/specification/2025-06-18/server/tools):
+discovery and invocation are separate, and business errors can be returned as
+tool results with `isError=true`.
+
 A task whose run belongs to a group or 1:1 chat scene gets the
 `config-qwen-tag-scene` skill and a managed MCP server of the same name; a
 task without a current scene (A2A, rerun, no dispatch, not a tenant, an
