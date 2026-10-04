@@ -209,13 +209,33 @@ func (h *Handler) freshConnectorToken(ctx context.Context, c *internalConnector,
 	if needNew {
 		flight += "\x00wait"
 	}
-	value, err, _ := connectorRefreshes.flights.Do(flight, func() (any, error) {
-		return h.refreshConnectorCredential(ctx, c, used, force, needNew)
-	})
-	if err != nil {
-		if !errors.Is(err, errConnectorReconnectRequired) && !errors.Is(err, errConnectorRefreshBusy) {
+	// The shared refresh owns its transactional deadline. A short discovery
+	// waiter may leave without cancelling it or sharing mutable request state.
+	credentialSnapshot := *c
+	refresh := connectorRefreshes.flights.DoChan(flight, func() (any, error) {
+		fresh, refreshErr := h.refreshConnectorCredential(ctx, &credentialSnapshot, used, force, needNew)
+		if refreshErr == nil {
+			connectorRefreshes.clear(key)
+		} else if !errors.Is(refreshErr, errConnectorReconnectRequired) && !errors.Is(refreshErr, errConnectorRefreshBusy) {
+			// Preserve backoff even when every short-lived waiter has left.
 			connectorRefreshes.recordFailure(key, time.Now())
 		}
+		return fresh, refreshErr
+	})
+	var completed singleflight.Result
+	if bounded, _ := ctx.Value(connectorDiscoveryWaitKey{}).(bool); bounded {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case completed = <-refresh:
+		}
+	} else {
+		// Preserve the original business-caller cancellation semantics: wait
+		// for the independently bounded refresh transaction to finish.
+		completed = <-refresh
+	}
+	value, err := completed.Val, completed.Err
+	if err != nil {
 		if !errors.Is(err, errConnectorReconnectRequired) && !needNew {
 			// A transient refresh failure, or another replica refreshing,
 			// must not break a call while the current token is still valid.
@@ -226,7 +246,6 @@ func (h *Handler) freshConnectorToken(ctx context.Context, c *internalConnector,
 		}
 		return "", err
 	}
-	connectorRefreshes.clear(key)
 	fresh := value.(contextcap.Secret)
 	layer := c.credentialLayer
 	if !c.bearerResolved {
