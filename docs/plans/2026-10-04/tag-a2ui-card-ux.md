@@ -53,3 +53,19 @@ CR30322936已部署（源码a74f8362f2，Run3110391883），用户20:56单聊报
 实施检查点：模板/disable代码完成；独立review无提交阻断。独立PG Human 64命名、pure/transport 163命名pass零fail/skip（初次漏显式A2UI DB跳过1项，已隔离库重跑）；新增bound waiting Task整行Task/Run/wait/queue不变测试pass。生成源码投影19/20后手发native可见：19原题干＋已失效无控件、20主次文字颜色可辨；仅renderer，不是Employee business E2E。marker2混版门禁PG query检查已加入，结果单独记录。未部署，等待本CR发布通知后验真实模型/原卡原biz关闭与迟click。
 
 最新目标3eeae1db41语义rebase已完成：SOURCE_MAP两边分别描述当前消息确认来源与本轮失效，保留两者；Host switch自动合入，复验81命名Human/消息确认/任务发现零fail/skip，server compile-only通过。marker1/2真实PG heartbeat门禁8个对照全pass。原生19/20只作当前源码renderer验证；真实业务闭环仍待本CR发布，不能换手发卡当E2E。
+
+## 引用“先不管”的真实失败与最小修复
+
+CR30323090在22:57:29部署，目标cb4d1f01aa、releasecb533d44、Run3110394623。双live human2/loop23，启动22:55:51/22:56:59、fence normal。N01真实单选卡可展示，点击前Task列表零新增；23:25原生点击产生精确human_response job5f67f4ca-987a-4c53-8da1-dfabdd474fd5，模型回复所选的一句话，最终原卡关闭和IM仍待核对。
+
+用户DM失败：23:08:35 msgmaKLEnmfpOTVpBUiBh8VlQ==引用23:08:10 msg6SSePC7YMsgkWHIzW2JpLA==卡，说“先不管”；23:08:37只有文字回复。LF jobb4c7e982-69ca-4738-b4c2-8aec75965b4a没有disable调用。generation input是截断JSON字符串，但25条完整messages数组可恢复，不宣称完整tools表可读。输入包含新失效framing和8张pending题，外层引用仅mid与[互动卡片]，缺少mid到question_ref绑定。因此本例FAIL，不能按最近Task或题干相似度猜。
+
+本轮范围：Host验证真实引用链，再按同scope/requester的response_action.provider_message_id或a2ui_interaction.message_id关联问题；冻结每source的quoted_human_question，明确exact/ambiguous/unresolved/closed及精确question_ref。accept/disable写前限定引用来源的exact绑定并复验权限，不能引用A却关B。两处消息ID都空时保留未解析，未知投递不重发。新quote reader按实际协议升级门禁，旧snapshot/journal不热改。
+
+验收：多张pending只关闭被引卡；provider消息ID单边可匹配；错人/错scene/篡改引用拒绝；已关闭卡、重复引用与native争抢不重复派发；缺消息ID不得猜；真实模型引用“先不管”应调用精确disable，原biz卡静态失效，Task/Run/wait/queue不变。本地Host/PG不代替真实模型。仍走新CR到feat/tag-multitenant，由发布协调合并部署，收到成功通知后复验原DM。不重发其他Session的PRI工作，不修改其配置。
+
+N01补证：真实单击得到human_response与所选一句话答复，随后同卡事件被拒绝；没有在点击前派发。UI原卡仍保留两个按钮，SLS持续send_receipt_pending，整例UI关闭FAIL。生产router在988行注册OnA2UIAccepted时service尚为nil，1203行才创建service，导致卡BizId未保存。修复注册时序并加真正NewRouterWithOptions启动测试，不能仅依赖手动安装hook的handler fixture。
+
+另一个真实限制：本机DWS同profile在新进程查已发卡任务（包括刚发的21探针）返回“The task does not belong to this token”。不能把sender UID相同视为任务token相同。参考已有pkg/dws/a2ui.go，SDK在create后同client/原凭据内最多3秒一次只读查真实Mid/CID；失败保留原成功Biz receipt，不重发、不伪造ID。CLI无法保证原token时保留限制。历史旧卡已经丢失的Biz不能凭request key/时间猜或冒称已关闭；无权威回执仍未证明修复其外观。
+
+关联的等待提醒：其他在线Session提供00:08旧问题再次催问的观察，尚不以转述签真实pass/fail。只读源码确认Watchdog不读取dismiss回执，成功失效后仍可能催同一human_input。范围补充为仅抑制精确dismiss问题的等待通知投影，在ORDER/LIMIT前排除该wait；不改Task、wait、queue，不引入过期机制，不屏蔽其他开放题、正常answer或非human wait。Scan和BeforeSend共用wait事实reader，需验证已排队提醒发送前也被压制。

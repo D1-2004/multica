@@ -984,9 +984,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeHumanReplicaMarker)
 	}
-	if h.DingTalkResponses != nil {
-		h.DingTalkResponses.OnA2UIAccepted = h.OnEmployeeHumanCardAccepted
-	}
 	// Requester-authorized invitation reminders are recorded per invitation in
 	// the collection's creating transaction.
 	h.EmployeeSceneWorker.CollectionReminders = handler.RecordCollectionReminders
@@ -1210,6 +1207,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.TaskCompletionWorker.ResponseActions = h
 		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+		// Register only after construction so native card receipts retain their
+		// real business and message ids for closing and quoted-question lookup.
+		h.DingTalkResponses.OnA2UIAccepted = h.OnEmployeeHumanCardAccepted
 		// Stall notices pass their own BeforeSend re-check; everything else keeps
 		// the Run notice gate. Wired on every replica so a notice queued by a
 		// new replica is never sent unchecked by any other.

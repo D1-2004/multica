@@ -359,3 +359,123 @@ func TestWatchdogWaitReaderKinds(t *testing.T) {
 		t.Fatalf("uncounted input notice=%+v", n)
 	}
 }
+
+// A dismissed card mutes only its own reminder, including an already queued
+// notice, without satisfying a wait or hiding another question's notification.
+func TestWatchdogDismissedHumanQuestionNotification(t *testing.T) {
+	for _, tc := range []struct {
+		name, change string
+		want         bool
+	}{
+		{"dismiss", "", false},
+		{"answer", `UPDATE employee_human_response SET body='{"intent":"answer"}' WHERE question_id=$1::uuid`, true},
+		{"open", `UPDATE employee_human_question SET state='open' WHERE id=$1::uuid`, true},
+		{"wrong_scene", `UPDATE employee_human_question SET scene_id=gen_random_uuid() WHERE id=$1::uuid`, true},
+		{"wrong_revision", `UPDATE employee_human_question SET goal_revision=goal_revision+1 WHERE id=$1::uuid`, true},
+		{"wrong_tenant", `UPDATE employee_human_question SET tenant_org_id='other' WHERE id=$1::uuid`, true},
+		{"wrong_task", `UPDATE employee_human_question SET task_id=gen_random_uuid() WHERE id=$1::uuid`, true},
+		{"missing_terminal_response", `UPDATE employee_human_question SET response_id=gen_random_uuid() WHERE id=$1::uuid`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, g, q := dismissedHumanWaitFixture(t)
+			if tc.change != "" {
+				f.exec(tc.change, q)
+			}
+			before := humanWaitLifecycleSnapshot(t, f)
+			tx, err := f.pool.Begin(f.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(f.ctx)
+			_, ok, err := (EmployeeTaskWaitFacts{}).ReadEmployeeTaskWait(f.ctx, tx, g)
+			if err != nil || ok != tc.want {
+				t.Fatal(ok, err)
+			}
+			if !tc.want {
+				f.at(62 * time.Minute)
+				f.scan(nil)
+				if len(f.notices(g.ID)) != 0 {
+					t.Fatal("dismissed question opened a fresh notice")
+				}
+			}
+			if before != humanWaitLifecycleSnapshot(t, f) {
+				t.Fatal("reader mutated lifecycle")
+			}
+		})
+	}
+	t.Run("next_open_question", func(t *testing.T) {
+		f, g, _ := dismissedHumanWaitFixture(t)
+		_, wait, err := employeetask.NewStore(f.pool).WaitTask(f.ctx, g.Scope, g.ID, employeetask.WaitParams{Source: employeetask.Source{Namespace: "test", Key: uuid.NewString()}, Kind: employeetask.WaitHumanInput, RefID: uuid.NewString(), Mandatory: true, AuthorityRef: "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := f.pool.Begin(f.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(f.ctx)
+		w, ok, err := (EmployeeTaskWaitFacts{}).ReadEmployeeTaskWait(f.ctx, tx, g)
+		if err != nil || !ok || w.Key != wait.ID {
+			t.Fatal("later question hidden", w, ok, err)
+		}
+	})
+	t.Run("queued_notice", func(t *testing.T) {
+		f, g, q := dismissedHumanWaitFixture(t)
+		f.exec(`UPDATE employee_human_question SET state='open',response_id=NULL WHERE id=$1::uuid`, q)
+		f.at(62 * time.Minute)
+		f.scan(nil)
+		n := onlyNotice(t, f.notices(g.ID))
+		f.exec(`UPDATE employee_human_question SET state='answered',response_id=(SELECT id FROM employee_human_response WHERE question_id=$1::uuid) WHERE id=$1::uuid`, q)
+		before := humanWaitLifecycleSnapshot(t, f)
+		_, code := f.runOutbox(f.pool, f.w, n.ActionID, "cancelled")
+		if !strings.HasSuffix(code, "state_changed") || f.provider.total() != 0 {
+			t.Fatal(code, f.provider.total())
+		}
+		f.scan(nil)
+		if before != humanWaitLifecycleSnapshot(t, f) {
+			t.Fatal("watchdog mutated lifecycle")
+		}
+		if n = onlyNotice(t, f.notices(g.ID)); n.State != "suppressed" {
+			t.Fatal(n)
+		}
+	})
+}
+
+func dismissedHumanWaitFixture(t *testing.T) (*watchdogFixture, employeetask.Task, string) {
+	t.Helper()
+	f := newWatchdogFixture(t)
+	f.exec(`UPDATE agent_task_queue SET status='completed',completed_at=now() WHERE id=$1::uuid`, f.queueID)
+	f.exec(`UPDATE employee_task_run SET state='succeeded',finished_at=now() WHERE id=$1::uuid`, f.runID)
+	f.exec(`UPDATE employee_task SET state='succeeded',active_run_id=NULL WHERE id=$1::uuid`, f.task.ID)
+	t.Cleanup(func() {
+		for _, sql := range []string{`DELETE FROM employee_human_response WHERE question_id IN (SELECT id FROM employee_human_question WHERE workspace_id=$1::uuid)`, `DELETE FROM employee_human_question WHERE workspace_id=$1::uuid`, `DELETE FROM employee_task_wait WHERE workspace_id=$1::uuid`} {
+			if _, err := f.pool.Exec(context.Background(), sql, f.ws); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	store := employeetask.NewStore(f.pool)
+	g, err := store.Create(f.ctx, employeetask.CreateParams{Scope: f.task.Scope, OwnerLoop: employeetask.LoopEmployee, DispatchMode: employeetask.DispatchDirect, RequesterRef: f.task.RequesterRef, Definition: employeetask.Definition{Goal: "human decision"}, Source: employeetask.Source{Namespace: "test", Key: uuid.NewString()}, Input: "human decision", Lifecycle: employeetask.LifecycleV2, CompletionMode: employeetask.CompletionExplicitGoal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, r := uuid.NewString(), uuid.NewString()
+	g, _, err = store.WaitTask(f.ctx, g.Scope, g.ID, employeetask.WaitParams{Source: employeetask.Source{Namespace: "test", Key: uuid.NewString()}, Kind: employeetask.WaitHumanInput, RefID: q, Mandatory: true, AuthorityRef: "human-question:" + q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE employee_task_wait SET created_at=$2 WHERE task_id=$1::uuid`, g.ID, f.base.Add(time.Minute))
+	f.exec(`INSERT INTO employee_human_question(id,workspace_id,agent_id,tenant_org_id,scene_id,principal_id,source_job_id,source_receipt_id,source_ref,requester_ref,operator_open_id,task_id,run_id,goal_revision,summary,choice,card_public_id,state,response_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::uuid,gen_random_uuid(),gen_random_uuid(),'test',$7,'operator',$8::uuid,$9::uuid,$10,'question','{}','test','answered',$11::uuid)`, q, f.ws, f.agent, g.Scope.TenantOrgID, g.Scope.Scene.SceneID, util.UUIDToString(f.request.PrincipalID), g.RequesterRef, g.ID, f.runID, g.GoalRevision, r)
+	f.exec(`INSERT INTO employee_human_response(id,question_id,event_id,input_surface,requester_ref,body) VALUES($1::uuid,$2::uuid,'dismiss-test','chat_text',$3,'{"intent":"dismiss"}')`, r, q, g.RequesterRef)
+	return f, g, q
+}
+
+func humanWaitLifecycleSnapshot(t *testing.T, f *watchdogFixture) string {
+	t.Helper()
+	var raw string
+	err := f.pool.QueryRow(f.ctx, `SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(t) ORDER BY t.id) FROM employee_task t WHERE workspace_id=$1::uuid),(SELECT jsonb_agg(to_jsonb(w) ORDER BY w.id) FROM employee_task_wait w WHERE workspace_id=$1::uuid),(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM employee_task_run r WHERE workspace_id=$1::uuid),(SELECT jsonb_agg(to_jsonb(q) ORDER BY q.id) FROM agent_task_queue q WHERE agent_id=$2::uuid))::text`, f.ws, f.agent).Scan(&raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
