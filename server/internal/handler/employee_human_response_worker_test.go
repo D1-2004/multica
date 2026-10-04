@@ -106,6 +106,7 @@ func humanResponseWorkerFixture(t *testing.T, f *dingTalkResponseFixture, origin
 		}
 	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_human_card_projection WHERE agent_id=$1::uuid`, f.agentID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM employee_human_response WHERE question_id IN (SELECT id FROM employee_human_question WHERE agent_id=$1::uuid)`, f.agentID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM employee_human_question WHERE agent_id=$1::uuid`, f.agentID)
 	})

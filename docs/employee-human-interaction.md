@@ -51,3 +51,11 @@ human_response item仅question_ref/response_ref/version、message_count=0，不�
 ## 首次询问裁决
 
 human reader就绪的新message snapshot无论是否已有pending question，都冻结人工交互策略。当前人要求先确认选项/接收人或尚缺执行前的必要信息时，由前台a2ui_ask发题后结束本轮；不得把提问包装成dispatch_task或自动follow_up_steps。后者是已授权可自动执行的步骤，不表示人工等待。普通问回不接受为答案，合成素材和全部执行/外发约束不得扩写为查真实资料或文件发送。Pi轮末澄清仍只在确有先做的授权准备工作时使用。旧冻结snapshot/journal不热改。
+
+## 卡片呈现与关闭
+
+Employee专用compact投影只展示一条短问句与候选，卡内引用可信原消息（现有创建接口无原生引用参数）。单选/冻结选人用现有submit事件和静态选项ID点选即答，无额外提交及大TextField；多选一次确认，generic原生UserPicker/approval不改。候选说明只在该选项内部显示，重名部门/角色不能丢。普通文字仍是正式输入。
+
+合法答复与唯一typed job同事务保存原卡关闭意图；独立PG lease更新消费者尽快将原bizId替换为FINISH、仅保留冻结的所选标签/摘要和右侧勾、无可操作控件。原native和普通文字两种路径均覆盖。旧已受理问卡有限回填；skip仍是deferred，不占最终答案。早答/晚send回执等待真实bizId；unknown不发送新卡，更新可重试，明确未发送被suppressed则无需锁不存在的卡。更新前复验当前tenant、principal、scene、endpoint、员工UID和原来源，不因Task已完成而放弃关闭已受理卡。
+
+单聊发卡目标使用Host冻结来源的员工视角senderOpenDingTalkId；群使用场域目录CID。两者不可混用，模型不提供目标参数。

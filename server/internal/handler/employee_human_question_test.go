@@ -46,6 +46,7 @@ func humanCardFixture(t *testing.T) (*dingTalkResponseFixture, agentDispatchCont
 	}
 	dc.EndpointID, dc.EndpointNamespaceID = ep.EndpointID, ep.ID
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_human_card_projection WHERE agent_id=$1::uuid`, f.agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dispatch_endpoint WHERE agent_id=$1::uuid`, f.agentID)
 	})
 	f.h.EmployeeSceneWorker.HumanQuestionsReady = func(context.Context) (bool, error) { return true, nil }
@@ -86,6 +87,7 @@ func humanCardFixture(t *testing.T) (*dingTalkResponseFixture, agentDispatchCont
 		t.Fatal("question dispatched work or missed its durable card", tasks, actions, q.State, model.calls)
 	}
 	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_human_card_projection WHERE agent_id=$1::uuid`, f.agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_human_response WHERE question_id IN(SELECT id FROM employee_human_question WHERE agent_id=$1)`, f.agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_human_question WHERE agent_id=$1`, f.agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM a2ui_interaction WHERE agent_id=$1`, f.agentID)

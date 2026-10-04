@@ -155,6 +155,10 @@ type OpenRequest struct {
 	Markdown               string
 	IdempotencyKey         string
 	OperatorUID            string
+	// EmployeeCompact uses one-click frozen choices for Employee questions.
+	// Generic person pickers and approvals keep their existing projection.
+	EmployeeCompact bool
+	SourceQuote     string
 }
 
 // Result is what the person did. Outcome is answered, skipped, approved or rejected.
@@ -225,6 +229,8 @@ type storedRequest struct {
 	OperatorUID            string         `json:"operator_uid,omitempty"`
 	ReceiverOpenDingTalkID string         `json:"receiver_open_dingtalk_id,omitempty"`
 	SurfaceID              string         `json:"surface_id,omitempty"`
+	EmployeeCompact        bool           `json:"employee_compact,omitempty"`
+	SourceQuote            string         `json:"source_quote,omitempty"`
 }
 
 func (row Interaction) clone() Interaction {
