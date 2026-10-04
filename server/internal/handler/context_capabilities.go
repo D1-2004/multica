@@ -169,7 +169,8 @@ type contextCapOfferedConnectorDTO struct {
 	// Token (GitHub).
 	AcceptsPAT bool `json:"accepts_pat"`
 	// OAuthAvailable: an official app whose OAuth connect this deployment can
-	// run (GitHub needs GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET);
+	// run (GitHub needs GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET;
+	// Outlook needs OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET);
 	// the page hides "connect" when false and offers the PAT form instead.
 	OAuthAvailable bool `json:"oauth_available"`
 	// InstallURL is where people grant the app access to their resources

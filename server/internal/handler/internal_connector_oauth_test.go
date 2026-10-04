@@ -355,8 +355,38 @@ func TestPreregisteredAuthorizeURLPinsAsanaResource(t *testing.T) {
 		"https://slack.com/oauth/v2_user/authorize", "cid", "search:read.public",
 		"https://example.test/cb", "state", "verifier", "",
 	)
-	if err != nil || strings.Contains(slack, "resource=") || !strings.Contains(slack, "scope=search") {
+	if err != nil || strings.Contains(slack, "resource=") || strings.Contains(slack, "prompt=") || !strings.Contains(slack, "scope=search") {
 		t.Fatalf("slack authorize = %s %v", slack, err)
+	}
+	microsoft, err := preregisteredAuthorizeURL(
+		"https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "cid",
+		"offline_access openid profile email User.Read Mail.Read Calendars.Read Contacts.Read",
+		"https://fde-workbench.dingtalk.com/api/connectors/oauth/callback", "state", "verifier", "",
+	)
+	if err != nil || !strings.Contains(microsoft, "prompt=select_account") || !strings.Contains(microsoft, "response_type=code") ||
+		!strings.Contains(microsoft, "code_challenge_method=S256") || strings.Contains(microsoft, "resource=") {
+		t.Fatalf("microsoft authorize = %s %v", microsoft, err)
+	}
+	if !strings.Contains(got, "response_type=code") || strings.Contains(got, "prompt=") {
+		t.Fatalf("asana authorize gained a microsoft parameter: %s", got)
+	}
+}
+
+func TestConnectorOAuthShareableStaysOnSceneAndPerson(t *testing.T) {
+	scene := connectorOAuthScope{ScopeType: contextcap.ScopeScene}
+	person := connectorOAuthScope{ScopeType: contextcap.ScopePerson}
+	workspace := connectorOAuthScope{ScopeType: connectorOAuthScopeWorkspace}
+	github := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaGitHub, AuthFlow: connectorOAuthFlowInstall}
+	outlook := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaDCR, AuthFlow: connectorOAuthFlowOutlook}
+	notion := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaDCR}
+	if !connectorOAuthShareable(github, scene) || !connectorOAuthShareable(github, person) || connectorOAuthShareable(github, workspace) {
+		t.Fatal("github shareable scope")
+	}
+	if !connectorOAuthShareable(outlook, scene) || !connectorOAuthShareable(outlook, person) || connectorOAuthShareable(outlook, workspace) {
+		t.Fatal("outlook shareable scope")
+	}
+	if connectorOAuthShareable(notion, scene) || connectorOAuthShareable(connectorSealedVerifier{Via: connectorOAuthViaDCR, AuthFlow: connectorOAuthFlowOutlook}, scene) {
+		t.Fatal("dcr connect must stay bound to the starting browser")
 	}
 }
 

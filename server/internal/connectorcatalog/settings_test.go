@@ -19,6 +19,7 @@ func TestSettingsCatalogMatchesTheProductList(t *testing.T) {
 		{"atlassian", "dcr"},
 		{"figma", "limited"},
 		{"stripe", "dcr"},
+		{"agentmail", "dcr"},
 	}
 	got := SettingsCatalog()
 	if len(got) != len(want) {

@@ -74,6 +74,34 @@ var defaultApps = []App{
 		Slug: "stripe", Name: "Stripe", MCPURL: "https://mcp.stripe.com/",
 		AuthKind: AuthOAuthDCR, Hosts: []string{"mcp.stripe.com", "access.stripe.com"},
 	},
+	{
+		// Microsoft identity platform, authority /common: any org directory
+		// and personal Microsoft accounts. There is no public user-delegated
+		// Graph MCP, so the tools are served in-process and this URL is never
+		// requested. The confidential client is the deployment environment
+		// (OUTLOOK_CLIENT_ID / OUTLOOK_CLIENT_SECRET, Azure app QwenTagPre).
+		// People do not type a key. The redirect URI is the production
+		// connector callback.
+		Slug: "outlook", Name: "Outlook", MCPURL: "https://graph.microsoft.com/v1.0",
+		AuthKind:              AuthOAuthPreregistered,
+		Scope:                 "offline_access openid profile email User.Read Mail.Read Calendars.Read Contacts.Read",
+		Hosts:                 []string{"login.microsoftonline.com", "graph.microsoft.com"},
+		AuthorizationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+		TokenEndpoint:         "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+		AccountURL:            "https://graph.microsoft.com/v1.0/me",
+	},
+	{
+		// Public MCP OAuth. Probed 2026-10-04: the protected-resource
+		// document on mcp.agentmail.to names authorization server
+		// https://clerk.console.agentmail.to, which advertises dynamic
+		// registration, S256 PKCE and token auth method "none". The inbox
+		// REST API is API-key only; this connector does not use it, so
+		// people do not paste a key.
+		Slug: "agentmail", Name: "AgentMail", MCPURL: "https://mcp.agentmail.to/mcp",
+		AuthKind: AuthOAuthDCR,
+		Scope:    "openid email profile offline_access user:org:read",
+		Hosts:    []string{"mcp.agentmail.to", "clerk.console.agentmail.to"},
+	},
 }
 
 var defaultCatalog = mustNew(defaultApps...)

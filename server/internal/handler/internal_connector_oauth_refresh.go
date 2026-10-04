@@ -133,6 +133,10 @@ func connectorRefreshKey(c *internalConnector) string {
 // expire; an upstream 401 triggers one forced refresh and one retry (a 401
 // proves the request did not run, so this is safe for tools/call too).
 func (h *Handler) callCatalogConnector(ctx context.Context, c *internalConnector, method string, params map[string]any) (json.RawMessage, error) {
+	// Outlook's catalog URL is not an MCP server. Graph is called directly.
+	if c != nil && c.CatalogSlug == outlookCatalogSlug {
+		return h.callOutlookConnector(ctx, c, method, params)
+	}
 	mcp, _, err := catalogConnectorMCP(*c)
 	if err != nil {
 		return nil, err

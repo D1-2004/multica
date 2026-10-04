@@ -56,8 +56,9 @@ type App struct {
 	// issues an API token, which mcp.asana.com rejects, unless this is
 	// https://mcp.asana.com/v2.
 	Resource string
-	// AccountURL answers GET with a JSON object whose "login" names the
-	// connected account (GitHub). Empty when the app has no such endpoint.
+	// AccountURL answers GET with a JSON object that names the connected
+	// account. The label is the first of login, mail, email,
+	// preferred_username and userPrincipalName. Empty when the app has none.
 	AccountURL string
 }
 

@@ -41,6 +41,8 @@ const BRAND_NAMES: Record<string, string> = {
   asana: "Asana",
   figma: "Figma",
   stripe: "Stripe",
+  outlook: "Outlook",
+  agentmail: "AgentMail",
 };
 
 export function hasConnectorBrandMark(slug: string | null | undefined): boolean {

@@ -34,19 +34,21 @@ package handler
 // cookie is missing or different. Without it, anyone who may start a
 // connect could send the provider authorize URL to a colleague, and the
 // colleague's account would be stored in the sender's scope. Workspace
-// connects and every DCR connect bind the browser this way. The desktop
+// connects and DCR connects bind the browser this way. The desktop
 // app, whose API responses land in its own cookie jar, therefore never
 // starts a connect: it opens the web connectors page in the system browser,
 // and the admin connects there.
 //
-// Scene and person GitHub App installs are the exception (Shareable). The
-// authorize link is meant to be opened on a phone that did not start it,
-// including by sharing the link. The state is still 32 random bytes, stored
-// only as a SHA-256 hash, single use, and valid for 10 minutes, and it
-// names the digital employee, tenant and scene on the server. Whoever
-// finishes it attaches their GitHub account to that scene. The callback
-// then returns to that scene's configure page with a signed, expiring
-// scene session so the page opens without a DingTalk login.
+// Scene and person GitHub App installs, and scene and person Outlook
+// connects, are the exception (Shareable). The authorize link is meant to
+// be opened on a phone that did not start it, including when DingTalk opens
+// the provider consent page in the system browser. The state is still 32
+// random bytes, stored only as a SHA-256 hash, single use, and valid for
+// 10 minutes, and it names the digital employee, tenant and scene on the
+// server. Whoever finishes it attaches their account to that scene. The
+// callback then returns to that scene's configure page with a signed,
+// expiring scene session so the page opens without a DingTalk login.
+// Outlook still sends PKCE. Workspace Outlook connects stay browser-bound.
 //
 // GitHub's setup redirect is a different URL from that callback, and it is
 // only documented to include installation_id. The start response also sets
@@ -125,6 +127,10 @@ const (
 	// returned without a code, so the same state continues at the user
 	// authorization endpoint with PKCE.
 	connectorOAuthFlowUser = "user"
+	// connectorOAuthFlowOutlook marks a scene or person Outlook connect as
+	// shareable. It still exchanges the code with PKCE. Only
+	// connectorOAuthFlowInstall omits the verifier.
+	connectorOAuthFlowOutlook = "outlook"
 )
 
 // connectorOAuthError is a start failure the API layer maps to Status.
@@ -434,6 +440,15 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	// starting browser.
 	if payload.AuthFlow == connectorOAuthFlowInstall && payload.Via == connectorOAuthViaGitHub &&
 		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson) {
+		payload.Shareable = true
+	}
+	// Outlook scene and person connects finish on a phone. DingTalk may open
+	// the Microsoft consent page outside the webview that started them, so
+	// the browser cookie would not come back. The code exchange still uses
+	// PKCE. Workspace connects stay bound to the starting browser.
+	if app.Slug == outlookCatalogSlug && payload.Via == connectorOAuthViaDCR &&
+		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson) {
+		payload.AuthFlow = connectorOAuthFlowOutlook
 		payload.Shareable = true
 	}
 	// The cookie belongs to this deployment's own origin (where the start
@@ -811,10 +826,15 @@ func withOAuthResult(destination, key, value string) string {
 // connectorOAuthShareable reports whether this state may finish in a browser
 // that did not start it. The flag alone is not enough: the scope stored on
 // the row has to be a scene or a person, and the route has to be the GitHub
-// App callback.
+// App callback or an Outlook connect.
 func connectorOAuthShareable(verifier connectorSealedVerifier, scope connectorOAuthScope) bool {
-	return verifier.Shareable && verifier.Via == connectorOAuthViaGitHub &&
-		(scope.ScopeType == contextcap.ScopeScene || scope.ScopeType == contextcap.ScopePerson)
+	if !verifier.Shareable || (scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson) {
+		return false
+	}
+	if verifier.Via == connectorOAuthViaGitHub {
+		return true
+	}
+	return verifier.Via == connectorOAuthViaDCR && verifier.AuthFlow == connectorOAuthFlowOutlook
 }
 
 // finishSceneConnectReturn sends a finished scene or person connect back to
@@ -927,6 +947,11 @@ func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, ve
 	if strings.TrimSpace(resource) != "" {
 		query.Set("resource", resource)
 	}
+	// Microsoft account picker. Other pre-registered providers keep their
+	// own authorize URL untouched.
+	if strings.EqualFold(parsed.Hostname(), "login.microsoftonline.com") {
+		query.Set("prompt", "select_account")
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
@@ -952,12 +977,14 @@ type connectorSealedVerifier struct {
 	BrowserHash string `json:"browser_hash,omitempty"`
 	// AuthFlow is "" (PKCE, including states started by an older binary),
 	// connectorOAuthFlowInstall (exchange the installation code without
-	// PKCE) or connectorOAuthFlowUser (the second hop, with PKCE).
+	// PKCE), connectorOAuthFlowUser (the second hop, with PKCE) or
+	// connectorOAuthFlowOutlook (a shareable scene or person Outlook
+	// connect, still with PKCE).
 	AuthFlow string `json:"auth_flow,omitempty"`
-	// Shareable is set only for a scene or person GitHub App install. That
-	// callback may finish in a browser that did not start it. Workspace
-	// connects and DCR connects leave it false and still require the
-	// browser binding cookie.
+	// Shareable is set for a scene or person GitHub App install, and for a
+	// scene or person Outlook connect. That callback may finish in a browser
+	// that did not start it. Workspace connects and other DCR connects leave
+	// it false and still require the browser binding cookie.
 	Shareable bool `json:"shareable,omitempty"`
 }
 
@@ -1204,8 +1231,8 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 		return burn(connectOAuthErrInvalidState)
 	}
 	// Only the browser that started the connect may complete it, except a
-	// scene or person GitHub App install, which is shareable on purpose.
-	// The state is still single use and expires.
+	// scene or person GitHub App install or Outlook connect, which is
+	// shareable on purpose. The state is still single use and expires.
 	if !connectorOAuthShareable(verifier, scope) {
 		if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
 			!hmac.Equal([]byte(hashConnectorOAuthState(in.BrowserNonce)), []byte(verifier.BrowserHash)) {
@@ -1353,21 +1380,39 @@ func (h *Handler) enableConnectedScopeBinding(ctx context.Context, scope connect
 }
 
 // connectorOAuthAccount reads the provider account label with a fresh
-// token (GitHub: GET /user → login). Best effort: "" on any failure.
+// token. GitHub returns login; Microsoft Graph returns mail or
+// userPrincipalName. Best effort: "" on any failure.
 func (h *Handler) connectorOAuthAccount(ctx context.Context, app connectorcatalog.App, accessToken string) string {
 	if app.AccountURL == "" {
 		return ""
 	}
 	var profile struct {
-		Login string `json:"login"`
+		Login             string `json:"login"`
+		Mail              string `json:"mail"`
+		Email             string `json:"email"`
+		PreferredUsername string `json:"preferred_username"`
+		UserPrincipalName string `json:"userPrincipalName"`
 	}
 	headers := bearerHeader(accessToken)
-	headers.Set("X-GitHub-Api-Version", "2022-11-28")
+	if connectorAccountGitHubHeader(app.AccountURL) {
+		headers.Set("X-GitHub-Api-Version", "2022-11-28")
+	}
 	if err := catalogExternalClient(app).GetJSON(ctx, app.AccountURL, headers, &profile); err != nil {
 		slog.InfoContext(ctx, "official app account lookup failed", "catalog_slug", app.Slug, "error", err)
 		return ""
 	}
-	return contextcap.SanitizeAccount(profile.Login)
+	return connectorOAuthAccountLabel(profile.Login, profile.Mail, profile.Email, profile.PreferredUsername, profile.UserPrincipalName)
+}
+
+// connectorAccountGitHubHeader reports whether accountURL is the GitHub
+// user endpoint. Other providers reject the GitHub API version header.
+func connectorAccountGitHubHeader(accountURL string) bool {
+	parsed, err := url.Parse(accountURL)
+	return err == nil && strings.EqualFold(parsed.Hostname(), "api.github.com")
+}
+
+func connectorOAuthAccountLabel(login, mail, email, preferredUsername, userPrincipalName string) string {
+	return contextcap.SanitizeAccount(firstNonEmpty(login, mail, email, preferredUsername, userPrincipalName))
 }
 
 // connectorOAuthRegistration is one dynamic client registration of a

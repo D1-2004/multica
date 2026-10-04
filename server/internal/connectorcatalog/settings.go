@@ -113,6 +113,7 @@ func SettingsCatalog() []SettingsSpec {
 		{Slug: "atlassian", Name: "Atlassian", Mode: "dcr", MCPURL: "https://mcp.atlassian.com/v1/mcp"},
 		{Slug: "figma", Name: "Figma", Mode: "limited", MCPURL: "https://mcp.figma.com/mcp"},
 		{Slug: "stripe", Name: "Stripe", Mode: "dcr", MCPURL: "https://mcp.stripe.com/"},
+		{Slug: "agentmail", Name: "AgentMail", Mode: "dcr", MCPURL: "https://mcp.agentmail.to/mcp"},
 	}
 }
 

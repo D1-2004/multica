@@ -414,6 +414,10 @@ func (h *Handler) discoverCatalogConnectorTools(ctx context.Context, c *internal
 	if c.CatalogSlug == "" {
 		return catalogToolRefresh{}, errConnectorNotCatalog
 	}
+	// Outlook tools are fixed. Listing them must not POST the catalog URL.
+	if c.CatalogSlug == outlookCatalogSlug {
+		return h.storeCatalogConnectorTools(ctx, c, outlookDiscoveredTools())
+	}
 	mcp, _, err := catalogConnectorMCP(*c)
 	if err != nil {
 		return catalogToolRefresh{}, err

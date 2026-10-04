@@ -78,10 +78,33 @@ func githubOAuthRedirectOrigin(homeOrigin, forwardedOrigin, mode string) string 
 }
 
 func connectorAppEnvConfigured(provider string) bool {
-	if provider != "github" {
+	switch provider {
+	case "github":
+		return strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")) != "" && os.Getenv("GITHUB_APP_CLIENT_SECRET") != ""
+	case outlookCatalogSlug:
+		return outlookEnvConfigured()
+	default:
 		return false
 	}
-	return strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")) != "" && os.Getenv("GITHUB_APP_CLIENT_SECRET") != ""
+}
+
+// envOutlookOAuthClient is the deployment's Azure app (QwenTagPre). It is
+// used only when the workspace has not saved its own Outlook client. People
+// never paste this id or secret.
+func envOutlookOAuthClient(app connectorcatalog.App) githubOAuthClient {
+	return githubOAuthClient{
+		Source:                connectorconfig.SourceEnv,
+		ClientID:              strings.TrimSpace(os.Getenv("OUTLOOK_CLIENT_ID")),
+		ClientSecret:          os.Getenv("OUTLOOK_CLIENT_SECRET"),
+		Scopes:                app.Scope,
+		AuthorizationEndpoint: app.AuthorizationEndpoint,
+		TokenEndpoint:         app.TokenEndpoint,
+		CallbackMode:          connectorconfig.CallbackProductionForward,
+	}
+}
+
+func outlookEnvConfigured() bool {
+	return strings.TrimSpace(os.Getenv("OUTLOOK_CLIENT_ID")) != "" && os.Getenv("OUTLOOK_CLIENT_SECRET") != ""
 }
 
 // preregisteredOAuthClient is the workspace's confidential client for an
@@ -92,6 +115,13 @@ func (h *Handler) preregisteredOAuthClient(ctx context.Context, workspaceID stri
 	saved, err := connectorconfig.OldestEnabled(ctx, h.DB, workspaceID, app.Slug)
 	if err != nil {
 		if errors.Is(err, connectorconfig.ErrNotFound) || errors.Is(err, connectorconfig.ErrSchemaMissing) || errors.Is(err, connectorconfig.ErrInvalid) {
+			// Outlook's client is the deployment's Azure app. Other
+			// pre-registered apps stay unavailable until the workspace
+			// saves one. A saved secret that cannot be opened does not
+			// reach this branch.
+			if app.Slug == outlookCatalogSlug {
+				return envOutlookOAuthClient(app), nil
+			}
 			return githubOAuthClient{}, nil
 		}
 		return githubOAuthClient{}, err

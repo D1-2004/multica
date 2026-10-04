@@ -196,6 +196,10 @@ contact for it:
 | `asana` | `https://mcp.asana.com/v2/mcp` | pre-registered MCP app (`oauth_preregistered`); authorize and token send `resource=https://mcp.asana.com/v2` |
 | `figma` | `https://mcp.figma.com/mcp` | `oauth_dcr` (confidential client) |
 | `stripe` | `https://mcp.stripe.com/` | `oauth_dcr` |
+| `outlook` | `https://graph.microsoft.com/v1.0` | Microsoft identity platform (`oauth_preregistered`), authority `/common` (work and personal accounts). The deployment client is `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` (Azure app QwenTagPre). People do not paste a key. Tools are in-process Graph calls (`whoami`, `list_messages`, `list_events`, `list_contacts`); the MCP URL is not called |
+| `agentmail` | `https://mcp.agentmail.to/mcp` | MCP OAuth with dynamic client registration (`oauth_dcr`) on `clerk.console.agentmail.to`. The inbox REST API is API-key only; this connector uses the public MCP OAuth, so people do not paste a key |
+
+Outlook's authorize URL adds `prompt=select_account`. Its redirect URI is the production connector callback (`https://fde-workbench.dingtalk.com/api/connectors/oauth/callback`); a pre-release deployment forwards that callback back. Scene and person Outlook connects are shareable, like GitHub App installs, so a phone that opens the consent page outside the starting webview can finish. Workspace Outlook connects stay bound to the starting browser. Delegated scopes are `offline_access`, `openid`, `profile`, `email`, `User.Read`, `Mail.Read`, `Calendars.Read` and `Contacts.Read`. A work tenant that has disabled user consent still needs an admin to approve those Graph permissions.
 
 A catalog connector is an ordinary `internal_connector` row with
 `catalog_slug` set, `auth_mode='oauth'`, `upstream_url` equal to the catalog
