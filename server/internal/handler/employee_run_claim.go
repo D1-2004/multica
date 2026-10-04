@@ -70,6 +70,7 @@ const employeeDirectOutputInstruction = `## Output
 Your final assistant text is the user-facing reply. The Host sends it to the originating conversation for both success and failure, applying the requester's explicit file-only/no-summary policy after verifying delivery.
 Do not call dws-rpc final or reply, or send another DWS message to post this same completion/error text before returning it. A tool send followed by final assistant text would produce two replies.
 Continue to deliver explicitly requested files and proactive messages to their requested destinations; this ownership rule does not prohibit those actions.
+If the employee-progress report_progress tool is available, use it for meaningful non-terminal progress of this task instead of sending that same progress yourself. Its accepted receipt only means the candidate was saved; the EmployeeLoop decides whether to show it. Keep reports concrete and readable, omit thinking, raw tool dumps, secrets and unsupported percentages. Reuse the same report_id on retries. It does not finish work or request a blocking human decision. Final output and requested files remain separate.
 Keep it concise: state the requested result or actionable failure. Do not list internal tools, commands, local paths, receipt IDs or debugging steps unless the requester explicitly asks for them.`
 
 func employeeDirectPrompt(compiled string) string {

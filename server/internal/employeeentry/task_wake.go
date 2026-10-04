@@ -24,6 +24,7 @@ const (
 
 	TaskWakeCollectionReady   = "collection.ready"
 	TaskWakeExecutionFollowUp = "execution.follow_up"
+	TaskWakeExecutionProgress = "execution.progress"
 	TaskWakeRoutineDecision   = "routine.decision"
 	TaskWakeWebhookDecision   = "webhook.decision"
 
@@ -49,7 +50,7 @@ var (
 
 // TaskWakeKinds lists the wake kinds this binary executes.
 func TaskWakeKinds() []string {
-	return []string{TaskWakeCollectionReady, TaskWakeExecutionFollowUp, TaskWakeRoutineDecision, TaskWakeWebhookDecision}
+	return []string{TaskWakeCollectionReady, TaskWakeExecutionFollowUp, TaskWakeRoutineDecision, TaskWakeWebhookDecision, TaskWakeExecutionProgress}
 }
 
 // KnownTaskWakeKind reports whether this binary executes kind.

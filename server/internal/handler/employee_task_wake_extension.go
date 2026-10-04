@@ -24,6 +24,9 @@ type employeeTaskWakeExtension interface {
 }
 
 func employeeTaskWakeExtensionFor(kind string) employeeTaskWakeExtension {
+	if kind == employeeentry.TaskWakeExecutionProgress {
+		return employeeProgressExtension{}
+	}
 	if kind == employeeentry.TaskWakeRoutineDecision {
 		return employeeRoutineDecisionExtension{}
 	}
