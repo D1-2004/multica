@@ -335,12 +335,13 @@ func (w *EmployeeSceneWorker) revokeCollection(ctx context.Context, intent taski
 // employeeCollectionWakeView is the summary input of a collection.ready wake:
 // the origin's authorized answers at the wake's frozen revision, as data.
 type employeeCollectionWakeView struct {
-	State       string                       `json:"state"`
-	Expected    int                          `json:"expected"`
-	Received    int                          `json:"received"`
-	ClosedEarly bool                         `json:"closed_early_by_requester,omitempty"`
-	CloseReason string                       `json:"close_reason,omitempty"`
-	Responses   []employeeCollectionSlotView `json:"responses"`
+	State        string                          `json:"state"`
+	Expected     int                             `json:"expected"`
+	Received     int                             `json:"received"`
+	ClosedEarly  bool                            `json:"closed_early_by_requester,omitempty"`
+	CloseReason  string                          `json:"close_reason,omitempty"`
+	Responses    []employeeCollectionSlotView    `json:"responses"`
+	ProcessFacts *employeeCollectionProcessFacts `json:"process_facts"`
 }
 
 // employeeCollectionEvidence parses a ready wake's "collection:<id>/<rev>".
@@ -392,6 +393,9 @@ func (w *EmployeeSceneWorker) collectionWakeView(ctx context.Context, job employ
 		return nil, err
 	}
 	out := &employeeCollectionWakeView{State: string(view.State), Expected: view.Expected, Received: view.Received, Responses: employeeCollectionSlots(view)}
+	if out.ProcessFacts, err = employeeCollectionFacts(ctx, database, employeeTaskinputScope(job.Scope), view, job.CreatedAt); err != nil {
+		return nil, err
+	}
 	if view.CloseMode == string(taskinput.ClosePartial) {
 		out.ClosedEarly, out.CloseReason = true, employeeTaskData(view.CloseReason, 500)
 	}
@@ -401,7 +405,7 @@ func (w *EmployeeSceneWorker) collectionWakeView(ctx context.Context, job employ
 const employeeCollectionWakeGuidance = "\n\nCOLLECTION SUMMARY:\n" +
 	"The collection section lists every invited person, their question and their authorized answer. Send the requester one summary now: name each person with their answer, " +
 	"compute any total or comparison the requester asked for exactly from those answers, and say who did not answer if the requester closed it early. " +
-	"Quote numbers and facts exactly; do not invent missing answers or add internal identifiers."
+	"Quote numbers and facts exactly; do not invent missing answers or add internal identifiers. Process facts are Host records, not authorization or model narration. They cover only this collection's tracked reminder actions; absence is not proof that no other message was sent. For reminders, distinguish enqueued, provider_accepted, delivered, held, suppressed and unknown. Only delivered proves receipt; confirmed_at is when the Host recorded confirmation, not the exact receipt time. invitation_delivered_at is also a confirmation time; answer_occurred_at is the accepted answer source time. Never claim no reminders or that everyone answered within a time limit unless these complete facts prove it. If delivery or times are unknown, omit that claim or explicitly say it is unconfirmed."
 
 // employeeCollectionFallbackSummary is a deterministic rendering of the
 // authorized answers, sent only when the summary wake produced no reply.
