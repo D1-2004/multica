@@ -47,6 +47,43 @@ original using the live upstream list. Alias collisions in an upstream list are 
 continue to use the full connector UUID; shortening the display name does not
 shorten the security identifier.
 
+## Discovery availability boundary
+
+Task discovery distinguishes an external connector's availability from the
+runtime's ability to start. When the first `tools/list` page fails because of
+an upstream availability or credential error, the relay retains its failure
+audit and returns one local read-only tool, `multica_connection_unavailable`.
+Its description contains a safe failure category and explicitly states that
+business tools were unavailable during discovery. This is a diagnostic
+definition, not an empty successful upstream list or a cached business schema.
+Other authorized MCP servers can initialize normally. A task requiring the
+unavailable connector must report that it is blocked; it must not claim the
+requested business work succeeded or use alternate credentials.
+
+The diagnostic accepts only `{}`. Its call reports the discovery limitation
+as text and structured data, with `business_execution=false`, and performs no
+upstream request, refresh, retry or write. A successful diagnostic call means
+only that this status was delivered, never that the connector recovered.
+Each invocation still rechecks the active task, current connector grant and
+credential resolution, rate limit and durable audit. The name is reserved by
+the relay: an upstream definition using it is rejected as invalid metadata.
+
+Invalid upstream metadata/protocol, an unclassified failure, a failed later page, parent cancellation,
+configuration/authentication/authorization failures, rate-limit failures and
+audit failures remain errors. Later-page failures cannot mix an incomplete
+business catalog with a diagnostic page. Task `tools/call` behavior and its
+no-automatic-retry rule are unchanged. Direct Agent-configured remote MCP
+servers are outside this backend-managed connector boundary.
+
+Failure telemetry records only fixed error categories, an HTTP status when
+known, elapsed time, method and the existing request/task/connector IDs. It
+never includes upstream error strings, bodies, tokens or URLs. This follows
+GawkBot's local broker definition boundary at fixed commit
+`71e82a1809565281cbd0bf8185d3c125b715d934` (`internal/team/mcp_config.go` and
+`internal/teammcp/server.go`), using standard MCP tool schemas rather than
+changing Pi/Daemon protocols. Implementation and acceptance tracking:
+[MCP discovery isolation](plans/2026-10-04/mcp-discovery-isolation.md).
+
 ## Configuration and rollout
 
 - The database owns connector metadata, workspace/Agent grants and a
