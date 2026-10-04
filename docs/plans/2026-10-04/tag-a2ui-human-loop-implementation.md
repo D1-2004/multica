@@ -61,3 +61,7 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 准入仍等待唯一发布方固定下一窗口、精确source/release/run和两live新启动/employee-human:1。当前零真实台词发送、零共享配置修改；不把黄金集9/20结果作为本A2UI验收证据。DWS当前正式chat shortcut目录可发/更新流式卡，但未发现用户A2UI点击入口；真正按钮通过本机冬翔钉钉客户端验证，文字通过私有DWS执行。
 
 本轮修复后：全部Human定向回归通过，零fail/skip（计数见integration.json），包括真实数据库下末轮通知/Goal、file-only complete/suggest/clarify和quiet五个子场景；其余未变更范围68顶层/178命名通过证据保留。quiet queued_send首次失败因最小fixture缺当前identity，补准入后回归通过；不能把该第一次失败省略。最终server compile-only再次通过。仍未发布、未发真实台词。
+
+## 验收设计收紧（用户要求完成真实闭环）
+
+固定[真实验收合同](tag-a2ui-human-acceptance.md)与docs/evals/tag-human-real-cases.json。9场景/10入口：H03文字和真实多选点击分开；H05分两次建题；H06用有Task的必需wait停止；H08独立验completed-suggest→新Task/builds_on；H09验scene/requester隔离。每例必须到最终通知/Goal，不以ACK、新Run创建或原型签收。稳定发布后预计60–90分钟，优先两个成功入口，关键反例与补证按受影响范围。非法控制、真实网络重投不可自然制造的边界单列本地确定性证据，不冒称客户端E2E。

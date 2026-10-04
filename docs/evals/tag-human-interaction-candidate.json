@@ -54,7 +54,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -78,7 +79,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -95,14 +97,15 @@
             "短答目标不明应追问；明确提到某件时只推进该事项。"
           ],
           "method": [
-            "同请求者同场域两件独立事项各发问题；先说“第二个”，再明确原事项。",
+            "同请求者同场域用两次独立当前输入分别建立两件待确认事项，记录两个question ID；先发同时匹配两题的短答，再明确原事项。",
             "结合真实模型语义judge核q_ref、Task/Run和实际效果，不能只看模型说收到。"
           ],
           "sources": [
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -126,7 +129,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -143,14 +147,15 @@
             "首个合法答案生成唯一消费job和执行意图；迟到旧卡不覆盖已接受的新输入。"
           ],
           "method": [
-            "隔离并发模拟点击/文字及网络重投，真实文本路径用DWS独立读回。",
+            "隔离PG并发模拟点击/文字及网络重投；真实合法受理卡仅在客户端仍支持再次提交时观察，否则UI禁用不代替服务端幂等。",
             "联合检查source/event、response、job、native effect journal、Task/Run及消息计数。"
           ],
           "sources": [
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -182,7 +187,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -206,7 +212,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -230,7 +237,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -247,14 +255,15 @@
             "发送前目标/版本变化抑制排队卡；迟到答复不复活工作。"
           ],
           "method": [
-            "隔离fixture暂停卡片发送，真实source-bound停止或修改目标后放开发送。",
+            "已结束Run确有必需human_input wait时，由原真人source-bound停止事项，再在真实客户端提交旧卡；暂停发送的故障模拟另列。",
             "验证BeforeSend、stop/goal事实、response_action及无新Run；实际客户端路径另验。"
           ],
           "sources": [
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -278,7 +287,8 @@
             "docs/employee-human-interaction.md",
             "server/internal/handler/employee_human_question_test.go",
             "server/internal/handler/employee_human_round_result_test.go",
-            "server/internal/handler/employee_human_response_worker_test.go"
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
           ],
           "origin": "defined",
           "sourceCases": []
