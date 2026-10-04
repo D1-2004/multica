@@ -1,6 +1,21 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository. Keep this file short and authoritative: rules here should be hard to infer from code or easy to get wrong.
+Shared guidance for contributors and coding agents. Keep this file authoritative: rules here should be hard to infer from code or easy to get wrong.
+
+## Instruction architecture and delivery
+
+`AGENTS.md` is the common entrypoint; this file owns engineering invariants.
+Before implementation, use `docs/development-delivery.md` to define acceptance
+criteria, relevant E2E scenarios, test environment and delivery milestones.
+Record them in the current task/Plan, with a stopping or handoff boundary.
+Product behavior requires evidence through the relevant end-to-end path;
+source review, mocks and build success do not certify runtime behavior.
+At the boundary, report verified results and remaining blockers; do not silently
+expand scope or turn an untested requirement into a pass.
+
+Module contracts and operational skills are loaded only for affected paths.
+Shared instructions must work without a contributor's private memory, branch,
+checkout or CLI profile. Resolve environment and release targets for each task.
 
 ## Conventions
 
@@ -219,6 +234,9 @@ Rules:
 ## Verification
 
 For code changes, run the narrowest useful checks while iterating, then run broader verification when risk justifies it or when asked.
+
+For Employee / Tag behavior, add the domain checks in
+`docs/employee-delivery-workflow.md`; other modules use their own contracts.
 
 Useful checks:
 
