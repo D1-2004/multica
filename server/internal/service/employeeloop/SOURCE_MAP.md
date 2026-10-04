@@ -452,3 +452,11 @@ it on journal replay. Neither recency nor Task ID equality alone grants control.
 Local packet, identity and replay tests do not prove real-model intent choice.
 
 Human-card templates and explicit dismissal are owned by handler/employee_human_question.go, internal/humanquestion and service/a2ui. The source-bound nonterminal disable_human_question closes one question without task mutation or a typed response wake. Dismissal uses the same question CAS and durable original-card projection as answers. Human marker 2 gates all-live reader compatibility; scripted Host/PG and native renderer evidence do not certify deployed model decisions. See docs/employee-human-interaction.md.
+
+## Conclusion-first expression (2026-10-04)
+
+The existing GawkBot direct-session conversation voice now leads with a verified
+conclusion in short sentences. Explicit detail, verbatim evidence and exact-format
+requests take precedence over brevity. Evidence is separated from the brief lead,
+not rewritten or clipped; existing credential/privacy restrictions remain. This
+is prompt guidance only, with no extra composer pass or protocol change.
