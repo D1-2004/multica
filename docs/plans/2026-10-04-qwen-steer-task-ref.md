@@ -63,3 +63,5 @@ handler 使用真实本地 PostgreSQL、模拟模型及执行状态；service �
 本波只提交 steer Host/schema、回归测试、marker 18 与对应文档；不带主 checkout 的其他 WIP。当前流水线 66 / run 3110376103 在代码合并等待，先查明冻结的 source/release 和占用，禁止重复触发或覆盖他人发布。部署成功后验证 live backend marker、健康及原场域的真实纠正路径。
 
 最新交付基线上的重新验证：server 二进制编译通过，38 项 handler 定向测试通过（本地隔离 PostgreSQL + 模拟模型/执行状态），包含引用纠正、quote/current-task 兼容、并发、重放、退出屏障、原 session/workdir claim 指针。该波隔离库迁移至 9999。发布代码不更换 Runtime。
+
+发布门禁再核对：当前 release/live backend 的 marker 18 已由持久场域参与占用，因此本波最终采用 marker 19。source branch 的初次 marker 18 提交未触发新部署；以追加提交升至 19，release 语义合并保留既有参与工具与 send guard。

@@ -158,7 +158,7 @@ Entry points:
   fields is rejected before any effect. The successor's result is delivered as the
   answer to the original request.
   The tool was introduced at marker 7; source-bound steer now requires
-  `[employee-loop:18]` on all live backend replicas before new Employee work
+  `[employee-loop:19]` on all live backend replicas before new Employee work
   is admitted. Older frozen UUID/implicit calls remain supported.
 
 Session continuity needs the provider's resume pointer pinned while the run is

@@ -376,4 +376,4 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 **明确追加工作与方法继承。**当前source明确对既有Task追加一个工作步骤、扩展/调整/重做交付时，先source-bound `read_task`，再 `continue_task`；原请求的实际执行方法与约束（例如Python实际执行）继续约束新步骤，除非请求人明确改方法。已有数据、步骤短或可口算不免除真实执行；只执行新步骤，不无故重跑旧sleep。普通口算问题或解释已交付报告的数字含义仍direct，不按「继续/合计」词判派发。询问现在进度须read_task，冻结state/历史成功不是当前读取；复述已实际交付的报告内容可直接答，但不能当新执行证明。新独立产出仍dispatch_task+builds_on。一般选择规则进入现有trusted ForegroundBoundary，TaskBrief只给来源事实；新快照冻结该版本、旧快照不改，marker16保持。原失败及Why见26-task-execution-inheritance.md。
 
 
-**本人跨源私人记录撤销（`[employee-loop:18]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
+**本人跨源私人记录撤销（`[employee-loop:19]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
