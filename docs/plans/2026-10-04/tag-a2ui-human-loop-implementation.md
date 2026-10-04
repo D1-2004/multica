@@ -51,3 +51,13 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 环境恢复：cmd/server默认测试库panic留下的本次合成fixture，仅按确切UUID和04:10:49 UTC创建窗口清理（workspace/member/agent/runtime/user）；没有按全局slug清理他人数据。compile-only `go test -c ./cmd/server`通过，不再执行未显式指定DB的TestMain。
 
 最终代码检查点：`81d501962a` 已rebase到最新集成基线 `5357e67fb4`，三处重叠文件自动合并后核对两边意图。受影响handler检查再次32顶层/81命名全部通过、零skip；server compile-only通过。代码仅本地提交，未推远端/部署；原型和先前设计材料保留为未跟踪session文件，不夹带进入核心实现提交。独立本地PG测试资源在本波结束停用，下一轮按manifest重启；无预发配置变更、无真实IM发送。证据索引为docs/evals/results/tag-human-local-2026-10-04/manifest.json。
+
+## 统一分支集成预检（当前验收检查点）
+
+用户已授权协调唯一发布方“发布和验收”。在独立worktree基于employee/progress-release@eb62d0f06e摘原候选两提交，5处文本冲突按语义并存：保留reader20、eval-report、progress/participation，新增独立human:1；publisher黄金报告WIP未触碰。独立集成分支codex/tag-human-integration-precheck-20261004，编译通过不等于已发布。
+
+预检发现必须修的闭环风险：typed新Run最终notice混用原receipt与答复Job并走错效果journal；文件送达抑制同时跳过V2 Goal结束；typed旧卡绕过持久quiet。先按原风险编写回归并确认前两项失败，再修。补验末轮notice/Goal及quiet，真实场景增加H07静默后的旧卡不继续并原人恢复参与；其余场景不改口径。
+
+准入仍等待唯一发布方固定下一窗口、精确source/release/run和两live新启动/employee-human:1。当前零真实台词发送、零共享配置修改；不把黄金集9/20结果作为本A2UI验收证据。DWS当前正式chat shortcut目录可发/更新流式卡，但未发现用户A2UI点击入口；真正按钮通过本机冬翔钉钉客户端验证，文字通过私有DWS执行。
+
+本轮修复后：全部Human定向回归通过，零fail/skip（计数见integration.json），包括真实数据库下末轮通知/Goal、file-only complete/suggest/clarify和quiet五个子场景；其余未变更范围68顶层/178命名通过证据保留。quiet queued_send首次失败因最小fixture缺当前identity，补准入后回归通过；不能把该第一次失败省略。最终server compile-only再次通过。仍未发布、未发真实台词。

@@ -49,6 +49,21 @@ func (w *EmployeeSceneWorker) processHumanResponse(ctx context.Context, job empl
 	if err != nil {
 		return false, w.humanResponseFailure(ctx, job, err)
 	}
+	quiet, err := employeeHumanQuiet(ctx, database, job.Scope)
+	if err != nil {
+		return false, w.store.Retry(ctx, job, err.Error())
+	}
+	if quiet && len(job.Outcome) == 0 {
+		saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Quiet}
+		raw, _ := json.Marshal(saved)
+		if err = w.store.SaveOutcome(ctx, job, raw); err != nil {
+			return false, err
+		}
+		if err = w.completeHumanResponse(ctx, job, *saved); err != nil {
+			return false, w.humanResponseFailure(ctx, job, err)
+		}
+		return true, nil
+	}
 	runCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	if len(job.Outcome) > 0 {
@@ -412,6 +427,18 @@ func (h *employeeHumanResponseHost) Execute(ctx context.Context, identity employ
 		if err != nil {
 			return nil, err
 		}
+		// readEmployeeHumanBinding retained the authoritative scene lock in this
+		// transaction. Recheck participation at the effect boundary, so a pause
+		// accepted during model preparation cannot start new work or reply.
+		if call.Name != "stay_quiet" {
+			quiet, e := employeeHumanQuiet(ctx, tx, h.job.Scope)
+			if e != nil {
+				return nil, e
+			}
+			if quiet {
+				return nil, fmt.Errorf("%w: scene participation is quiet; an old question cannot restore it", employeeloop.ErrToolRefused)
+			}
+		}
 		var result employeeloop.ToolResult
 		switch call.Name {
 		case "reply":
@@ -508,7 +535,11 @@ func (w *EmployeeSceneWorker) completeHumanResponse(ctx context.Context, job emp
 		if err != nil {
 			return err
 		}
-		if text != "" {
+		quiet, err := employeeHumanQuiet(ctx, tx, job.Scope)
+		if err != nil {
+			return err
+		}
+		if text != "" && !quiet {
 			command := b.Envelope.Command
 			anchor := employeeentry.DeliveryAnchor{Conversation: true, SceneID: job.Scope.SceneID, RequesterRef: b.Question.RequesterRef, SenderOpenDingTalkID: b.Source.Message.SenderOpenDingTalkID, DWSEnvironment: commandDWSEnvironment(command)}
 			if command.ExternalIdentity.DWS == nil {

@@ -1,0 +1,39 @@
+{
+  "mode": "isolated_local_scripted_model_provider",
+  "integration_base": "eb62d0f06e7c92819c9076fb72541737d95ec980",
+  "candidate_replay": [
+    "7308810d53",
+    "c5829f220d"
+  ],
+  "risk_fixes": [
+    "final notice original receipt plus typed effect proof",
+    "file-only V2 goal/wait materialization without extra card/message",
+    "persistent quiet at input, effect and send boundaries"
+  ],
+  "human_top_level_pass": 16,
+  "human_named_pass": 35,
+  "human_fail": 0,
+  "human_skip": 0,
+  "broader_checks": "68 top-level/178 named passed; quiet queued_send fixture failed due missing identity, fixed fixture and all Human tests rerun passed. Unchanged broader passes retained.",
+  "compile_only_server": "passed",
+  "not_verified": [
+    "live release",
+    "real DingTalk click/text",
+    "actual Pi process/fresh Run",
+    "real model question interpretation"
+  ],
+  "logs": {
+    "tag-human-integration-first-fail.log": {
+      "local_path": "/tmp/tag-human-integration-first-fail.log",
+      "sha256": "939d3a75f89cda8af5dad982edd122a6c87fac8c982be56818bedca37612c554"
+    },
+    "tag-human-integration-handler.jsonl": {
+      "local_path": "/tmp/tag-human-integration-handler.jsonl",
+      "sha256": "e5d10dae28240f3179e7e75499b20dce42437dc703ce286a8de847033b15544a"
+    },
+    "tag-human-integration-human-final.jsonl": {
+      "local_path": "/tmp/tag-human-integration-human-final.jsonl",
+      "sha256": "9a511566d96bf102829f86033cb79e668e2463cbff934210b104ad0b37f2cd25"
+    }
+  }
+}

@@ -228,6 +228,17 @@ func (h *Handler) BeforeEmployeeHumanQuestionSend(ctx context.Context, in dingta
 	} else if err != nil {
 		return err
 	}
+	// Round-end questions are existing authorized background notices; a
+	// foreground question must obey a subsequently accepted scene pause.
+	if q.TaskID == "" {
+		quiet, e := employeeHumanQuiet(ctx, tx, scope)
+		if e != nil {
+			return e
+		}
+		if quiet {
+			return &dingtalkresponse.SuppressSendError{Reason: "scene_participation_quiet"}
+		}
+	}
 	if _, err = readEmployeeQuestionSource(ctx, tx, q); err != nil {
 		return err
 	}

@@ -345,3 +345,46 @@ func TestEmployeeHumanResponseV2AmendmentUpdatesGoalBeforeFreshRun(t *testing.T)
 		t.Fatal("human change did not become a source-bound goal amendment", revision, goal, source)
 	}
 }
+
+func TestEmployeeHumanResponseFinalRunReturnsVerifiedNotice(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" {
+		t.Skip("requires explicit isolated DATABASE_URL")
+	}
+	ctx := context.Background()
+	c := newCollectionHarness(t)
+	if response := employeeHTTP(t, c.f, c.dc, uuid.NewString()); response.Code != http.StatusAccepted {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	c.process()
+	var originalJob string
+	if err := testPool.QueryRow(ctx, `SELECT id::text FROM employee_scene_job WHERE agent_id=$1::uuid`, c.f.agentID).Scan(&originalJob); err != nil {
+		t.Fatal(err)
+	}
+	r := humanResponseWorkerFixture(t, c.f, originalJob, "", "")
+	c.model.set(func(string) (string, map[string]any) {
+		return wakeToolCall("final-human-work", "continue_question_work", map[string]any{"prompt": "整理简短版，不发给别人", "reply": "我来整理。"})
+	})
+	c.process()
+	var runID, queueID string
+	if err := testPool.QueryRow(ctx, `SELECT r.id::text,r.queue_task_id::text FROM employee_task_run r JOIN agent_task_queue q ON q.id=r.queue_task_id WHERE q.context->>'employee_human_response_id'=$1`, r.ID).Scan(&runID, &queueID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status='running',started_at=now() WHERE id=$1::uuid`, queueID); err != nil {
+		t.Fatal(err)
+	}
+	output := `{"version":"tag-round-result/v1","summary":"简短版资料已整理。"}`
+	result, _ := json.Marshal(map[string]string{"output": output})
+	if _, err := c.f.h.TaskService.CompleteTask(ctx, parseUUID(queueID), result, "", "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := c.f.h.enqueueEmployeeRunNotice(ctx, testWorkspaceID, runID); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	var state, reason, body, taskState string
+	if err := testPool.QueryRow(ctx, `SELECT n.state,n.reason,n.body,t.state FROM employee_run_notice n JOIN employee_task t ON t.id=n.task_id WHERE n.run_id=$1::uuid`, runID).Scan(&state, &reason, &body, &taskState); err != nil {
+		t.Fatal(err)
+	}
+	if state != "enqueued" || reason != "" || body != "简短版资料已整理。" || taskState != "succeeded" {
+		t.Fatal("human response final result lost source/effect proof", state, reason, body, taskState)
+	}
+}

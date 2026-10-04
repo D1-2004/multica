@@ -85,3 +85,36 @@ func TestEmployeeHumanRoundResultCompletedSuggestionAndMalformedBoundaries(t *te
 		})
 	}
 }
+
+func TestEmployeeHumanRoundResultFileOnlyCompletesGoalWithoutExtraMessage(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" {
+		t.Skip("requires explicit isolated DATABASE_URL")
+	}
+	for _, tc := range []struct {
+		name, choice, goal string
+		questions          int
+	}{
+		{"complete", "", "succeeded", 0},
+		{"suggest", `,"choice":{"intent":"suggest","kind":"single","question":"继续哪一步？","options":[{"id":"short","label":"简版"},{"id":"full","label":"详版"}]}`, "succeeded", 0},
+		{"clarify", `,"choice":{"intent":"clarify","kind":"single","question":"缺少哪一项？","options":[{"id":"short","label":"简版"},{"id":"full","label":"详版"}]}`, "waiting", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := employeeNoticeDatabase(t, "succeeded", false, false, fileOnlyNotice, func(f *dingTalkResponseFixture, _ *employeeTestModel) {
+				f.h.EmployeeSceneWorker.HumanQuestionsReady = func(context.Context) (bool, error) { return true, nil }
+			})
+			setNoticeExecutionOutput(t, f, `{"version":"tag-round-result/v1","summary":"文件已生成并发送。"`+tc.choice+`}`)
+			noticeReceipt(t, f, &fileNoticeProvider{file: true}, "delivered", f.command.Event.Data.Conversation.OpenConversationID)
+			if _, err := f.h.ReconcileEmployeeRunNotices(context.Background(), 100); err != nil {
+				t.Fatal(err)
+			}
+			var state, reason, body, goal string
+			var actions, questions int
+			if err := testPool.QueryRow(context.Background(), `SELECT n.state,n.reason,n.body,t.state,(SELECT count(*) FROM response_action a WHERE a.agent_id=t.agent_id),(SELECT count(*) FROM employee_human_question q WHERE q.task_id=t.id) FROM employee_run_notice n JOIN employee_task t ON t.id=n.task_id WHERE n.run_id=$1::uuid`, f.runID).Scan(&state, &reason, &body, &goal, &actions, &questions); err != nil {
+				t.Fatal(err)
+			}
+			if state != "suppressed" || reason != "native_file_delivered" || body != "" || goal != tc.goal || actions != 0 || questions != tc.questions {
+				t.Fatal("file-only suppressed lifecycle or sent extra message", state, reason, body, goal, actions, questions)
+			}
+		})
+	}
+}

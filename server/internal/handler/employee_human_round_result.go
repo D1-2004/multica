@@ -15,7 +15,7 @@ import (
 
 // materializeEmployeeRoundResultTx runs only after the verified Run ended. The
 // model supplies display content; the Host supplies every routing/goal binding.
-func (h *Handler) materializeEmployeeRoundResultTx(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding, in dingtalkresponse.ActionInput) (string, bool, error) {
+func (h *Handler) materializeEmployeeRoundResultTx(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding, in dingtalkresponse.ActionInput, projectCard bool) (string, bool, error) {
 	var marker struct {
 		Version string `json:"employee_round_result_contract"`
 	}
@@ -46,7 +46,7 @@ func (h *Handler) materializeEmployeeRoundResultTx(ctx context.Context, tx pgx.T
 			}
 		}
 	}
-	if result.Choice == nil {
+	if result.Choice == nil || (!projectCard && result.Choice.Intent == "suggest") {
 		return result.Summary, true, nil
 	}
 	originID := b.JobID
@@ -80,7 +80,14 @@ func (h *Handler) materializeEmployeeRoundResultTx(ctx context.Context, tx pgx.T
 	}
 	in.EmployeeRunNoticeID = ""
 	in.Text = result.Summary
-	if _, err = h.stageEmployeeHumanQuestion(ctx, tx, &q, in); err != nil {
+	if projectCard {
+		_, err = h.stageEmployeeHumanQuestion(ctx, tx, &q, in)
+	} else {
+		// File-only delivery suppresses additional cards. A required unresolved
+		// answer remains in the ledger and can be supplied by later ordinary text.
+		_, err = humanquestion.StageTx(ctx, tx, q)
+	}
+	if err != nil {
 		return "", true, err
 	}
 	if q.Choice.Intent == "clarify" {

@@ -206,6 +206,7 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if job.State != "completed" {
 		return in, false, holdEmployeeNotice("source_job_not_completed")
 	}
+	effectJob := job
 	if job.Kind == employeeentry.KindHumanResponse {
 		actual := job
 		actual.ID = b.JobID
@@ -243,7 +244,7 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 				return in, false, holdEmployeeNotice("invalid_source_receipt")
 			}
 			var admitted bool
-			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1::uuid AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7::uuid AND owner_loop='employee')`, item.ReceiptID, b.JobID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.Scope.Scene.SceneID, item.PrincipalID).Scan(&admitted)
+			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1::uuid AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7::uuid AND owner_loop='employee')`, item.ReceiptID, job.ID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.Scope.Scene.SceneID, item.PrincipalID).Scan(&admitted)
 			if err != nil {
 				return in, false, err
 			}
@@ -266,7 +267,16 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 		Scope:                     employeeentry.Scope{WorkspaceID: b.Scope.WorkspaceID, AgentID: b.Scope.AgentID, TenantOrgID: b.Scope.TenantOrgID, SceneID: b.Scope.Scene.SceneID},
 		Requester:                 b.Requester, Queue: b.Queue, SourceRef: b.SourceRef, Source: source,
 	}
-	reason, err := employeeExecutionDispatchProof(ctx, tx, &proof)
+	// The original message proves authority; the typed answer job proves the
+	// new execution. A steered successor still uses its own replacement proof.
+	var reason string
+	if _, steered, e := employeeExecutionSteerInput(ctx, tx, &proof); e != nil {
+		return in, false, e
+	} else if effectJob.Kind == employeeentry.KindHumanResponse && !steered {
+		reason, err = employeeHumanExecutionProof(ctx, tx, &proof, effectJob)
+	} else {
+		reason, err = employeeExecutionDispatchProof(ctx, tx, &proof)
+	}
 	if err != nil {
 		return in, false, err
 	}
@@ -494,14 +504,20 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 			artifactsLoaded = true
 			continue
 		}
+		// Delivery suppression is not goal suppression. Only a verified native
+		// file may suppress the message while materializing this Run's outcome.
+		roundBody, roundHandled := "", false
+		if held == nil || held.reason == "native_file_delivered" {
+			var roundErr error
+			roundBody, roundHandled, roundErr = h.materializeEmployeeRoundResultTx(ctx, tx, b, in, deliveryDecision != "suppress")
+			if roundErr != nil {
+				return false, roundErr
+			}
+		}
 		state, reason, body, actionID := "enqueued", "", "", ""
 		if held != nil {
 			state, reason = "suppressed", held.reason
 		} else {
-			roundBody, roundHandled, roundErr := h.materializeEmployeeRoundResultTx(ctx, tx, b, in)
-			if roundErr != nil {
-				return false, roundErr
-			}
 			body = employeeNoticeDeliveryBody(deliveryDecision, b.Result)
 			if roundHandled {
 				body = roundBody
@@ -550,6 +566,9 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkresponse.ActionInput) error {
 	if in.A2UICard != nil {
 		return h.BeforeEmployeeHumanQuestionSend(ctx, in)
+	}
+	if handled, err := h.beforeEmployeeHumanResponseSend(ctx, in); handled || err != nil {
+		return err
 	}
 	if in.EmployeeMessageJobID != "" {
 		return h.beforeEmployeeParticipationSend(ctx, in)

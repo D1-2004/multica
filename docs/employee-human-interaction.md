@@ -39,3 +39,11 @@ human_response item仅question_ref/response_ref/version、message_count=0，不�
 滚动先reader后producer；回滚前先停止新生产者并排空typed jobs与card outbox。旧response worker不了解card字段，不能在有pending卡片时直接降回旧二进制。
 
 源码：`internal/humanquestion`、`internal/employeeentry/human_response.go`、`handler/employee_human_*`、`service/a2ui/stage.go`、`service/dingtalkresponse/a2ui_question.go`。GawkBot借鉴和不照搬边界见本轮Plan与固定源码对比。验收状态分本地模拟、真实IM/模型/Pi，详见 [实施Plan](plans/2026-10-04/tag-a2ui-human-loop-implementation.md)。
+
+## 统一集成边界与验收补充
+
+原消息Job/receipt提供授权来源，typed human_response Job和真实continue_question_work journal提供本次执行证明，两者不能混用。新Run最终结果也必须走这条证明，不能只验新Run创建。steer后继仍以原steer证明优先。
+
+文件真实送达且用户要求不再总结时，抑制额外消息不抑制已核实的V2结果推进：有效结果可完成Goal；suggest不再发额外卡片；clarify保留问题/mandatory wait供后续普通文字补充，不额外发卡。非法或非结构结果仍不宣布Goal完成。
+
+持久quiet与人工问答结合：旧前台卡不恢复参与，不启动新执行或产生新前台回复；前台未提交的新卡在quiet时压制。已授权后台Run的结果/轮末卡保留原通知规则。效果事务与新发送前再次检查；已受理的远端请求沿原回执对账，不冒称撤回。
