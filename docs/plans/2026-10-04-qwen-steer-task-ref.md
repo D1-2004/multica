@@ -69,3 +69,15 @@ handler 使用真实本地 PostgreSQL、模拟模型及执行状态；service �
 release 合并冲突按语义处理：保留 release 的 marker 18 持久场域参与代码和文档，追加 marker 19 纠正引用；交付合同采用 source 最新统一入口，release 既有用户纠正记录保留为历史证据。合并是流水线固定 release 的 source ancestry 要求，不是修改开发分支的合并策略。
 
 release 候选编译通过；迁移独立本地库至 10001（已部署的场域参与所需），40 项 handler 定向测试通过，含持久参与暂停/恢复与纠正引用兼容。预发 migration 仍只由 Aone packaged migrator 执行。
+
+当前发布检查点：source `4674169c3d`（含功能提交 `bc747806c3`），release `3af0ba7a63ffdc04574d9d0d5e862e3fdcce80dc`。pipeline 66 / run `3110376103` 的代码合并已 SUCCESS，构建 RUNNING；没有重新创建 CR 或另启 run。现有 CR `36355253` 与固定 release ancestry 保留。预发当前两台 live backend 为 `dt-fde-multica033060149134.pre.na620`、`dt-fde-multica033008056137.pre.na620`，fence normal/revision15，旧 marker18；这些是发布前读数。`/health` HTTP200 success。仅 scope 相关本地隔离数据库已清理；不修改远端配置、Runtime 或发送测试 IM。
+
+## 预发交付结果
+
+- 发布完成：run `3110376103`，代码合并/构建/预发部署/预发集成测试均 SUCCESS，仅人工预发验证门 WAITING。
+- 构建 Job `174190350` 的真实 commit 为 `6a86b3101b54ec82144c691f8fe646c683f3e181`（平台再合入既有 eval CR）。Git ancestry 验证含 `3af0ba7a63` / `4674169c3d` / `bc747806c3`；与已验证候选的 steer Host/schema/marker 文件无差异。
+- 制品 `20261004120128074043_prepub`，digest `sha256:7a1b12561faa19971c99c91ed026889eb7cfcf02f124d160a726ae30919639a6`。
+- 两台 live backend 的 SLS 新启动分别为北京时间 12:07:39、12:08:50；均 `[employee-loop:19]`，fence normal/revision15，健康 HTTP200 success。没有使用 fence 历史 started_at 代替新启动日志。
+- 运行验收边界：只完成本次服务端发布、健康及内置集成检查；未发送新 IM 或触发真实 canary，真实模型选择、纠正 ACK/结果和同沙箱/session 续接仍未签收。
+- 清理：独立本地测试库已删除；没有改 Runtime、远端配置、例行任务或主 checkout 他人的 WIP。
+- 脱敏 manifest：[2026-10-04-qwen-steer-pre-release.json](2026-10-04-qwen-steer-pre-release.json)。人工预发验证门保持原状态。
