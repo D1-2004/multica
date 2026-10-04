@@ -21,3 +21,14 @@
 ## 当前状态
 
 已完成四项本地修复、集成及限定验证；未部署/真实IM。本轮结果与开放边界见[交付报告](employee-four-fixes-report.md)。14个集成定向测试通过，最终安静和Loop复核通过；三独立DB清理回读0。旧snapshot、Router callback提交前和真实模型语义限制保留，不扩大处理。
+
+
+## 预发部署与短E2E（用户本轮新授权）
+用户要求部署后简单E2E，解除此前这四项禁止部署/真实IM的边界；不授权全R5/Runtime切换。按用户当前主工作区docs/development-delivery.md和Employee领域操作合同执行（交付树尚无新通用入口文件，读主工作区现行合同，未复制其他session WIP）。
+发布唯一主代理；实际remote源feat/tag-multitenant需核对，运行目标app342160/pipeline66，最新run占用先读。限一次发布；外部发布约20分钟检查点，测试约20分钟，无复杂等待；新发现登记，原失败不自动重新开发/发布。
+每例依次检查用户效果、source/Task/Run、真实工具、输入来源、权限/副作用。固定RealNiubility employee33af235e、tenant44675729、runtime461原配置，以当波API回读为准；DWS使用进程私有prod网关，Actor带显式profile，不改全局。发布必须release含四项代码、live各副本新启动/epoch18、fence normal才开始。
+1. 新事项：原蓝杉场域明确独立新开，同题旧Task不能continue；真实Python stdout55和实际交付同时验证。
+2. 遗忘：短测试私人事实capture→DM回读→精确forget→新TaskWake汇总，GEN输入旧值/派生旧答不复活。不得把history unavailable当通过；记录新本地修复不治理旧snapshot限制。
+3. 提醒事实：短有截止收集，两真人回答后汇总；process_facts、答复时刻、真实IM结果和叙事一致。若没有实际提醒，不能签真实催促后叙事通过；最多短等待，不推进30min剧本。
+4. 安静：原G08群，发起者要求保持安静→异账号引用/@（完整短窗口无回复，Job Quiet/0模型）→本人恢复→重新回应；收尾确保active。
+不变更routine；若必须临时pause，先存原值、结束恢复并GET回读。仅精确清理本轮新memory/collection，不抹原失败历史；控制active回读，演员租约释放。IM/API/SLS/LF分面保存EMPLOYEE-FOUR-FIXES-PRE-20261004并逐项更新唯一表。
