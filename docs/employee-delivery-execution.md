@@ -6,15 +6,17 @@
 
 | 对象 | 当前事实 |
 | --- | --- |
-| 本轮目标 | 把预发关联分支归并到 feat/tag-multitenant，排除 codex/public-forwarding-ingress，解决冲突后部署 |
-| 冻结范围 | pipeline66 Run3110387322 release清单：eval34dc79f7ea、backend11d6eb5061、progress-integratione5ef5adbea、progress-release36a18c03c2；目标原c5c13339c6 |
-| 合并 | 后台/进展正常merge；评测/统一交付因祖先污染采用净变更归并；5ecfedf548不是目标祖先，独有入口材料未带入。目标原有共享forwarding保留 |
-| 候选 | 7a139d1492；累计employee-loop22/human1/eval1。目标已有Direct/Tag提示词与GitHub权限修复保留；尚未远端回读/本波部署 |
-| 本地验证 | 全Go编译PASS（编译检查）；145定义门禁PASS；14定向测试0fail/skip；handler/server vet PASS。原134顶层真实PG检查未受改动部分复用，未重复全量 |
-| 原有发布 | Run3110387322已完成代码/构建/扫描/预发部署/集成测试，人工预发验证未关闭；本轮将复用目标CR36355253，尚未提交 |
-| 真实E2E | 原黄金20：9完整通过/11失败。新Task IM/API限定成功，实际LF执行证据未完成收口；Human H01 FAIL，首次询问修复880c尚非本波预发关联分支；once诊断/迟到失败保留，不冒称本波通过 |
-| 恢复/边界 | 未改Runtime461/全局DWS配置/routine；旧History/消息/文件与检查点保留。其他session WIP未带入；不升级正式，不关闭验收门 |
-| 证据/Plan | TAG-CONSOLIDATION-20261004/manifest.json；[归并Plan](plans/2026-10-04/tag-pre-branch-consolidation.md) |
+| 本轮结论 | 预发关联四分支已归并到 feat/tag-multitenant 并完成部署；codex/public-forwarding-ingress 未合入目标 |
+| 固定范围 | eval34dc79f7ea、backend11d6eb5061、progress-integratione5ef5adbea、progress-release36a18c03c2；目标原c5c13339c6。以 Run3110387322 的6 CR清单冻结 |
+| 归并 | 后台/进展正常merge；eval/progress-release采用净变更归并，5ecfedf548不是目标祖先，独有入口材料不带入。目标既有共享forwarding保留 |
+| 实际源码/发布 | source5a7b6fa291a20ade5c17b803a66ca6812e7592b7；release46c5b21ffb835a11be1c2e1583c45df9595a0455；CR36355253 / Run3110388243 |
+| 发布状态 | 代码合并、构建、扫描、预发部署、集成测试SUCCESS；18:36:41部署完成。人工预发验证WAITING，未关闭 |
+| Live | 两副本 normal / loop22 / human1 / eval1；SLS实际backend启动18:35:03.320、18:36:13.651；健康HTTP200 |
+| 本地验证 | 全Go编译PASS（非行为验收）；145定义门禁PASS；14受影响测试0fail/skip；vet PASS；release编译PASS。原134顶层真实PG检查及迁移未改部分复用 |
+| 后到变更 | 211d2c5174 Outlook/AgentMail在发布冻结后进入目标，保留但不冒称本次已部署；Human880c、onceaddfb8、canonical结果修复另批，不插入当前快照 |
+| 原真实验收 | Golden20的9完整通过/11FAIL，Human H01 FAIL、once迟到/时间锚FAIL保留；本波未追加业务测试或拼混版证据 |
+| 配置/恢复 | heartbeat已PAUSED；Runtime461、Tag/routine/全局DWS未改；原History、消息、文件与测试检查点保留，无本轮待恢复配置或挂起测试进程 |
+| 报告/证据 | [归并发布报告](plans/2026-10-04/tag-pre-branch-consolidation-report.md)；TAG-CONSOLIDATION-20261004/manifest.json |
 
 ## 以下为旧批次冻结清单与沿革（不代表当前版本）
 

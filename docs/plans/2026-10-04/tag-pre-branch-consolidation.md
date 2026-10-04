@@ -13,3 +13,7 @@
 ## 组合检查结果
 
 已归并四支（backend/progress保持merge祖先，eval/progress-release净变更）；目标原有公共转发代码保持逐字一致，排除分支独有文档/测试未带入。被排除5ec不是候选祖先。reader22/human1/eval1、完整目标提示词与GitHub权限修复保留。全Go编译、make eval-check（145）、14定向测试0fail/skip与vet通过；原134真实PG/完整迁移检查未受影响部分复用。尚未本波部署，Runtime461不切，真实E2E不升级。
+
+## 最终结果
+
+用户冻结范围已完成。source5a7b6fa291、CR36355253/Run3110388243，release46c5b21ffb，部署与集成测试18:36:41 SUCCESS；两副本新启动SLS、normal及HTTP200已证，验收门未关闭。首次代码合并冲突只在同Run恢复一次，未重复提交。目标并发后到211d保留，未冒称本次部署；后续修复另批。heartbeat/E2E保持暂停，无新业务写入、数据库/配置恢复任务。详见[发布报告](tag-pre-branch-consolidation-report.md)。
