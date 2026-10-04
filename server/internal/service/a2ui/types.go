@@ -117,6 +117,8 @@ func ParseRef(raw string) (Ref, bool) {
 
 // Option is one choice. The package assigns o0, o1, … when it opens the card.
 type Option struct {
+	// Emphasis chooses a native button variant: primary, secondary or none.
+	Emphasis    string
 	Label       string
 	Description string
 }
@@ -161,7 +163,8 @@ type OpenRequest struct {
 	SourceQuote     string
 }
 
-// Result is what the person did. Outcome is answered, skipped, approved or rejected.
+// Result is what the person did. Disabled is a host-only display outcome; native
+// answers remain answered, skipped, approved or rejected.
 type Result struct {
 	Outcome  string   `json:"outcome"`
 	Selected []string `json:"selected"`
@@ -210,6 +213,7 @@ type Actor struct {
 }
 
 type storedOption struct {
+	Emphasis    string `json:"emphasis,omitempty"`
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`

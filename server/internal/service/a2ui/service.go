@@ -482,7 +482,13 @@ func normalizeOptions(options []Option, min int) ([]storedOption, error) {
 		if label == "" || len([]rune(label)) > maxLabel || len([]rune(description)) > maxDescription {
 			return nil, fmt.Errorf("%w: option label", ErrInvalid)
 		}
-		stored := storedOption{ID: fmt.Sprintf("o%d", i), Label: label}
+		emphasis := strings.TrimSpace(option.Emphasis)
+		switch emphasis {
+		case "", "none", "primary", "secondary":
+		default:
+			return nil, fmt.Errorf("%w: option emphasis", ErrInvalid)
+		}
+		stored := storedOption{ID: fmt.Sprintf("o%d", i), Label: label, Emphasis: emphasis}
 		if description != "" {
 			stored.Description = description
 		}

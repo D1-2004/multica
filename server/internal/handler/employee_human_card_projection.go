@@ -146,6 +146,9 @@ func employeeHumanCardResult(q humanquestion.Question, r humanquestion.Response)
 	if q.ValidateResponse(r) != nil || r.Intent == "skip" {
 		return a2ui.Result{}, humanquestion.ErrInvalid
 	}
+	if r.Intent == "dismiss" {
+		return a2ui.Result{Outcome: "disabled"}, nil
+	}
 	result := a2ui.Result{Outcome: string(a2ui.StatusAnswered), Selected: []string{}, Labels: []string{}, Custom: r.RawText}
 	for _, selected := range r.Selected {
 		for i, option := range q.Choice.Options {

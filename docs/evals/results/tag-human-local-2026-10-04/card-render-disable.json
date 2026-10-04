@@ -1,0 +1,37 @@
+{
+  "scope": "renderer templates and explicit model card invalidation",
+  "implementation": "implemented",
+  "deployed": false,
+  "local_evidence": {
+    "handler_named_pass": 64,
+    "handler_fail": 0,
+    "handler_skip": 0,
+    "pure_named_pass": 163,
+    "pure_fail": 0,
+    "pure_skip": 0,
+    "bound_waiting_task_snapshot": "pass; Task/Run/wait/queue unchanged, zero typed wake",
+    "vet": "pass",
+    "independent_review": "no source blocker",
+    "rebased_handler_named_pass": 81,
+    "rebased_fail": 0,
+    "rebased_skip": 0,
+    "compile_server": "pass",
+    "mixed_human_marker_gate": "pass; old-only/mixed false, all-new true, old-producer mixed false",
+    "policy_check": "PASS_STRUCTURAL_ONLY"
+  },
+  "native_renderer_only": {
+    "direct_text_button": "pass; preview01/02/05/06",
+    "choice_plus_input": "pass; preview17",
+    "original_question_closed": "pass; preview09/10",
+    "disabled": "pass; code-generated preview19, no interactive control",
+    "primary_secondary": "pass; code-generated preview20",
+    "history_quote": "native text quote then separate card only; preview18"
+  },
+  "real_model_and_business_e2e": "pending deployment by release coordinator and direct IM verification",
+  "limits": [
+    "native quoted A2UI same message not verified; current local CLI has no ref flag",
+    "custom width/radius and danger-red style not exposed by verified basic catalog"
+  ],
+  "private_evidence_family": "TAG-A2UI-RENDER-20261004",
+  "plan": "docs/plans/2026-10-04/tag-a2ui-card-ux.md"
+}

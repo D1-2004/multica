@@ -117,3 +117,20 @@ func TestDecodePreservesCompletedWorkAndDefaultsChoiceBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestChoiceEmphasisIsBoundedPresentation(t *testing.T) {
+	for _, emphasis := range []string{"primary", "secondary", "none", "danger", "permission"} {
+		raw := `{"version":"tag-round-result/v1","summary":"未执行，待确认","choice":{"intent":"clarify","kind":"single","question":"确认修改？","options":[{"id":"confirm","label":"确认","emphasis":"` + emphasis + `"},{"id":"no","label":"暂不修改"}],"allow_custom":true}}`
+		got, recognized, err := Decode(raw)
+		if !recognized {
+			t.Fatal("protocol not recognized")
+		}
+		valid := emphasis == "primary" || emphasis == "secondary" || emphasis == "none"
+		if valid && (err != nil || got.Choice.Options[0].Emphasis != emphasis || !got.Choice.AllowCustom) {
+			t.Fatal(got, err)
+		}
+		if !valid && err == nil {
+			t.Fatal("unbounded emphasis accepted", emphasis)
+		}
+	}
+}

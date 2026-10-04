@@ -49,6 +49,7 @@ type Response struct {
 	Surface       string   `json:"input_surface"`
 	RequesterRef  string   `json:"requester_ref"`
 	Intent        string   `json:"intent"`
+	Reason        string   `json:"reason,omitempty"`
 	Selected      []string `json:"selected,omitempty"`
 	RawText       string   `json:"raw_text,omitempty"`
 	EvidenceQuote string   `json:"evidence_quote,omitempty"`
@@ -77,8 +78,15 @@ func (q Question) ValidateResponse(r Response) error {
 		return ErrInvalid
 	}
 	switch r.Intent {
-	case "answer", "provide_info", "amend", "cancel", "skip":
+	case "answer", "provide_info", "amend", "cancel", "skip", "dismiss":
 	default:
+		return ErrInvalid
+	}
+	if r.Intent == "dismiss" {
+		if r.Surface != "chat_text" || len(r.Selected) != 0 || !ValidDismissReason(r.Reason) {
+			return ErrInvalid
+		}
+	} else if r.Reason != "" {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -116,3 +124,13 @@ func (q Question) ValidateResponse(r Response) error {
 }
 
 func responseBody(r Response) ([]byte, error) { return json.Marshal(r) }
+
+// ValidDismissReason bounds the model-owned explanation without granting authority.
+func ValidDismissReason(reason string) bool {
+	switch reason {
+	case "chat_continued", "request_changed", "cancelled", "not_needed":
+		return true
+	default:
+		return false
+	}
+}

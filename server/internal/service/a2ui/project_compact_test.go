@@ -17,6 +17,8 @@ func TestEmployeeCompactClickUsesFrozenChoice(t *testing.T) {
 	req.Header = "Long summary that must not repeat the question"
 	req.Question = "写哪类文档？"
 	req.EmployeeCompact = true
+	noCustom := false
+	req.AllowCustom = &noCustom
 	req.OperatorUID = "10001"
 	row, messages, err := svc.Stage(ctx, uuid.New(), req)
 	if err != nil {
@@ -80,6 +82,8 @@ func TestEmployeeDirectChoiceRejectsEditedAuthority(t *testing.T) {
 	svc, _ := testService()
 	req := baseRequest(KindConfirm)
 	req.EmployeeCompact = true
+	noCustom := false
+	req.AllowCustom = &noCustom
 	req.OperatorUID = "10001"
 	row, _, err := svc.Stage(ctx, uuid.New(), req)
 	if err != nil {
@@ -134,6 +138,8 @@ func TestEmployeeCompactMultipleKeepsOneConfirmation(t *testing.T) {
 	svc, _ := testService()
 	req := baseRequest(KindChoose)
 	req.EmployeeCompact = true
+	noCustom := false
+	req.AllowCustom = &noCustom
 	_, messages, err := svc.Stage(context.Background(), uuid.New(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +187,8 @@ func TestEmployeeCompactNamesRemainDistinguishable(t *testing.T) {
 	svc, _ := testService()
 	req := baseRequest(KindConfirm)
 	req.EmployeeCompact = true
+	noCustom := false
+	req.AllowCustom = &noCustom
 	req.Question = "哪位李明？"
 	req.SourceQuote = "请交给李明处理"
 	req.Options = []Option{
@@ -192,27 +200,18 @@ func TestEmployeeCompactNamesRemainDistinguishable(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, components := decodeCard(t, messages)
-	if component(t, components, "source-quote")["text"] != "“请交给李明处理”" {
-		t.Fatal("source quote lost")
-	}
-	rootChildren := component(t, components, "root")["children"].([]any)
-	for _, description := range []string{"description-o0", "description-o1"} {
-		for _, child := range rootChildren {
-			if child == description {
-				t.Fatal("candidate description repeated outside the choice")
-			}
+	for _, raw := range components {
+		item := raw.(map[string]any)
+		if item["id"] == "source-quote" {
+			t.Fatal("native message quote must not be impersonated inside the card")
 		}
 	}
 	for i, option := range req.Options {
 		id := row.spec.Options[i].ID
 		button := component(t, components, "choice-"+id)
-		container := component(t, components, button["child"].(string))
-		if container["component"] != "Column" {
-			t.Fatal("candidate description is not inside the choice")
-		}
-		children := container["children"].([]any)
-		if len(children) != 2 || children[1] != "description-"+id || component(t, components, "description-"+id)["text"] != option.Description {
-			t.Fatalf("candidate %s cannot be distinguished: %#v", id, container)
+		label := component(t, components, button["child"].(string))
+		if label["component"] != "Text" || label["catalogId"] != catalogBasic || label["text"] != compactOptionLabel(row.spec.Options[i]) || !strings.Contains(label["text"].(string), option.Description) {
+			t.Fatalf("candidate %s must use a direct basic Text child with its role: %#v", id, label)
 		}
 	}
 	closed, err := svc.ResolvedProjection(ctx, row.PublicID, Result{Outcome: "answered", Selected: []string{"o1"}, Labels: []string{"李明 · forged role"}})
@@ -255,8 +254,8 @@ func TestResolvedProjectionUsesOnlyFrozenSelectedLabels(t *testing.T) {
 		}
 		components := resolvedComponents(t, messages)
 		payload := strings.Join(messages, "")
-		if strings.Contains(payload, "untrusted label") || strings.Contains(payload, "user words") || strings.Contains(payload, "createSurface") {
-			t.Fatalf("resolved display trusts or repeats input: %s", payload)
+		if strings.Contains(payload, "untrusted label") || strings.Contains(payload, "createSurface") {
+			t.Fatalf("resolved display trusts labels or recreates its surface: %s", payload)
 		}
 		if !strings.Contains(payload, "先放着") || (kind == KindConfirm && strings.Contains(payload, "就按这个发")) {
 			t.Fatalf("resolved display not limited to selected choices: %s", payload)
@@ -266,6 +265,9 @@ func TestResolvedProjectionUsesOnlyFrozenSelectedLabels(t *testing.T) {
 			if _, found := item["action"]; found || item["component"] == "Button" || item["component"] == "ChoicePicker" || item["component"] == "TextField" {
 				t.Fatalf("resolved display remains operable: %#v", item)
 			}
+		}
+		if component(t, components, "resolved-question")["text"] != req.Question || len(component(t, components, "resolved-custom")["text"].(string)) > 160 {
+			t.Fatal("resolution must preserve the question and bounded typed supplement")
 		}
 		if component(t, components, "resolved-0")["justify"] != "spaceBetween" || component(t, components, "resolved-0-check")["text"] != "✓" {
 			t.Fatal("selected check is not right aligned")
@@ -323,4 +325,99 @@ func resolvedComponents(t *testing.T, messages []string) []any {
 		t.Fatal(err)
 	}
 	return envelope.UpdateComponents.Components
+}
+
+func TestEmployeeCompactInputUsesBoundModelAndOneConfirmation(t *testing.T) {
+	for _, kind := range []Kind{KindConfirm, KindChoose} {
+		t.Run(string(kind), func(t *testing.T) {
+			svc, _ := testService()
+			req := baseRequest(kind)
+			req.EmployeeCompact = true
+			allowCustom := true
+			req.AllowCustom = &allowCustom
+			row, messages, err := svc.Stage(context.Background(), uuid.New(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, components := decodeCard(t, messages)
+			buttons := 0
+			for _, raw := range components {
+				item := raw.(map[string]any)
+				if item["component"] == "Button" {
+					buttons++
+				}
+			}
+			if buttons != 1 || component(t, components, "extra")["value"].(map[string]any)["path"] != "/clarification/answers/q0/custom" {
+				t.Fatal("input must be preserved until the one explicit confirmation")
+			}
+			wantVariant := "mutuallyExclusive"
+			if kind == KindChoose {
+				wantVariant = "multipleSelection"
+			}
+			if component(t, components, "choices")["variant"] != wantVariant {
+				t.Fatal("wrong selection cardinality")
+			}
+			if created.DataModel["clarification"].(map[string]any)["answers"] == nil {
+				t.Fatal("missing bound answer model")
+			}
+			event := component(t, components, "submit")["action"].(map[string]any)["event"].(map[string]any)
+			fields := event["context"].(map[string]any)
+			if fields["sourceTurnId"] != row.PublicID || fields["answers"].(map[string]any)["path"] != "/clarification/answers" {
+				t.Fatal("confirmation lost original reference or typed answer")
+			}
+		})
+	}
+}
+
+func TestEmployeeCompactEmphasisAndNativeChildCompatibility(t *testing.T) {
+	svc, _ := testService()
+	req := baseRequest(KindConfirm)
+	req.EmployeeCompact = true
+	allowCustom := false
+	req.AllowCustom = &allowCustom
+	req.Options = []Option{{Label: "确认", Emphasis: "primary"}, {Label: "不确认", Emphasis: "secondary"}, {Label: "其他", Emphasis: "none"}}
+	row, messages, err := svc.Stage(context.Background(), uuid.New(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, components := decodeCard(t, messages)
+	for i, want := range []string{"primary", "default", "borderless"} {
+		button := component(t, components, "choice-"+row.spec.Options[i].ID)
+		child := component(t, components, button["child"].(string))
+		if button["variant"] != want || child["component"] != "Text" || child["catalogId"] != catalogBasic {
+			t.Fatalf("unverified native button child/variant: %#v %#v", button, child)
+		}
+	}
+	req.Options[0].Emphasis = "danger"
+	if _, _, err := svc.Stage(context.Background(), uuid.New(), req); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unsupported danger token must not leak into renderer")
+	}
+}
+
+func TestDisabledProjectionPreservesQuestionAndRemovesAllControls(t *testing.T) {
+	svc, _ := testService()
+	req := baseRequest(KindConfirm)
+	req.EmployeeCompact = true
+	req.Question = "写哪段代码？"
+	row, _, err := svc.Stage(context.Background(), uuid.New(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := svc.ResolvedProjection(context.Background(), row.PublicID, Result{Outcome: "disabled", Selected: []string{"forged"}, Custom: "must not show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	components := resolvedComponents(t, messages)
+	if component(t, components, "resolved-question")["text"] != req.Question || component(t, components, "resolved-disabled")["text"] != "已失效" {
+		t.Fatal("disabled card lost its original question")
+	}
+	for _, raw := range components {
+		item := raw.(map[string]any)
+		if _, found := item["action"]; found || item["component"] == "Button" || item["component"] == "ChoicePicker" || item["component"] == "TextField" {
+			t.Fatalf("disabled card remains interactive: %#v", item)
+		}
+	}
+	if strings.Contains(strings.Join(messages, ""), "must not show") {
+		t.Fatal("disabled projection must not imply an answer")
+	}
 }

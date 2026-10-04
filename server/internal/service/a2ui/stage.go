@@ -93,7 +93,7 @@ func (s *Service) ResolvedProjection(ctx context.Context, publicID string, resul
 	if surfaceID != ref.SurfaceID() {
 		return nil, fmt.Errorf("%w: resolved projection surface", ErrInvalid)
 	}
-	if result.Outcome == string(StatusSkipped) {
+	if result.Outcome == string(StatusSkipped) || result.Outcome == "disabled" {
 		return projectResolvedAsk(surfaceID, row.Question, nil, "", result.Outcome)
 	}
 	switch result.Outcome {

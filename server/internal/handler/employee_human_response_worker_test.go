@@ -60,6 +60,7 @@ func TestEmployeeHumanResponseCannotChooseAnotherTaskOrResumeWaitingGoal(t *test
 		{"legacy_amend", func(binding *employeeHumanBinding, _ *employeetask.Task) { binding.Response.Intent = "amend" }},
 		{"skip", func(binding *employeeHumanBinding, _ *employeetask.Task) { binding.Response.Intent = "skip" }},
 		{"cancel", func(binding *employeeHumanBinding, _ *employeetask.Task) { binding.Response.Intent = "cancel" }},
+		{"dismiss", func(binding *employeeHumanBinding, _ *employeetask.Task) { binding.Response.Intent = "dismiss" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			binding, task := b, base
@@ -69,7 +70,7 @@ func TestEmployeeHumanResponseCannotChooseAnotherTaskOrResumeWaitingGoal(t *test
 			}
 		})
 	}
-	for _, intent := range []string{"skip", "cancel"} {
+	for _, intent := range []string{"skip", "cancel", "dismiss"} {
 		b.Response.Intent = intent
 		if err := employeeHumanWorkAllowed(b, nil); !errors.Is(err, employeeloop.ErrToolRefused) {
 			t.Fatal("foreground response must not start work", intent)
