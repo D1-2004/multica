@@ -1,31 +1,20 @@
 # Employee 本轮唯一执行表
 
-当前摘要唯一权威；最后更新：2026-10-04 15:11，Asia/Shanghai。最新批次为后台进展预发交付，以下旧批次段落保留历史。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
+当前摘要唯一权威；最后更新：2026-10-04，Asia/Shanghai。用户将本轮切换为预发分支统一归并与部署；原E2E检查点保留，heartbeat已暂停，不追加真实消息。以下历史摘要保留沿革。
 
 ## 当前交付版本
 
 | 对象 | 当前事实 |
 | --- | --- |
-| 预发release | f9a6d687a346c5175f65a88a43a1e35f7da5c6ca；app342160 / pipeline66 / CR36362274 / Run3110378343，13:16:09部署成功 |
-| 本批源/组合 | 冻结e5ef5adbea6f628efba623cf8c73d38f37d71381；组合f84f629789564108e9a29281d68bd0bc0f12cf35；保留steer，平台并入eval78fffd467 |
-| Live | 两副本employee-loop:20 / eval-report:1 / normal；13:14:27与13:15:38实际启动SLS已证 |
-| Runtime / Agent | 原461aabb2未切；33af235e idle；新Task a9af04a2 succeeded、唯一Run31f720c9、0等待 |
-| 本批验收 | 首轮ACK约6秒、真实Python/sleep60、report_progress同ID两次幂等、最终文件650通过；阶段展示未通过（Loop quiet），整体不签收 |
-| 恢复/清理 | 本批无routine暂停/Runtime修改；3隔离DB已drop；hourly原autopilot12:02:30归档属本批前变更，未擅自恢复 |
-| 当前报告 | [后台进展预发报告](plans/2026-10-04/employee-progress-pre-report.md)；人工预发验收门保留 |
-| 开放项 | 阶段quiet展示P2、迁移10020–10023数字前缀碰撞P2；历史新蓝杉/记忆交互FAIL保留；不追加部署/镜像/长等待 |
-
-## 13:30 本批窄验收清单
-
-| 项 | 当前结论 | 证据与下一步 |
-| --- | --- | --- |
-| 发布生效 | PASS | 精确Run及两live20；manifest/pipeline-watch/startups-sls |
-| 接单反馈与最终执行 | 真实PASS | PRG-LIVE-01 IM/API/沙箱TOOL；ACK约6秒、真实60秒、文件650 |
-| 原生进展上报幂等 | 真实PASS | 同report_ref、replayed false/true、一次wake，Task/Run不因上报推进 |
-| 阶段展示 | 未通过 | f7fb76f2 quiet_committed，无阶段IM；先校正原请求展示约定并原例复验 |
-| 取消/终态旧上报/禁中间消息 | 真实未跑 | 本地检查/review与真实验收分别记录，不升级 |
-| LF/SLS | 部分可读/查询缺证 | 沙箱TOOL及Host generation可读，沙箱generation输出仍乱码；业务SLS精确ID查询空，不证明事件未发生 |
-| SPEC/EVALS | 已随平台部署、整体验收未跑 | eval78ff已在构建祖先；不提交虚假全量PASS |
+| 本轮目标 | 把预发关联分支归并到 feat/tag-multitenant，排除 codex/public-forwarding-ingress，解决冲突后部署 |
+| 冻结范围 | pipeline66 Run3110387322 release清单：eval34dc79f7ea、backend11d6eb5061、progress-integratione5ef5adbea、progress-release36a18c03c2；目标原c5c13339c6 |
+| 合并 | 后台/进展正常merge；评测/统一交付因祖先污染采用净变更归并；5ecfedf548不是目标祖先，独有入口材料未带入。目标原有共享forwarding保留 |
+| 候选 | 7a139d1492；累计employee-loop22/human1/eval1。目标已有Direct/Tag提示词与GitHub权限修复保留；尚未远端回读/本波部署 |
+| 本地验证 | 全Go编译PASS（编译检查）；145定义门禁PASS；14定向测试0fail/skip；handler/server vet PASS。原134顶层真实PG检查未受改动部分复用，未重复全量 |
+| 原有发布 | Run3110387322已完成代码/构建/扫描/预发部署/集成测试，人工预发验证未关闭；本轮将复用目标CR36355253，尚未提交 |
+| 真实E2E | 原黄金20：9完整通过/11失败。新Task IM/API限定成功，实际LF执行证据未完成收口；Human H01 FAIL，首次询问修复880c尚非本波预发关联分支；once诊断/迟到失败保留，不冒称本波通过 |
+| 恢复/边界 | 未改Runtime461/全局DWS配置/routine；旧History/消息/文件与检查点保留。其他session WIP未带入；不升级正式，不关闭验收门 |
+| 证据/Plan | TAG-CONSOLIDATION-20261004/manifest.json；[归并Plan](plans/2026-10-04/tag-pre-branch-consolidation.md) |
 
 ## 以下为旧批次冻结清单与沿革（不代表当前版本）
 

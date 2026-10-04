@@ -26,3 +26,5 @@
 SPEC / EVALS相关交付按[验证组织与维护](evals/verification-maintenance.md)映射需求、稳定用例与受影响P0；定义、代码发布和真实验收分别报告，当前责任与结果仍以唯一执行表为准。
 
 持续收件与发布采用[增量验证规则](evals/verification-maintenance.md#收件发布与增量验证)：测试不中断整轮、不全量重启，版本穿窗只处理受影响用例；缺环境明确标注，缺对应case向交付者补件。
+
+五项历史效率纠正同时保留在[交付效率](employee-delivery-efficiency.md)，不作为固定场域或截止的共享政策。

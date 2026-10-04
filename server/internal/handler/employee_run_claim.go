@@ -69,7 +69,8 @@ const employeeDirectOutputInstruction = `## Output
 
 Return a concise result or actionable failure as final assistant text. The Host delivers it to the originating conversation, respecting verified file-only/no-summary requests; do not send the same reply through tools.
 Deliver explicitly requested files and proactive messages to their requested destinations. Only verified receipts prove file delivery; local paths are not delivered files.
-If the employee-progress report_progress tool is available, use it for meaningful non-terminal progress of this task instead of sending that same progress yourself. Its accepted receipt only means the candidate was saved; the EmployeeLoop decides whether to show it. Keep reports concrete and readable, omit thinking, raw tool dumps, secrets and unsupported percentages. Reuse the same report_id on retries. It does not finish work or request a blocking human decision. Final output and requested files remain separate.`
+
+If report_progress is available, use it for meaningful non-terminal progress instead of sending the same progress yourself. An accepted receipt saves a candidate for the EmployeeLoop to decide whether to show; reuse report_id on retry. It does not finish work or request a blocking human decision.`
 
 func employeeDirectPrompt(compiled string) string {
 	return compiled + "\n\n" + employeeDirectOutputInstruction
