@@ -704,6 +704,18 @@ type employeeJournalModel struct {
 }
 
 func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	return m.chat(ctx, request, nil)
+}
+func (m *employeeJournalModel) ChatStreamed(ctx context.Context, request openai.ChatCompletionNewParams, observe func(openai.ChatCompletionChunk) error) (*openai.ChatCompletion, error) {
+	extra := map[string]any{}
+	for k, v := range request.ExtraFields() {
+		extra[k] = v
+	}
+	extra["stream"] = true
+	request.SetExtraFields(extra)
+	return m.chat(ctx, request, observe)
+}
+func (m *employeeJournalModel) chat(ctx context.Context, request openai.ChatCompletionNewParams, observe func(openai.ChatCompletionChunk) error) (*openai.ChatCompletion, error) {
 	ordinal := m.ordinal
 	m.ordinal++
 	failJournal := func(err error) (*openai.ChatCompletion, error) {
@@ -791,7 +803,16 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 		return m.recordFailure(ctx, ordinal, errors.New("employee legacy model is unavailable"))
 	}
 	generation := employeeTraceGeneration(ctx, m.job, ordinal, request, routeMetadata)
-	out, err := delegate.Chat(callCtx, request)
+	var out *openai.ChatCompletion
+	if observe != nil {
+		if streamed, ok := delegate.(employeeloop.StreamingModel); ok {
+			out, err = streamed.ChatStreamed(callCtx, request, observe)
+		} else {
+			err = errors.New("employee prepared provider has no streamed completion support")
+		}
+	} else {
+		out, err = delegate.Chat(callCtx, request)
+	}
 	// A provider may return a completion after its deadline with no error.
 	// Retain it as diagnostic output, but never accept its tool calls.
 	if callErr := callCtx.Err(); callErr != nil {

@@ -143,7 +143,23 @@ func (l *Loop) callModel(ctx context.Context) error {
 	l.mu.Lock()
 	l.state.ModelCalls++
 	l.mu.Unlock()
-	completion, err := l.model.Chat(ctx, openai.ChatCompletionNewParams{Model: shared.ChatModel(l.config.Model), Messages: messages, Tools: allowedTools})
+	params := openai.ChatCompletionNewParams{Model: shared.ChatModel(l.config.Model), Messages: messages, Tools: allowedTools}
+	if l.config.StreamedFeedback && l.GetState().ModelCalls > 1 {
+		filtered := params.Tools[:0]
+		for _, t := range params.Tools {
+			if t.OfFunction == nil || t.OfFunction.Function.Name != FirstFeedbackToolName {
+				filtered = append(filtered, t)
+			}
+		}
+		params.Tools = filtered
+	}
+	var completion *openai.ChatCompletion
+	var err error
+	if streamed, ok := l.model.(StreamingModel); l.config.StreamedFeedback && ok {
+		completion, err = streamed.ChatStreamed(ctx, params, l.feedbackObserver(ctx))
+	} else {
+		completion, err = l.model.Chat(ctx, params)
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -169,6 +185,20 @@ func (l *Loop) callModel(ctx context.Context) error {
 		calls, err := parseToolCalls(msg)
 		if err == nil {
 			err = l.tools.ValidateBatch(calls)
+		}
+		if err == nil {
+			err = validateFeedbackPlan(calls, l.config.StreamedFeedback && l.GetState().ModelCalls == 1)
+		}
+		if err == nil && l.config.StreamedFeedback {
+			// New streamed inputs validate the whole batch before ordinary Host
+			// execution. A complete public frame may already exist, but a later
+			// malformed business argument cannot partially execute this batch.
+			for _, call := range calls {
+				if valid, details := l.tools.Validate(call.Name, call.Arguments); !valid {
+					err = fmt.Errorf("invalid params for %s: %s", call.Name, strings.Join(details, "; "))
+					break
+				}
+			}
 		}
 		if err != nil {
 			if l.config.OnBatchRejected != nil {
