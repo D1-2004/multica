@@ -12,5 +12,7 @@ Read `docs/evals/CONTRIBUTING.md` before modifying definitions.
 - Run `make eval-check` before submitting. No live DWS/model call belongs in this check.
 - SPEC states employee requirements and links them to scenario IDs; it never
   claims execution or acceptance. Keep sources and stable IDs in repository data.
-- Keep the UI limited to SPEC, golden sets and expandable scenarios. Do not add raw
-  Markdown readers, runtime state, action buttons or implementation metadata.
+- Keep definitions separate from the immutable, read-only local report Tab.
+  Report ingestion validates snapshots and evidence references; receiving a
+  report never proves real execution or modifies SPEC / EVALS definitions.
+- Do not add raw Markdown readers, runtime controls, action buttons or source dumps.

@@ -1,11 +1,15 @@
 package evalcatalog
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/multica-ai/multica/server/internal/evalreport"
 )
 
 func request(h http.Handler, path string) *httptest.ResponseRecorder {
@@ -15,7 +19,7 @@ func request(h http.Handler, path string) *httptest.ResponseRecorder {
 }
 
 func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
-	h := NewHandler().(*handler)
+	h := NewHandler(nil).(*handler)
 	r := request(h, "/api/evals")
 	if r.Code != 200 {
 		t.Fatal(r.Code)
@@ -58,7 +62,7 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 }
 
 func TestSpecRequirementsLinkToEvaluationScenarios(t *testing.T) {
-	h := NewHandler().(*handler)
+	h := NewHandler(nil).(*handler)
 	r := request(h, "/evals?tab=spec")
 	if r.Code != 200 {
 		t.Fatal(r.Code)
@@ -88,7 +92,7 @@ func TestSpecRequirementsLinkToEvaluationScenarios(t *testing.T) {
 }
 
 func TestDeepLinksExpandInPlaceAndRemovedReadersStayRemoved(t *testing.T) {
-	h := NewHandler().(*handler)
+	h := NewHandler(nil).(*handler)
 	for _, s := range h.data.Scenarios {
 		r := request(h, "/evals?scenario="+s.ID)
 		if r.Code != 200 || !strings.Contains(r.Body.String(), `id="`+s.ID+`" open>`) {
@@ -109,7 +113,7 @@ func TestDeepLinksExpandInPlaceAndRemovedReadersStayRemoved(t *testing.T) {
 }
 
 func TestReadOnlyMethodsAndPrivateHeaders(t *testing.T) {
-	h := NewHandler()
+	h := NewHandler(nil)
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		r := httptest.NewRecorder()
 		h.ServeHTTP(r, httptest.NewRequest(method, "/api/evals", nil))
@@ -129,5 +133,38 @@ func TestReadOnlyMethodsAndPrivateHeaders(t *testing.T) {
 	r = request(h, "/api/evals")
 	if r.Header().Get("Cache-Control") != "private, no-cache" || !strings.Contains(r.Header().Get("Content-Security-Policy"), "default-src 'none'") {
 		t.Fatal("missing reader protection")
+	}
+}
+
+func TestReportsTabSeparatesUnavailableEmptyAndFrozenDetail(t *testing.T) {
+	for _, test := range []struct {
+		source ReportSource
+		want   string
+	}{
+		{nil, "报告暂不可用"},
+		{func(*http.Request) (ReportPage, error) { return ReportPage{}, nil }, "暂无上报报告"},
+		{func(*http.Request) (ReportPage, error) { return ReportPage{}, errors.New("database offline") }, "报告暂不可用"},
+	} {
+		response := request(NewHandler(test.source), "/evals?tab=reports")
+		if response.Code != 200 || !strings.Contains(response.Body.String(), test.want) {
+			t.Fatal("report availability is misrepresented")
+		}
+		if strings.Contains(response.Body.String(), "QwenTag 的") || !strings.Contains(response.Body.String(), "QwenTag SPEC &amp; EVALS") {
+			t.Fatal("page title not simplified")
+		}
+	}
+	record := evalreport.Record{ID: "fixture-report", WorkspaceName: "隔离测试", ReceivedAt: time.Now(), Submission: evalreport.Submission{Title: "历史快照", ExecutionKind: "mock", SelectedCases: []evalreport.CaseDefinition{{ID: "local-case", Title: "旧标题 <script>alert(1)</script>", Roles: []string{"测试角色"}, Verifies: []string{"冻结标准"}, Method: []string{"独立读回"}}}, Results: []evalreport.CaseResult{{CaseID: "local-case", Status: "pass", Summary: "模拟观察", Evidence: []evalreport.Evidence{{Kind: "artifact", Reference: "evidence/fixture.json"}}}}}, Summary: evalreport.Summary{Total: 1, Pass: 1, Conclusion: "pass", P0Total: 20}}
+	response := request(NewHandler(func(*http.Request) (ReportPage, error) { return ReportPage{Detail: &record}, nil }), "/evals?tab=reports")
+	body := response.Body.String()
+	if response.Code != 200 || !strings.Contains(body, "冻结标准") || !strings.Contains(body, "模拟测试") || strings.Contains(body, "<script>") || strings.Contains(body, `href="evidence/fixture.json"`) {
+		t.Fatal("snapshot report is unsafe or uses current definitions")
+	}
+	missing := request(NewHandler(func(*http.Request) (ReportPage, error) { return ReportPage{}, evalreport.ErrNotFound }), "/evals?tab=reports&report=missing")
+	if missing.Code != 404 {
+		t.Fatal("invisible report should not render as an empty list")
+	}
+	contract := request(NewHandler(nil), "/api/evals/report-contract")
+	if contract.Code != 200 || !strings.Contains(contract.Body.String(), `"openapi"`) {
+		t.Fatal("report contract not available")
 	}
 }

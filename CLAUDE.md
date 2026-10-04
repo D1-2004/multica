@@ -247,6 +247,9 @@ Do not claim verification passed unless you ran it. If you skip checks because t
   complete. Follow `docs/evals/CONTRIBUTING.md` and run `make eval-check` whenever
   changing definitions, references or their rendering. Markdown is developer
   context, never a second editable catalog or a user-facing document dump.
+  Local reports use `docs/evals/reporting-contract.md`; stored snapshots never
+  overwrite definitions. Ingestion waits for `[eval-report:1]` on every live
+  replica; rollback must retain workspace report cleanup support.
 
 - Provider event admission (`docs/event-scene-router.md`): `internal/eventrouter`
   persists one `scene_event_receipt` envelope/routing receipt per owner/source/id before

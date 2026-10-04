@@ -2092,7 +2092,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Get("/readyz", health.readyHandler)
 	r.Get("/healthz", health.readyHandler)
 
-	evals := evalcatalog.NewHandler()
+	evals := evalcatalog.NewHandler(h.EvalReportPage)
 	r.Get("/api/evals/style.css", evals.ServeHTTP)
 	r.Head("/api/evals/style.css", evals.ServeHTTP)
 
@@ -2422,10 +2422,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// Repository evaluation assets are a read-only human documentation surface.
-		r.With(handler.RequireHumanActor).Get("/api/evals", evals.ServeHTTP)
-		r.With(handler.RequireHumanActor).Get("/api/evals/", evals.ServeHTTP)
-		r.With(handler.RequireHumanActor).Head("/api/evals", evals.ServeHTTP)
-		r.With(handler.RequireHumanActor).Head("/api/evals/", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Get("/api/evals", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Get("/api/evals/", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Head("/api/evals", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Head("/api/evals/", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Get("/api/evals/report-contract", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Head("/api/evals/report-contract", evals.ServeHTTP)
 
 		// --- User-scoped routes (no workspace context required) ---
 		r.With(handler.RequireHumanActor).Get("/api/me", h.GetMe)
@@ -2564,6 +2566,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/", h.ListWorkspaces)
 			r.With(handler.RequireHumanActor).Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(handler.RequireEvalReportHumanActor)
+					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.With(handler.RequireEvalReportReplicas(func(ctx context.Context) (bool, error) {
+						if opts.DeploymentFence == nil {
+							return false, nil
+						}
+						return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EvalReportReplicaMarker)
+					})).Post("/eval-reports", h.SubmitEvalReport)
+					r.Get("/eval-reports", h.ListEvalReports)
+					r.Get("/eval-reports/{reportId}", h.GetEvalReport)
+				})
 				// DTA Tokens are workspace-bound service-member identities. Only a
 				// workspace owner (including an all-permission service) may manage
 				// credentials. Restricted DSH tokens cannot reach this group.

@@ -985,6 +985,13 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete evaluation reports",
+			run: func() error {
+				_, err := tx.Exec(ctx, `DELETE FROM eval_report WHERE workspace_id=$1`, requester.WorkspaceID)
+				return err
+			},
+		},
+		{
 			name: "delete Agent source previews",
 			run:  func() error { return qtx.DeleteAgentSourcePreviewsByWorkspace(ctx, requester.WorkspaceID) },
 		},

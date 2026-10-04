@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/evalreport"
 )
 
 //go:embed spec.json p0-golden.json office-scenarios.json page.gohtml style.css
@@ -63,6 +66,21 @@ type page struct {
 	ActiveTab    string
 	OpenScenario string
 	OpenGolden   string
+	ReportPage
+	ReportError bool
+	ReportCases []ReportCase
+}
+
+type ReportPage struct {
+	Reports []evalreport.Record
+	Detail  *evalreport.Record
+}
+
+type ReportSource func(*http.Request) (ReportPage, error)
+
+type ReportCase struct {
+	Definition evalreport.CaseDefinition
+	Result     evalreport.CaseResult
 }
 
 type handler struct {
@@ -71,6 +89,7 @@ type handler struct {
 	golden    map[string]bool
 	tmpl      *template.Template
 	css       []byte
+	reports   ReportSource
 }
 
 func readJSON(name string, target any) {
@@ -84,7 +103,7 @@ func readJSON(name string, target any) {
 }
 
 // NewHandler reads only the canonical JSON definitions, without runtime state.
-func NewHandler() http.Handler {
+func NewHandler(reports ReportSource) http.Handler {
 	var golden struct {
 		Cases []TestCase `json:"cases"`
 	}
@@ -103,7 +122,7 @@ func NewHandler() http.Handler {
 	if len(golden.Cases) != 20 {
 		panic("P0 catalog must contain exactly 20 golden cases")
 	}
-	h := &handler{data: page{ProductTitle: spec.Title, Description: spec.Description, Requirements: spec.Requirements, Golden: golden.Cases, Scenarios: office.Scenarios, Categories: office.Categories}, scenarios: map[string]bool{}, golden: map[string]bool{}}
+	h := &handler{data: page{ProductTitle: spec.Title, Description: spec.Description, Requirements: spec.Requirements, Golden: golden.Cases, Scenarios: office.Scenarios, Categories: office.Categories}, scenarios: map[string]bool{}, golden: map[string]bool{}, reports: reports}
 	categoryIndex := map[string]int{}
 	for i, category := range h.data.Categories {
 		if _, duplicate := categoryIndex[category.ID]; duplicate {
@@ -126,7 +145,20 @@ func NewHandler() http.Handler {
 	for _, c := range golden.Cases {
 		h.golden[c.ID] = true
 	}
-	h.tmpl = template.Must(template.New("page.gohtml").Funcs(template.FuncMap{"scenarioTitle": func(id string) string { return titles[id] }}).ParseFS(assets, "page.gohtml"))
+	h.tmpl = template.Must(template.New("page.gohtml").Funcs(template.FuncMap{
+		"scenarioTitle": func(id string) string { return titles[id] },
+		"statusLabel": func(status string) string {
+			return map[string]string{"pass": "选例通过", "fail": "存在失败", "blocked": "阻塞", "incomplete": "未完成", "skipped": "未执行"}[status]
+		},
+		"caseStatusLabel": func(status string) string {
+			return map[string]string{"pass": "通过", "fail": "失败", "blocked": "阻塞", "incomplete": "未完成", "skipped": "未执行"}[status]
+		},
+		"executionLabel": func(kind string) string {
+			return map[string]string{"real_e2e": "真实 E2E", "mock": "模拟测试", "definition_check": "定义检查"}[kind]
+		},
+		"percentage":     func(rate float64) string { return fmt.Sprintf("%.0f%%", rate*100) },
+		"httpsReference": evalreport.IsHTTPSReference,
+	}).ParseFS(assets, "page.gohtml"))
 	var err error
 	h.css, err = assets.ReadFile("style.css")
 	if err != nil {
@@ -151,6 +183,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		send(w, r, h.css, "text/css; charset=utf-8")
 		return
 	}
+	if path == "/api/evals/report-contract" {
+		send(w, r, evalreport.Contract(), "application/json; charset=utf-8")
+		return
+	}
 	if path != "/api/evals" && path != "/evals" {
 		http.NotFound(w, r)
 		return
@@ -165,15 +201,40 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if data.ActiveTab == "" {
 		data.ActiveTab = "evals"
 	}
-	if data.ActiveTab != "spec" && data.ActiveTab != "evals" {
+	if data.ActiveTab != "spec" && data.ActiveTab != "evals" && data.ActiveTab != "reports" {
 		http.NotFound(w, r)
 		return
 	}
 	data.OpenScenario = query.Get("scenario")
 	data.OpenGolden = query.Get("golden")
-	if data.OpenScenario != "" && !h.scenarios[data.OpenScenario] || data.OpenGolden != "" && !h.golden[data.OpenGolden] || data.ActiveTab == "spec" && (data.OpenScenario != "" || data.OpenGolden != "") {
+	if data.OpenScenario != "" && !h.scenarios[data.OpenScenario] || data.OpenGolden != "" && !h.golden[data.OpenGolden] || data.ActiveTab != "evals" && (data.OpenScenario != "" || data.OpenGolden != "") {
 		http.NotFound(w, r)
 		return
+	}
+	if data.ActiveTab == "reports" {
+		if h.reports == nil {
+			data.ReportError = true
+		} else {
+			reports, err := h.reports(r)
+			if errors.Is(err, evalreport.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			if err != nil {
+				data.ReportError = true
+			} else {
+				data.ReportPage = reports
+				if reports.Detail != nil {
+					definitions := map[string]evalreport.CaseDefinition{}
+					for _, definition := range reports.Detail.Submission.SelectedCases {
+						definitions[definition.ID] = definition
+					}
+					for _, result := range reports.Detail.Submission.Results {
+						data.ReportCases = append(data.ReportCases, ReportCase{Definition: definitions[result.CaseID], Result: result})
+					}
+				}
+			}
+		}
 	}
 	var body bytes.Buffer
 	if err := h.tmpl.Execute(&body, data); err != nil {

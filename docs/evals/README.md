@@ -1,6 +1,6 @@
 # QwenTag SPEC & EVALS
 
-页面 `/evals` 提供横向 `SPEC | EVALS` 导航，同级导航可继续向右扩展。SPEC 说明员工应做到什么；EVALS 展示 20 条 P0 GoldenCases 和分类的通用办公场景用例。场景和用例在本页展开；页面不运行测试或修改环境。
+页面 `/evals` 提供横向 `SPEC | EVALS | 评测报告` 导航。SPEC 说明员工应做到什么；EVALS 展示 20 条 P0 GoldenCases 和分类的通用办公场景用例；评测报告只读展示本地上报记录。场景和用例在本页展开；页面不运行测试或修改环境。
 
 ## 权威定义
 
@@ -30,3 +30,16 @@ python3 scripts/check-eval-catalog.py --base-ref <base-commit-sha>
 失败先沉淀最小反例，再归入稳定场景用例；新场景关联对应 SPEC，达到组合回归条件时更新 P0 引用。定义、fixture 准备、runner 可执行性和实际证据分别记录。贡献步骤及提交/PR 清单见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 独立工作流 `.github/workflows/eval-catalog.yml` 对相关 PR/push 运行定义检查。仓库管理员需把 `Eval catalog / definitions` 配为 required status check，才能成为合并门禁；工作流文件本身不设置 branch protection。
+
+## 本地结果上报
+
+[上报合同](reporting-contract.md) 定义请求、身份、快照、幂等和汇总规则。机器合同由 `GET /api/evals/report-contract` 返回，与接收验证使用同一 JSON schema。
+
+本地 runner 写运行信息、`selected_case_ids` 与逐例 `results`，先冻结定义，再提交同一文件：
+
+```bash
+python3 scripts/submit-eval-report.py prepare --input runner-results.json --output frozen-report.json
+python3 scripts/submit-eval-report.py submit --input frozen-report.json --endpoint https://pre-fde-workbench.dingtalk.com --workspace-id <workspace-uuid> --token-env MULTICA_TOKEN
+```
+
+准备步骤不联网、不自动生成通过结论、不覆盖已有冻结文件；提交使用显式人类 PAT，不回显令牌。重试复用文件与运行 ID，不能重新从变更后的定义生成同一次报告。报告保持本地上报属性，定义检查和模拟结果不计入真实 E2E 通过。

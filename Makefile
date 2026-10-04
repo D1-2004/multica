@@ -184,9 +184,9 @@ stop: ## Stop backend and frontend processes for the current checkout
 			echo "✓ App processes stopped. Remote PostgreSQL was not affected." ;; \
 	esac
 
-eval-check: ## Validate canonical evaluation definitions and their read-only presentation
+eval-check: ## Validate canonical evaluation definitions, reporting contract and presentation
 	python3 scripts/check-eval-catalog.py
-	cd server && go test ./internal/evalcatalog
+	cd server && go test ./internal/evalcatalog ./internal/evalreport
 
 check: coordinator-policy-check eval-check ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current checkout
 	$(REQUIRE_ENV)
