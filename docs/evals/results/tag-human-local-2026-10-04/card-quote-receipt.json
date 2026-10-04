@@ -1,0 +1,35 @@
+{
+  "scope": "exact quoted card binding and receipt persistence",
+  "implemented": true,
+  "deployed": false,
+  "real_failures_preserved": {
+    "DM_source": "msgmaKLEnmfpOTVpBUiBh8VlQ==",
+    "quoted_card": "msg6SSePC7YMsgkWHIzW2JpLA==",
+    "job": "b4c7e982-69ca-4738-b4c2-8aec75965b4a",
+    "reply_only": true,
+    "N01_visual_close": "fail: send_receipt_pending",
+    "fidi_group": "both card answers reached human_response; original-card update needs receipt repair"
+  },
+  "local": {
+    "handler_named_pass": 75,
+    "pure_named_pass": 207,
+    "mixed_reader_named_pass": 12,
+    "watchdog_named_pass": 45,
+    "production_router_bootstrap": "pass",
+    "vet_compile_policy": "pass; policy structural only",
+    "independent_review": "no source blocker"
+  },
+  "next_acceptance": [
+    "actual SDK transport and real MID receipt",
+    "new card quote dismiss calls exact question tool",
+    "original biz card closes and late event does not dispatch",
+    "dismissed wait reminder suppressed without altering Task/wait/queue"
+  ],
+  "limits": [
+    "historical missing BizID cannot be reconstructed from timestamp or request key",
+    "CLI cannot query token-owned send task using another process",
+    "single bounded SDK query may not provide MID; unresolved stays explicit"
+  ],
+  "evidence_family": "TAG-A2UI-POSTDEPLOY-20261004",
+  "plan": "docs/plans/2026-10-04/tag-a2ui-card-ux.md"
+}

@@ -85,6 +85,28 @@ func humanProjectionReceipt(t *testing.T, f *dingTalkResponseFixture, q humanque
 	}
 }
 
+func TestEmployeeHumanReceiptRejectsMissingOrConflictingCardIdentity(t *testing.T) {
+	f, _, q, _ := humanProjectionFixture(t)
+	ctx := context.Background()
+	in := humanAction(t, q.ActionID)
+	if err := f.h.OnEmployeeHumanCardAccepted(ctx, in, dwsclient.A2UIReceipt{}); !errors.Is(err, humanquestion.ErrInvalid) {
+		t.Fatal("missing business identity accepted", err)
+	}
+	humanProjectionReceipt(t, f, q)
+	for _, r := range []dwsclient.A2UIReceipt{
+		{BizID: "different-card", ConversationID: in.ConversationID},
+		{BizID: "actual-provider-biz-" + q.ID, ConversationID: in.ConversationID, MessageID: "different-message"},
+	} {
+		if err := f.h.OnEmployeeHumanCardAccepted(ctx, in, r); !errors.Is(err, humanquestion.ErrConflict) {
+			t.Fatal("conflicting original card overwritten", err)
+		}
+	}
+	var biz, mid string
+	if err := testPool.QueryRow(ctx, `SELECT card_biz_id,message_id FROM a2ui_interaction WHERE id=$1::uuid`, q.ID).Scan(&biz, &mid); err != nil || biz != "actual-provider-biz-"+q.ID || mid != "actual-card-message" {
+		t.Fatal("original receipt changed", biz, mid, err)
+	}
+}
+
 func humanProjectionDue(t *testing.T, q humanquestion.Question) {
 	t.Helper()
 	if _, err := testPool.Exec(context.Background(), `UPDATE employee_human_card_projection SET available_at=now() WHERE question_id=$1::uuid`, q.ID); err != nil {

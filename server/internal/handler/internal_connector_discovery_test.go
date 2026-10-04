@@ -27,9 +27,10 @@ func TestConnectorDiscoveryAvailabilityBoundary(t *testing.T) {
 		{"network", "", &net.DNSError{Err: "secret", Name: "secret.example"}, true},
 		{"http", "", connectorUpstreamStatusError{Code: 502}, true},
 		{"reconnect", "", errConnectorReconnectRequired, true},
-		{"invalid metadata", "", connectorUpstreamProtocolError{}, false},
+		{"invalid metadata", "", connectorUpstreamProtocolError{}, true},
+		{"reserved collision", "", connectorControlCollisionError{}, true},
 		{"unknown error", "", errors.New("secret configuration error"), false},
-		{"later page", "page2", context.DeadlineExceeded, false},
+		{"later page", "page2", context.DeadlineExceeded, true},
 		{"canceled", "", context.Canceled, false},
 		{"healthy", "", nil, false},
 	} {
@@ -46,7 +47,7 @@ func TestConnectorDiscoveryAvailabilityBoundary(t *testing.T) {
 				t.Fatalf("unsafe or paginated diagnostic: %s, %v", encoded, err)
 			}
 			tools := result.(map[string]any)["tools"].([]map[string]any)
-			if len(tools) != 1 || tools[0]["name"] != connectorDiscoveryStatusTool || !strings.Contains(tools[0]["description"].(string), "report it blocked") {
+			if len(tools) != 3 || tools[0]["name"] != connectorDiscoveryStatusTool || !strings.Contains(tools[0]["description"].(string), "report it blocked") {
 				t.Fatalf("business failure not explicit: %#v", tools)
 			}
 		})
@@ -85,8 +86,8 @@ func TestConnectorDiscoveryReservedToolCannotReachUpstream(t *testing.T) {
 	h := &Handler{InternalConnectorClient: upstream.Client()}
 	c := internalConnector{AuthMode: "none", UpstreamURL: upstream.URL}
 	_, err := h.callInternalConnectorUpstream(context.Background(), c, "tools/list", connectorRPCParams{})
-	if _, ok := connectorUnavailableDiscovery(context.Background(), c, "", err); err == nil || ok {
-		t.Fatalf("reserved upstream tool was accepted or hidden: %v", err)
+	if _, ok := connectorUnavailableDiscovery(context.Background(), c, "", err); err == nil || !ok {
+		t.Fatalf("reserved upstream definitions were not rejected with explicit diagnostic: %v", err)
 	}
 }
 
@@ -120,7 +121,7 @@ func TestConnectorDiscoveryRelayIsolationAndRevocation(t *testing.T) {
 			Tools []struct{ Name, Description string }
 		} `json:"result"`
 	}
-	if err := json.Unmarshal(listed.Body.Bytes(), &rpc); err != nil || len(rpc.Result.Tools) != 1 || rpc.Result.Tools[0].Name != connectorDiscoveryStatusTool || strings.Contains(listed.Body.String(), "secret") {
+	if err := json.Unmarshal(listed.Body.Bytes(), &rpc); err != nil || len(rpc.Result.Tools) != 3 || rpc.Result.Tools[0].Name != connectorDiscoveryStatusTool || strings.Contains(listed.Body.String(), "secret") {
 		t.Fatalf("unavailable discovery did not survive the relay: %d %s (%v)", listed.Code, listed.Body.String(), err)
 	}
 	t.Logf("discovery wire response: %s", listed.Body.String())
@@ -132,10 +133,10 @@ func TestConnectorDiscoveryRelayIsolationAndRevocation(t *testing.T) {
 	if text, isError := f.relay(t, task, c.ID, "search"); !isError || strings.Contains(text, "secret") {
 		t.Fatalf("business failure was hidden: %s error=%v", text, isError)
 	}
-	// A malformed later page must remain a protocol error, not a mixed catalog.
+	// A later failure isolates the server and explicitly marks incompleteness.
 	later := call("tools/list", map[string]any{"cursor": "page2"})
-	if !strings.Contains(later.Body.String(), `"error"`) || strings.Contains(later.Body.String(), connectorDiscoveryStatusTool) {
-		t.Fatalf("partial discovery was presented as usable: %s", later.Body.String())
+	if strings.Contains(later.Body.String(), `"error"`) || !strings.Contains(later.Body.String(), connectorDiscoveryStatusTool) || !strings.Contains(later.Body.String(), `"multica_catalog_complete":false`) {
+		t.Fatalf("partial discovery was hidden or blocked the runtime: %s", later.Body.String())
 	}
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM internal_connector_agent WHERE connector_id = $1 AND agent_id = $2`, c.ID, f.agentID); err != nil {
 		t.Fatal(err)

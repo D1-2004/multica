@@ -1932,6 +1932,18 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		failure := h.failDingTalkTaskPolicyClaim(r.Context(), *task, policyErr)
 		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
 	}
+	if _, routine, err := h.employeeRoutineSendInput(r.Context(), *task); routine {
+		if err == nil && (!dingTalkTaskPolicyCapable(r, runtime) || messagePolicy == nil) {
+			err = errDingTalkMessagePolicyCapability
+		}
+		if err != nil {
+			failure := h.failDingTalkTaskPolicyClaim(r.Context(), *task, err)
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+		}
+		// Existing shim/SDK clients persist intent before an external send and
+		// report its result. No new wire field or client implementation is needed.
+		messagePolicy.PlatformManagedLifecycle = true
+	}
 	resp.DingTalkMessagePolicy = messagePolicy
 	// The task's effective context (Context Builder,
 	// docs/context-capabilities.md §3): the org, scene and person layers of

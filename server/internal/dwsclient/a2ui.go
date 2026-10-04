@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -34,6 +35,9 @@ type A2UIReceipt struct {
 
 // SendA2UI supplies stable tracing/business IDs. They are NOT evidence of send
 // idempotency: a caller must reconcile unknown outcomes instead of resending.
+// The SDK can enrich delivery IDs on the original client/token. The CLI path
+// retains only IDs returned by create: a new process can refresh credentials,
+// so it must not assume that it can query a token-owned asynchronous task.
 func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UIReceipt, error) {
 	if (in.ConversationID == "") == (in.ReceiverOpenDingTalkID == "") || in.BizID == "" || in.RequestID == "" || in.Summary == "" || len(in.Messages) == 0 {
 		return A2UIReceipt{}, errors.New("incomplete A2UI send request")
@@ -51,7 +55,19 @@ func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UI
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	return parseA2UIReceipt(raw)
+	receipt, err := parseA2UIReceipt(raw)
+	if err != nil {
+		return A2UIReceipt{}, err
+	}
+	transport := "cli"
+	if _, ok, _ := readSDKSession(dir); ok {
+		transport = "sdk"
+	}
+	slog.InfoContext(ctx, "DWS A2UI receipt identity", "event", "dws_a2ui_receipt_identity",
+		"transport", transport, "request_id", in.RequestID,
+		"has_biz_id", receipt.BizID != "", "has_message_id", receipt.MessageID != "",
+		"has_conversation_id", receipt.ConversationID != "", "has_task_id", receipt.TaskID != "")
+	return receipt, nil
 }
 func parseA2UIReceipt(raw []byte) (A2UIReceipt, error) {
 	var response struct {

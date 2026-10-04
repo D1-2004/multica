@@ -22,7 +22,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-const EmployeeHumanReplicaMarker = "[employee-human:2]"
+const EmployeeHumanReplicaMarker = "[employee-human:3]"
 
 var humanQuestionNamespace = uuid.MustParse("8f2e441c-37bd-4b92-a54d-bc10e4197031")
 
@@ -113,6 +113,9 @@ func (h *employeeSceneHost) acceptHumanText(ctx context.Context, tx pgx.Tx, sour
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
+	if err := h.requireHumanQuote(ctx, tx, source, ref); err != nil {
+		return employeeloop.ToolResult{}, err
+	}
 	intent, err := argument(call.Arguments, "intent")
 	if err != nil {
 		return employeeloop.ToolResult{}, err
@@ -158,6 +161,9 @@ func (h *employeeSceneHost) disableHumanQuestion(ctx context.Context, tx pgx.Tx,
 	if dec.Decode(&args) != nil || args.SourceRef != source.SourceRef || !humanquestion.ValidDismissReason(args.Reason) {
 		return employeeloop.ToolResult{}, employeeloop.ErrToolRefused
 	}
+	if err := h.requireHumanQuote(ctx, tx, source, args.QuestionRef); err != nil {
+		return employeeloop.ToolResult{}, err
+	}
 	eventID := source.SourceRef + "/dismiss/" + args.QuestionRef
 	response := humanquestion.Response{ID: uuid.NewSHA1(humanQuestionNamespace, []byte("response/"+eventID)).String(), QuestionID: args.QuestionRef, EventID: eventID, Surface: "chat_text", RequesterRef: source.RequesterRef, Intent: "dismiss", Reason: args.Reason, RawText: source.Message.Text, EvidenceQuote: args.EvidenceQuote}
 	_, r, err := humanquestion.AcceptTx(ctx, tx, h.job.Scope, response, func(ctx context.Context, tx pgx.Tx, q humanquestion.Question, r *humanquestion.Response) error {
@@ -199,7 +205,7 @@ func (h *Handler) admitEmployeeHumanResponseTx(ctx context.Context, tx pgx.Tx, q
 }
 
 const employeeHumanQuestionFraming = `HUMAN INTERACTION: Ask one short, direct question (prefer no more than 24 Chinese characters), with 2–4 brief parallel choices when appropriate. Do not restate the question in summary or enumerate option descriptions again. The card shows choices without a fabricated source quote. Choose allow_custom=true when an input field is useful; choose option emphasis primary/secondary/none for confirmation or risk as appropriate. Ordinary chat is available for extra words, so do not ask for content and format together unless both block this next step. When the current human asks to choose options or clarify a recipient before work starts, or required input is missing before any authorized preparation can begin, use a2ui_ask here in Employee and end this round. Do not dispatch that unresolved work to Pi just to ask the human. dispatch_task.follow_up_steps are automatically runnable authorized steps, never a human-input wait; never put "ask, wait for human, then assume they answered" into a plan. No Task is needed merely to ask. A current question about the options does not accept them: explain or clarify without dispatch. The selected scope, synthetic materials, method and no-send/no-contact constraints come from the actual source, never add real-document searches or file sending that it did not request. If preparation itself is authorized before the missing answer, its completed Pi round may later emit the strict clarification result; no live sandbox session waits for the human.
-HUMAN ANSWERS: Buttons are shortcuts. A current message may answer, provide new information, change the request, ask back, or start another topic. Use accept_human_response only when the actual outer wording clearly addresses one listed pending_human_questions entry; preserve all words and added constraints. Explicit quote identifies the question; otherwise resolve from meaning and conversation, never choose the latest Task by default. If ambiguous ask which. New topics/thanks do not satisfy or cancel all pending questions. An old question never overrides a newer explicit request. When current words move past one specific question, change its request, cancel that question or make it unnecessary, call disable_human_question with that question_ref, current source_ref, an exact evidence_quote and a reason, then handle the new request in this same round. Do not batch disable_human_question with reply: disable first, then reply in the next model call; it may accompany an effect such as dispatch_task. This is not an answer and does not stop the Task; stopping authorized work still uses stop_task. Do not disable unrelated questions merely because another topic or thanks appeared.`
+HUMAN ANSWERS: Buttons are shortcuts. A current message may answer, provide new information, change the request, ask back, or start another topic. Use accept_human_response only when the actual outer wording clearly addresses one listed pending_human_questions entry; preserve all words and added constraints. quoted_human_questions is Host-verified per-source context: outcome=exact identifies only its question_ref. When this source says 先不管/不用了/先放着 about that quoted card, call disable_human_question first, then reply after the committed tool result. Do not acknowledge leaving it aside without closing it. For ambiguous/unresolved card quotes, ask which question; never guess from [互动卡片], ordering, timestamps or the latest Task. not_question is an ordinary quote and follows the existing meaning-based answer rules; otherwise resolve from meaning and conversation, never choose the latest Task by default. If ambiguous ask which. New topics/thanks do not satisfy or cancel all pending questions. An old question never overrides a newer explicit request. When current words move past one specific question, change its request, cancel that question or make it unnecessary, call disable_human_question with that question_ref, current source_ref, an exact evidence_quote and a reason, then handle the new request in this same round. Do not batch disable_human_question with reply: disable first, then reply in the next model call; it may accompany an effect such as dispatch_task. This is not an answer and does not stop the Task; stopping authorized work still uses stop_task. Do not disable unrelated questions merely because another topic or thanks appeared.`
 
 func (w *EmployeeSceneWorker) appendHumanQuestions(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, input *employeeSavedInput) error {
 	if !w.humanQuestionsReady(ctx) {
@@ -222,14 +228,19 @@ func (w *EmployeeSceneWorker) appendHumanQuestions(ctx context.Context, job empl
 			}
 		}
 	}
-	if len(all) == 0 {
+	bindings, err := w.humanQuoteBindings(ctx, job, envelopes)
+	if err != nil {
+		return err
+	}
+	input.HumanQuotes = bindings
+	if len(all) == 0 && len(bindings) == 0 {
 		return nil
 	}
 	questions := []humanquestion.Question{}
 	for _, q := range all {
 		questions = append(questions, q)
 	}
-	raw, _ := json.Marshal(map[string]any{"pending_human_questions": questions})
+	raw, _ := json.Marshal(map[string]any{"pending_human_questions": questions, "quoted_human_questions": bindings})
 	input.Input.TaskBrief += "\n\n" + string(raw)
 	return nil
 }

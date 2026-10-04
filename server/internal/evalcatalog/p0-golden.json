@@ -461,12 +461,14 @@
       "verifies": [
         "真实 occurrence 一次效果；已受理指令冻结，下一次采用新版本；暂停跨时点无执行。",
         "当前一次性要求不被旧单轮话覆盖，到点Run不重演原创建和旧格式；当前Host结果合同与一次消息可证。",
-        "Employee定时工作零开始播报，终态直接交业务结果，耗时只保留运行记录。"
+        "Employee定时工作零开始播报，终态直接交业务结果，耗时只保留运行记录。",
+        "当前场域的已验证原生消息交付不重复汇报；不同目标或未知回执不误抑制结果。"
       ],
       "method": [
         "建专用例行任务，在真实到点回读结果，重投该 occurrence；受理后改指令，暂停跨下一时点，再恢复。核 occurrence/配置revision、Task、工作包、消息和完整窗口。",
         "保留旧不要定时的历史复测明确5分钟请求，核真实once设置与原消息时间；含旧结构化创建packet的到点Run按当前结果consumer交付，保留前台派发和新Run工具证据。",
-        "完整观察到点受理到终态的IM窗口，核零start、唯一结果及失败/空结果解释，与后台运行记录对照。"
+        "完整观察到点受理到终态的IM窗口，核零start、唯一结果及失败/空结果解释，与后台运行记录对照。",
+        "当前场域真实工具发送目标文本后观察终态完整窗口，联合receipt/Run/outbox验证去重；晚回执与其他目标用隔离fixture对照，分别报告真实与模拟范围。"
       ],
       "scenarioRefs": [
         "cron-office",
@@ -483,7 +485,8 @@
         "office-cron-once-cancel-pending",
         "office-cron-once-history-scope",
         "office-cron-once-result-contract",
-        "office-cron-result-only-delivery"
+        "office-cron-result-only-delivery",
+        "office-cron-native-same-scene-delivery"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

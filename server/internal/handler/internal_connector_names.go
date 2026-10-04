@@ -28,6 +28,19 @@ func connectorPresentedToolName(name string) string {
 	return "t_" + hex.EncodeToString(sum[:8])
 }
 
+func connectorValidPresentedToolName(name string) bool {
+	if name == "" || len(name) > connectorPresentedToolMaxBytes {
+		return false
+	}
+	for _, character := range name {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '_' || character == '-' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
 func connectorOriginalTool(names []string, presented string) (string, bool) {
 	for _, name := range names {
 		if connectorPresentedToolName(name) == presented {
