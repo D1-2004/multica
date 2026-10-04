@@ -27,6 +27,12 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 	if strings.Count(body, `class="scenario-case"`) != h.data.CaseCount {
 		t.Fatal("cases are not available on the same page")
 	}
+	if strings.Count(body, `class="scenario-category"`) != len(h.data.Categories) || !strings.Contains(body, "P0 GoldenCases") || !strings.Contains(body, "通用办公场景用例") {
+		t.Fatal("missing categorized evaluation overview")
+	}
+	if !strings.Contains(body, `href="/evals" aria-current="page"`) || strings.Contains(body, `class="spec-item"`) {
+		t.Fatal("EVALS navigation should select only the evaluation content")
+	}
 	previous := -1
 	for i := 1; i <= 20; i++ {
 		id := fmt.Sprintf(`id="G%02d"`, i)
@@ -51,6 +57,36 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 	}
 }
 
+func TestSpecRequirementsLinkToEvaluationScenarios(t *testing.T) {
+	h := NewHandler().(*handler)
+	r := request(h, "/evals?tab=spec")
+	if r.Code != 200 {
+		t.Fatal(r.Code)
+	}
+	body := r.Body.String()
+	if strings.Count(body, `class="spec-item"`) != len(h.data.Requirements) || !strings.Contains(body, `href="/evals?tab=spec" aria-current="page"`) {
+		t.Fatal("SPEC requirements or active navigation missing")
+	}
+	if strings.Contains(body, `class="golden-item"`) || strings.Contains(body, `class="scenario-item"`) {
+		t.Fatal("SPEC should show requirements, without duplicating evaluations")
+	}
+	for _, requirement := range h.data.Requirements {
+		if !strings.Contains(body, requirement.Title) {
+			t.Fatal("missing requirement", requirement.ID)
+		}
+		for _, sid := range requirement.ScenarioRefs {
+			if !h.scenarios[sid] || !strings.Contains(body, `/evals?scenario=`+sid) {
+				t.Fatal("missing evaluation link", requirement.ID, sid)
+			}
+		}
+	}
+	for _, bad := range []string{"已通过", "验收通过", "Markdown", "<script", "<form", "<button"} {
+		if strings.Contains(body, bad) {
+			t.Fatal("SPEC should state requirements only", bad)
+		}
+	}
+}
+
 func TestDeepLinksExpandInPlaceAndRemovedReadersStayRemoved(t *testing.T) {
 	h := NewHandler().(*handler)
 	for _, s := range h.data.Scenarios {
@@ -65,7 +101,7 @@ func TestDeepLinksExpandInPlaceAndRemovedReadersStayRemoved(t *testing.T) {
 	if r := request(h, "/evals?golden=G01"); r.Code != 200 || !strings.Contains(r.Body.String(), `id="G01" open>`) {
 		t.Fatal("golden deep link does not expand")
 	}
-	for _, path := range []string{"/api/evals?doc=docs%2Fevals%2Fp0-golden.md", "/api/evals?tab=tools", "/api/evals?scenario=unknown", "/api/evals?golden=unknown", "/api/evals/p0-golden.json", "/api/evals/../../CLAUDE.md"} {
+	for _, path := range []string{"/api/evals?doc=docs%2Fevals%2Fp0-golden.md", "/api/evals?tab=tools", "/api/evals?tab=runtime", "/api/evals?tab=spec&scenario=group-participation", "/api/evals?scenario=unknown", "/api/evals?golden=unknown", "/api/evals/p0-golden.json", "/api/evals/../../CLAUDE.md"} {
 		if r := request(h, path); r.Code != 404 {
 			t.Errorf("%s=%d", path, r.Code)
 		}

@@ -2,7 +2,11 @@
 
 ## 修改入口
 
-当前页面只读取 `p0-golden.json` 和 `office-scenarios.json`。每例展示 `roles`、`verifies`、`method`；ID、标题、来源和引用为维护元数据，不添加历史通过率或运行状态。
+当前页面读取 `spec.json`、`p0-golden.json` 和 `office-scenarios.json`。SPEC 只表达员工的行为要求；EVALS 每例展示 `roles`、`verifies`、`method`。ID、来源和引用为维护元数据，不添加历史通过率或运行状态。
+
+`spec.json.requirements` 的每项需要稳定 `id`、`title`、业务语言的 `summary`、可观察的 `requirements`、有效 `scenarioRefs` 和仓内 `sources`。每个场景至少关联一项 SPEC。修改已有要求可保留 ID，新增要求使用新 ID；不把定义或结构检查通过称为能力验收通过。
+
+`office-scenarios.json.categories` 定义展示分类的 `id`、`title`、`description`；场景用 `categoryRef` 选择一个分类。分类可重组，但已有场景和用例的行为 ID、场景归属及 P0 引用保持稳定。不得创建空分类。概览标题和描述使用普通办公语言；必要的工具、数据字段与证据术语放在核验方法中。
 
 - `roles` 写所需人员或执行角色及读取范围，不写真实账号、联系方式、令牌或业务定位符。
 - `verifies` 写可观察的业务行为和判定条件，例如目标归属、权限、计数、输出内容、退出证明或唯一效果。
@@ -37,6 +41,7 @@ P0 固定 20 个 ID `G01`–`G20`，`priority=P0`。`scenarioRefs` 声明组合�
 - [ ] 变更只覆盖当前改动；现有稳定 ID、场景归属与授权语义保留。
 - [ ] 新例写清至少一个独立行为风险，未以换号或换数复制现有例。
 - [ ] 标题及三展示字段非空；来源存在且不越界，不含凭据、真实账号或业务定位符。
+- [ ] 场景分类有效且非空；新场景已有 SPEC 关联，SPEC 写行为要求而非验收结论。
 - [ ] `origin` 与 `sourceCases` 准确；P0 引用存在且归属声明场景。
 - [ ] fixture、runner 可运行性和实际证据分别说明；仅定义的提交不宣称真实通过。
 - [ ] 执行 `python3 scripts/check-eval-catalog.py --base-ref <base-commit-sha>`，记录检查结果。
@@ -45,6 +50,6 @@ P0 固定 20 个 ID `G01`–`G20`，`priority=P0`。`scenarioRefs` 声明组合�
 
 ## CI 范围
 
-`Eval catalog / definitions` 使用 Python 标准库检查两套 canonical 定义，并用 PR base SHA 或 push before SHA 做只读稳定 ID 对比。首个发布没有对应历史文件时允许初始化；当前定义文件缺失仍失败。CI 不运行真实模型、DWS 或故障演练，绿灯仅表示定义结构与引用合规。
+`Eval catalog / definitions` 使用 Python 标准库检查三套 canonical 定义、分类与 SPEC 引用，并用 PR base SHA 或 push before SHA 做只读稳定 ID 对比。首个发布没有对应历史文件时允许初始化；当前定义文件缺失仍失败。CI 不运行真实模型、DWS 或故障演练，绿灯仅表示定义结构与引用合规。
 
 相关 JSON、检查器、页面代码及评测规则变更触发独立工作流。要作为合并门禁，仓库管理员还需将该检查设为 required status check；此贡献规范不表示分支保护已经配置。

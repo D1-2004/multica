@@ -1,13 +1,14 @@
-# 评测定义
+# QwenTag SPEC & EVALS
 
-页面 `/evals` 只展示两部分：20 条 P0 Golden 组合回归，以及分场景用例。场景和用例在同一页内展开；页面不运行测试或修改环境。
+页面 `/evals` 提供横向 `SPEC | EVALS` 导航，同级导航可继续向右扩展。SPEC 说明员工应做到什么；EVALS 展示 20 条 P0 GoldenCases 和分类的通用办公场景用例。场景和用例在本页展开；页面不运行测试或修改环境。
 
 ## 权威定义
 
+- `server/internal/evalcatalog/spec.json`：员工行为要求、规范来源与对应场景。规范不表示能力已验收通过。
 - `server/internal/evalcatalog/p0-golden.json`：固定 `G01`–`G20`，每条 `priority=P0`，引用具体场景及用例。
-- `server/internal/evalcatalog/office-scenarios.json`：按办公场景持续增长，至少 100 条。每例展示需要角色、验证目标、验证方法。
+- `server/internal/evalcatalog/office-scenarios.json`：场景、展示分类与持续增长的用例，至少 100 条。每例展示需要角色、验证目标、验证方法。分类调整不能改动用例 ID 或场景归属。
 
-Go 页面仅嵌入这两套定义。`suites.json`、`golden.json` 等旧资料保留来源引用用途，不决定当前页面或当前通过结论。Markdown 不作为页面快照，不需同步生成。
+Go 页面仅嵌入这三套定义。`suites.json`、`golden.json` 等旧资料保留来源引用用途，不决定当前页面或当前通过结论。Markdown 不作为页面快照，不需同步生成。
 
 `origin=existing` 表示能追溯已有定义，`origin=defined` 表示按当前合同新增定义。两者都不表示 runner 已具备、已部署或已通过。
 
@@ -24,6 +25,8 @@ python3 scripts/check-eval-catalog.py --base-ref <base-commit-sha>
 
 ## 持续迭代
 
-失败先沉淀最小反例，再归入稳定场景用例；达到组合回归条件时更新 P0 引用。定义、fixture 准备、runner 可执行性和实际证据分别记录。贡献步骤及提交/PR 清单见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+修改本地定义 → 执行 `make eval-check` → 提交并发布对应版本。无需生成页面快照或手工复制文案。
+
+失败先沉淀最小反例，再归入稳定场景用例；新场景关联对应 SPEC，达到组合回归条件时更新 P0 引用。定义、fixture 准备、runner 可执行性和实际证据分别记录。贡献步骤及提交/PR 清单见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 独立工作流 `.github/workflows/eval-catalog.yml` 对相关 PR/push 运行定义检查。仓库管理员需把 `Eval catalog / definitions` 配为 required status check，才能成为合并门禁；工作流文件本身不设置 branch protection。

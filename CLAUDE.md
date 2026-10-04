@@ -240,8 +240,9 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
-- Evaluation definitions (`server/internal/evalcatalog/`): `p0-golden.json` and
-  `office-scenarios.json` are the presentation source of truth. Keep stable IDs,
+- QwenTag SPEC & EVALS (`server/internal/evalcatalog/`): `spec.json`,
+  `p0-golden.json` and `office-scenarios.json` are the presentation source of truth.
+  SPEC states requirements, never acceptance results. Keep stable IDs,
   roles, observable assertions, verification methods and source/P0 references
   complete. Follow `docs/evals/CONTRIBUTING.md` and run `make eval-check` whenever
   changing definitions, references or their rendering. Markdown is developer

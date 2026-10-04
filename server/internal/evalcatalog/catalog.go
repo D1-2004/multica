@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-//go:embed p0-golden.json office-scenarios.json page.gohtml style.css
+//go:embed spec.json p0-golden.json office-scenarios.json page.gohtml style.css
 var assets embed.FS
 
 type TestCase struct {
@@ -32,13 +32,35 @@ type Scenario struct {
 	ID          string     `json:"id"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
+	CategoryRef string     `json:"categoryRef"`
 	Cases       []TestCase `json:"cases"`
 }
 
+type Requirement struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Summary      string   `json:"summary"`
+	Requirements []string `json:"requirements"`
+	ScenarioRefs []string `json:"scenarioRefs"`
+}
+
+type Category struct {
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Scenarios   []Scenario `json:"-"`
+	CaseCount   int        `json:"-"`
+}
+
 type page struct {
+	ProductTitle string
+	Description  string
+	Requirements []Requirement
 	Golden       []TestCase
 	Scenarios    []Scenario
+	Categories   []Category
 	CaseCount    int
+	ActiveTab    string
 	OpenScenario string
 	OpenGolden   string
 }
@@ -67,16 +89,36 @@ func NewHandler() http.Handler {
 		Cases []TestCase `json:"cases"`
 	}
 	var office struct {
-		Scenarios []Scenario `json:"scenarios"`
+		Categories []Category `json:"categories"`
+		Scenarios  []Scenario `json:"scenarios"`
 	}
+	var spec struct {
+		Title        string        `json:"title"`
+		Description  string        `json:"description"`
+		Requirements []Requirement `json:"requirements"`
+	}
+	readJSON("spec.json", &spec)
 	readJSON("p0-golden.json", &golden)
 	readJSON("office-scenarios.json", &office)
 	if len(golden.Cases) != 20 {
 		panic("P0 catalog must contain exactly 20 golden cases")
 	}
-	h := &handler{data: page{Golden: golden.Cases, Scenarios: office.Scenarios}, scenarios: map[string]bool{}, golden: map[string]bool{}}
+	h := &handler{data: page{ProductTitle: spec.Title, Description: spec.Description, Requirements: spec.Requirements, Golden: golden.Cases, Scenarios: office.Scenarios, Categories: office.Categories}, scenarios: map[string]bool{}, golden: map[string]bool{}}
+	categoryIndex := map[string]int{}
+	for i, category := range h.data.Categories {
+		if _, duplicate := categoryIndex[category.ID]; duplicate {
+			panic("duplicate office category")
+		}
+		categoryIndex[category.ID] = i
+	}
 	titles := map[string]string{}
 	for _, s := range office.Scenarios {
+		i, exists := categoryIndex[s.CategoryRef]
+		if !exists {
+			panic("unknown office category")
+		}
+		h.data.Categories[i].Scenarios = append(h.data.Categories[i].Scenarios, s)
+		h.data.Categories[i].CaseCount += len(s.Cases)
 		h.scenarios[s.ID] = true
 		titles[s.ID] = s.Title
 		h.data.CaseCount += len(s.Cases)
@@ -114,14 +156,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	if query.Has("doc") || query.Has("tab") {
+	if query.Has("doc") {
 		http.NotFound(w, r)
 		return
 	}
 	data := h.data
+	data.ActiveTab = query.Get("tab")
+	if data.ActiveTab == "" {
+		data.ActiveTab = "evals"
+	}
+	if data.ActiveTab != "spec" && data.ActiveTab != "evals" {
+		http.NotFound(w, r)
+		return
+	}
 	data.OpenScenario = query.Get("scenario")
 	data.OpenGolden = query.Get("golden")
-	if data.OpenScenario != "" && !h.scenarios[data.OpenScenario] || data.OpenGolden != "" && !h.golden[data.OpenGolden] {
+	if data.OpenScenario != "" && !h.scenarios[data.OpenScenario] || data.OpenGolden != "" && !h.golden[data.OpenGolden] || data.ActiveTab == "spec" && (data.OpenScenario != "" || data.OpenGolden != "") {
 		http.NotFound(w, r)
 		return
 	}

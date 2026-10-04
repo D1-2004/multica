@@ -3,8 +3,8 @@
   "scenarios": [
     {
       "id": "group-participation",
-      "title": "群参与与消息对象",
-      "description": "测试群中接收对象、参与配置及消息来源决定员工处理资格。",
+      "title": "群聊参与",
+      "description": "只回应应由自己处理的消息，保持合适的参与方式。",
       "cases": [
         {
           "id": "office-at-other",
@@ -227,12 +227,13 @@
             "proactive-generic-unknown-receiving-name"
           ]
         }
-      ]
+      ],
+      "categoryRef": "communication"
     },
     {
       "id": "clarification-reference",
-      "title": "信息澄清与对话指代",
-      "description": "在材料不完整、短答和冲突历史中定位当前需求。",
+      "title": "需求澄清与对话引用",
+      "description": "信息不足先问清，理解引用内容，纠正只改指定部分。",
       "cases": [
         {
           "id": "office-missing-body",
@@ -435,12 +436,13 @@
             "proactive-generic-output-question"
           ]
         }
-      ]
+      ],
+      "categoryRef": "communication"
     },
     {
       "id": "group-authority",
-      "title": "群内授权与可信来源",
-      "description": "控制、读取和发送使用当前外层授权、受理主体与场域权限。",
+      "title": "请求授权与身份",
+      "description": "谁提出请求、能做什么，都有有效依据。",
       "cases": [
         {
           "id": "office-control-other-owner",
@@ -646,12 +648,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "trust"
     },
     {
       "id": "work-planning",
-      "title": "任务分派与工作规划",
-      "description": "新工作、旧事项和同窗多交付物分别形成正确任务计划。",
+      "title": "任务执行与工作规划",
+      "description": "分清新工作与原工作，按明确要求实际执行。",
       "cases": [
         {
           "id": "office-python-real",
@@ -868,12 +871,13 @@
             "proactive-generic-same-marker-different-work"
           ]
         }
-      ]
+      ],
+      "categoryRef": "delivery"
     },
     {
       "id": "progress-wait",
-      "title": "进度查询与等待状态",
-      "description": "前台答复反映实时工作、执行、输入和停止事实。",
+      "title": "进度与等待",
+      "description": "说明真实进度、缺少什么和正在等谁。",
       "cases": [
         {
           "id": "office-running-progress",
@@ -1056,12 +1060,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "delivery"
     },
     {
       "id": "continuation-steer",
-      "title": "多轮续接与纠正",
-      "description": "同一目标延续、实质更改和技术重放分别处理。",
+      "title": "续接与纠正",
+      "description": "保留工作目标、材料和交付要求，正确吸收后续补充。",
       "cases": [
         {
           "id": "office-continue-success",
@@ -1268,12 +1273,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "delivery"
     },
     {
       "id": "stop-control",
-      "title": "停止、退出与控制边界",
-      "description": "停止须精确作用于原任务并具有外部进程退出证明。",
+      "title": "停止任务",
+      "description": "停止获准的目标，确认不再继续执行或补发结果。",
       "cases": [
         {
           "id": "office-explicit-stop",
@@ -1455,12 +1461,13 @@
             "employee-base-stop"
           ]
         }
-      ]
+      ],
+      "categoryRef": "delivery"
     },
     {
       "id": "files-documents",
-      "title": "文件、文档与实际材料",
-      "description": "回答使用真实资源，交付由接收者独立读取字节验证。",
+      "title": "文件与文档交付",
+      "description": "基于可读材料作答，让收件人拿到正确文件。",
       "cases": [
         {
           "id": "office-file-native-delivery",
@@ -1668,12 +1675,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "delivery"
     },
     {
       "id": "collection-input",
-      "title": "多人收集与输入归属",
-      "description": "邀请、答复、计数及汇总按获准对象和原发起场域绑定。",
+      "title": "多人信息收集",
+      "description": "将答复归到正确问题，人数准确，汇总回原会话。",
       "cases": [
         {
           "id": "office-collection-out-of-order",
@@ -1880,12 +1888,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "collaboration"
     },
     {
       "id": "cross-scene-tenant",
-      "title": "跨群、单聊与组织边界",
-      "description": "scene.Ref、当前租户和身份桥限定工作资料及效果范围。",
+      "title": "跨会话与组织边界",
+      "description": "群聊、单聊和组织之间的资料与操作互不越界。",
       "cases": [
         {
           "id": "office-same-people-different-groups",
@@ -2079,12 +2088,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "trust"
     },
     {
       "id": "reminder-follow-up",
-      "title": "主动提醒与授权后续",
-      "description": "停滞、等待及终态推进各自使用当前工作事实和单独授权。",
+      "title": "主动提醒与跟进",
+      "description": "只在获准范围跟进，避免重复打扰。",
       "cases": [
         {
           "id": "office-watchdog-no-progress",
@@ -2309,12 +2319,13 @@
             "employee-follow-01"
           ]
         }
-      ]
+      ],
+      "categoryRef": "collaboration"
     },
     {
       "id": "cron-office",
-      "title": "定时办公事项",
-      "description": "真实发生时点、冻结工作包和暂停状态约束例行任务。",
+      "title": "定时事项",
+      "description": "按时间和最新有效规则执行，暂停期间不补跑。",
       "cases": [
         {
           "id": "office-cron-real-due",
@@ -2528,12 +2539,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "collaboration"
     },
     {
       "id": "webhook-office",
-      "title": "外部事件与 Webhook",
-      "description": "外部事件以可信绑定、原始验签和稳定 provider 身份受理。",
+      "title": "外部事件触发",
+      "description": "按可信来源处理事件，重复事件只执行一次。",
       "cases": [
         {
           "id": "office-hook-signature",
@@ -2762,12 +2774,13 @@
             "employee-hook-04"
           ]
         }
-      ]
+      ],
+      "categoryRef": "collaboration"
     },
     {
       "id": "office-memory",
-      "title": "私有记忆、纠正与遗忘",
-      "description": "记忆使用当前 scene/requester-private、外层来源与精确墓碑。",
+      "title": "记忆、纠正与遗忘",
+      "description": "正确记住、纠正或忘记本人的获准信息。",
       "cases": [
         {
           "id": "office-memory-capture-private",
@@ -2949,12 +2962,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "learning-reliability"
     },
     {
       "id": "office-experience",
-      "title": "验证经验、复用与治理",
-      "description": "可信验证、实际复用和共享/撤回是独立事实。",
+      "title": "经验学习与复用",
+      "description": "只学习验证过的经验，共享与撤回需要授权。",
       "cases": [
         {
           "id": "office-experience-host-proof",
@@ -3144,12 +3158,13 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "learning-reliability"
     },
     {
       "id": "office-recovery",
-      "title": "幂等、故障与持久恢复",
-      "description": "专用隔离实例验证同源、提交、缓存、重启及投递恢复的唯一效果。",
+      "title": "故障恢复与重复处理",
+      "description": "失败后继续正确工作，不漏发、不重复执行。",
       "cases": [
         {
           "id": "office-source-replay-vs-message",
@@ -3356,7 +3371,35 @@
           "origin": "defined",
           "sourceCases": []
         }
-      ]
+      ],
+      "categoryRef": "learning-reliability"
+    }
+  ],
+  "categories": [
+    {
+      "id": "communication",
+      "title": "沟通与任务理解",
+      "description": "找对回应对象，听懂请求，问清缺少的信息。"
+    },
+    {
+      "id": "delivery",
+      "title": "执行与交付",
+      "description": "按要求实际执行，交代进度，正确续接或停止。"
+    },
+    {
+      "id": "collaboration",
+      "title": "协作与例行工作",
+      "description": "收集多人信息，在获准范围提醒并处理定时或外部事件。"
+    },
+    {
+      "id": "trust",
+      "title": "权限与隐私",
+      "description": "请求和授权有依据，资料与操作不越界。"
+    },
+    {
+      "id": "learning-reliability",
+      "title": "记忆、学习与可靠性",
+      "description": "正确记住或遗忘信息，复用可信经验，故障后不重复执行。"
     }
   ]
 }

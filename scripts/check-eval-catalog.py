@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = "server/internal/evalcatalog"
 OFFICE_PATH = f"{CATALOG_PATH}/office-scenarios.json"
 P0_PATH = f"{CATALOG_PATH}/p0-golden.json"
+SPEC_PATH = f"{CATALOG_PATH}/spec.json"
 ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 P0_IDS = [f"G{i:02}" for i in range(1, 21)]
 DEFINITION_FIELDS = ("roles", "verifies", "method")
@@ -45,6 +46,8 @@ class Checker:
         self.errors = []
         self.source_ids = set()
         self.scenario_ids = set()
+        self.category_ids = set()
+        self.spec_ids = set()
         self.case_owners = {}
         self.behaviors = {}
 
@@ -152,10 +155,25 @@ class Checker:
         if not self.require(isinstance(office, dict), f"{OFFICE_PATH}: expected an object"):
             return
         self.require(office.get("version") == 1, f"{OFFICE_PATH}: version must be 1")
+        categories = office.get("categories")
+        if self.require(isinstance(categories, list) and bool(categories), f"{OFFICE_PATH}: missing display categories"):
+            for item in categories:
+                if not self.require(isinstance(item, dict), "category: expected an object"):
+                    continue
+                cid = item.get("id")
+                if not self.require(isinstance(cid, str) and bool(ID_PATTERN.fullmatch(cid)), "category: invalid stable ID"):
+                    continue
+                self.require(cid not in self.category_ids, f"{cid}: duplicate category ID")
+                self.category_ids.add(cid)
+                self.text(item.get("title"), f"{cid}.title")
+                self.text(item.get("description"), f"{cid}.description")
+                self.require(not set(item).intersection(RESULT_FIELDS), f"{cid}: category cannot contain acceptance results")
+                self.scan_text(item, cid)
         scenarios = office.get("scenarios")
         if not self.require(isinstance(scenarios, list) and bool(scenarios), f"{OFFICE_PATH}: missing scenarios"):
             return
         cases = []
+        used_categories = set()
         for index, scenario in enumerate(scenarios):
             label = f"scenario[{index}]"
             if not self.require(isinstance(scenario, dict), f"{label}: expected an object"):
@@ -165,6 +183,9 @@ class Checker:
                 continue
             self.require(sid not in self.scenario_ids, f"{sid}: duplicate scenario ID")
             self.scenario_ids.add(sid)
+            category = scenario.get("categoryRef")
+            if self.require(isinstance(category, str) and category in self.category_ids, f"{sid}: unknown categoryRef"):
+                used_categories.add(category)
             self.text(scenario.get("title"), f"{sid}.title")
             self.text(scenario.get("description"), f"{sid}.description")
             self.scan_text({"title": scenario.get("title"), "description": scenario.get("description")}, sid)
@@ -192,6 +213,7 @@ class Checker:
                         self.require(previous is None, f"{cid}: exact behavior clone of {previous}; define a distinct behavior risk")
                         self.behaviors[fingerprint] = cid
         self.require(len(cases) >= 100, f"{OFFICE_PATH}: at least 100 scenario cases are required; growth is not capped")
+        self.require(used_categories == self.category_ids, "display categories cannot be empty")
         self.require(not self.scenario_ids.intersection(self.case_owners), "scenario IDs and case IDs must not collide")
         self.source_ids.update(self.case_owners)
         self.source_ids.update(P0_IDS)
@@ -223,6 +245,37 @@ class Checker:
                 if self.require(owner is not None, f"{label}: unknown caseRef {cid}"):
                     self.require(owner in scenario_refs, f"{label}: {cid} belongs to {owner}; add its scenarioRef or fix caseRefs")
 
+    def validate_spec(self, spec):
+        if not self.require(isinstance(spec, dict), f"{SPEC_PATH}: expected an object"):
+            return
+        self.require(spec.get("version") == 1, f"{SPEC_PATH}: version must be 1")
+        self.text(spec.get("title"), "SPEC.title")
+        self.text(spec.get("description"), "SPEC.description")
+        self.require(not set(spec).intersection(RESULT_FIELDS), "SPEC: cannot contain acceptance results")
+        self.scan_text(spec, "SPEC")
+        rows = spec.get("requirements")
+        if not self.require(isinstance(rows, list) and bool(rows), "SPEC: missing requirements"):
+            return
+        covered = set()
+        for row in rows:
+            if not self.require(isinstance(row, dict), "SPEC requirement: expected an object"):
+                continue
+            rid = row.get("id")
+            if not self.require(isinstance(rid, str) and bool(ID_PATTERN.fullmatch(rid)), "SPEC requirement: invalid stable ID"):
+                continue
+            self.require(rid not in self.spec_ids, f"{rid}: duplicate SPEC ID")
+            self.spec_ids.add(rid)
+            self.require(rid not in self.scenario_ids and rid not in self.case_owners, f"{rid}: SPEC ID collides with a scenario or case")
+            self.text(row.get("title"), f"{rid}.title")
+            self.text(row.get("summary"), f"{rid}.summary")
+            self.strings(row.get("requirements"), f"{rid}.requirements")
+            self.sources(row, rid)
+            self.require(not set(row).intersection(RESULT_FIELDS), f"{rid}: SPEC cannot contain acceptance results")
+            for sid in self.strings(row.get("scenarioRefs"), f"{rid}.scenarioRefs"):
+                if self.require(sid in self.scenario_ids, f"{rid}: unknown SPEC scenarioRef {sid}"):
+                    covered.add(sid)
+        self.require(covered == self.scenario_ids, "every office scenario needs a SPEC requirement association")
+
     def stable_ids(self, base_ref):
         if not base_ref or re.fullmatch(r"0{40,64}", base_ref):
             return
@@ -233,7 +286,7 @@ class Checker:
             self.errors.append("--base-ref must resolve to an available commit")
             return
         baseline = {}
-        for relative in (OFFICE_PATH, P0_PATH):
+        for relative in (OFFICE_PATH, P0_PATH, SPEC_PATH):
             probe = subprocess.run(["git", "cat-file", "-e", f"{sha}:{relative}"], cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if probe.returncode:
                 # A verified commit without this module permits initial publication.
@@ -263,6 +316,12 @@ class Checker:
                 self.require(set(prior_ids).issubset(P0_IDS), "base P0 IDs differ from the fixed G01-G20 contract; review migration")
             except (KeyError, TypeError):
                 self.errors.append("base P0 catalog cannot be interpreted for stable-ID checking")
+        if SPEC_PATH in baseline:
+            try:
+                for item in baseline[SPEC_PATH]["requirements"]:
+                    self.require(item["id"] in self.spec_ids, f"{item['id']}: stable SPEC ID removed; preserve its requirement")
+            except (KeyError, TypeError):
+                self.errors.append("base SPEC cannot be interpreted for stable-ID checking")
 
 
 def main(argv=None):
@@ -273,6 +332,7 @@ def main(argv=None):
     office = checker.load(OFFICE_PATH)
     p0 = checker.load(P0_PATH)
     checker.validate(office, p0)
+    checker.validate_spec(checker.load(SPEC_PATH))
     checker.stable_ids(args.base_ref)
     if checker.errors:
         for error in checker.errors:
@@ -282,7 +342,7 @@ def main(argv=None):
             print(safe, file=sys.stderr)
         return 1
     origin = {kind: sum(c.get("origin") == kind for s in office["scenarios"] for c in s["cases"]) for kind in ("existing", "defined")}
-    print(f"Definitions valid: 20 P0 Golden / {len(checker.scenario_ids)} scenarios / {len(checker.case_owners)} cases (existing={origin['existing']}, defined={origin['defined']}).")
+    print(f"Definitions valid: {len(checker.spec_ids)} SPEC requirements / {len(checker.category_ids)} categories / 20 P0 Golden / {len(checker.scenario_ids)} scenarios / {len(checker.case_owners)} cases (existing={origin['existing']}, defined={origin['defined']}).")
     print("Structure, references and stable IDs only; no runner, model, DWS or real evaluation executed.")
     return 0
 
