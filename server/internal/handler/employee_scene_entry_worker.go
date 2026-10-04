@@ -82,9 +82,12 @@ type EmployeeSceneWorker struct {
 	// MemoryToolsReady reports whether every live replica supports
 	// EmployeeMemoryReplicaMarker; nil keeps new inputs on memory tools v1.
 	MemoryToolsReady func(context.Context) (bool, error)
+	// HumanQuestionsReady gates new card producers and frozen human tools.
+	HumanQuestionsReady func(context.Context) (bool, error)
 	// TaskDiscoveryReady gates new demand-driven task discovery inputs. Nil
 	// retains legacy candidate snapshots; frozen inputs are never upgraded.
 	TaskDiscoveryReady func(context.Context) (bool, error)
+
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -317,7 +320,7 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 // processClaimed branches on the job kind before any payload is decoded. A
 // kind this worker does not execute is held explicitly, never retried.
 func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeentry.Job) (worked bool, returnErr error) {
-	if job.Kind != employeeentry.KindMessage && job.Kind != employeeentry.KindTaskWake {
+	if job.Kind != employeeentry.KindMessage && job.Kind != employeeentry.KindTaskWake && job.Kind != employeeentry.KindHumanResponse {
 		return true, w.store.Hold(ctx, job, "unsupported_job_kind")
 	}
 	var saved employeeSavedOutcome
@@ -357,6 +360,13 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 			}
 		}
 		return true, w.store.Complete(ctx, job, nil)
+	}
+	if job.Kind == employeeentry.KindHumanResponse {
+		if !w.humanQuestionsReady(ctx) {
+			return true, w.store.Retry(ctx, job, "human question readers are not ready")
+		}
+		committed, err = w.processHumanResponse(ctx, job, &saved)
+		return true, err
 	}
 	if job.Kind == employeeentry.KindTaskWake {
 		committed, err = w.processTaskWake(ctx, job, &saved)
@@ -690,6 +700,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	if identity, e := w.handler.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID}); e == nil {
 		input.Config.Persona.Name = identity.AccountDisplayName
+	}
+	if err = w.appendHumanQuestions(ctx, job, envelopes, &input); err != nil {
+		return employeeSavedInput{}, err
 	}
 	if err = memory.freeze(ctx, &input); err != nil {
 		return employeeSavedInput{}, err

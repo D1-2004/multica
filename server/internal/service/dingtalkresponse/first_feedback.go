@@ -16,6 +16,7 @@ func FirstFeedbackRequestID(jobID, receiptID string) string {
 // EnqueueFirstFeedback closes no request and cannot enter Task delivery evidence.
 func (s *Service) EnqueueFirstFeedback(ctx context.Context, tx DBTX, in ActionInput, jobID, receiptID, sourceRef string) (string, error) {
 	in.EmployeeFirstFeedbackJobID, in.EmployeeFirstFeedbackReceiptID, in.EmployeeFirstFeedbackSourceRef = jobID, receiptID, sourceRef
+	in.A2UICard = nil
 	in.RequestID = FirstFeedbackRequestID(jobID, receiptID)
 	in.ActionID = ""
 	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
@@ -29,7 +30,7 @@ func validateFirstFeedbackInput(in ActionInput) error {
 			return errors.New("first feedback identity invalid")
 		}
 	}
-	if in.EmployeeFirstFeedbackSourceRef == "" || in.RequestID != FirstFeedbackRequestID(in.EmployeeFirstFeedbackJobID, in.EmployeeFirstFeedbackReceiptID) || in.CallbackTarget != firstFeedbackTarget || in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.EmployeeMessageJobID != "" || in.EmployeeRunNoticeID != "" || in.CoordinatorWaitJobID != "" || in.SceneNoticeID != "" || in.RoutineRunID != "" || in.InvitationActionID != "" || in.Text == "" {
+	if in.A2UICard != nil || in.EmployeeFirstFeedbackSourceRef == "" || in.RequestID != FirstFeedbackRequestID(in.EmployeeFirstFeedbackJobID, in.EmployeeFirstFeedbackReceiptID) || in.CallbackTarget != firstFeedbackTarget || in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.EmployeeMessageJobID != "" || in.EmployeeRunNoticeID != "" || in.CoordinatorWaitJobID != "" || in.SceneNoticeID != "" || in.RoutineRunID != "" || in.InvitationActionID != "" || in.Text == "" {
 		return errors.New("first feedback cannot close a request or claim business execution")
 	}
 	return nil

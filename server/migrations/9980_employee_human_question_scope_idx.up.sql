@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_human_question_scope_idx ON employee_human_question(workspace_id,agent_id,tenant_org_id,scene_id,requester_ref,created_at) WHERE state IN ('open','deferred');
