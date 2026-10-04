@@ -152,9 +152,14 @@ Entry points:
   in the same scene. The Host selects the target only when the requester has
   exactly one candidate (running, or ready/succeeded within 30 minutes; stopped
   and failed tasks never qualify); otherwise it returns the candidates and the
-  model must name `task_id` or ask. The successor's result is delivered as the
+  model must select the current source-bound `task_ref` or ask. Legacy UUID
+  `task_id` remains accepted; a short alias in that legacy field resolves only
+  through this wake's frozen source/requester binding. Supplying both target
+  fields is rejected before any effect. The successor's result is delivered as the
   answer to the original request.
-  The tool was introduced at marker 7; the combined current-task protocol now requires `[employee-loop:9]`.
+  The tool was introduced at marker 7; source-bound steer now requires
+  `[employee-loop:18]` on all live backend replicas before new Employee work
+  is admitted. Older frozen UUID/implicit calls remain supported.
 
 Session continuity needs the provider's resume pointer pinned while the run is
 still active: the daemon pins it when a backend reveals the session on a
@@ -164,11 +169,31 @@ built before that commit give a steer successor no prior session or workdir,
 so it restarts from the full packet with the corrections (verified on pre with
 FC Pi, 2026-10-03).
 
-FC sandboxes need no special handling: the post-commit terminal observer runs
-the task-owned stop collection, the acknowledgement launches the successor, and
-scene, Issue and Chat scopes reuse the warm sandbox. An unscoped Direct sandbox
-is single-use, so its successor starts cold with the full packet; session
-continuity there needs scene connection reuse.
+For FC, the post-commit terminal observer runs the task-owned stop collection;
+positive exit proof opens the claim barrier before the successor launches.
+Issue and Chat scopes reuse a healthy warm sandbox; ordinary Direct executions
+with `sandbox_connection_reuse` enabled retain their frozen scene/person bucket
+across steer. Reuse is conditional on health, expiration, configuration and
+capacity. An unscoped Direct sandbox is single-use, so its successor starts cold
+with the full packet. The employee-filesystem branch currently skips scene
+connection reuse; a Direct queue with neither Issue nor Chat uses its queue ID
+as the DSH execution scope, so that branch does not guarantee the predecessor's
+sandbox or session is reused.
+
+Each task acquisition renews sandbox lifetime through `POST /timeout` followed
+by a confirming `GET`; ordinary FC sandboxes have a default floor of 4800
+seconds (80 minutes). This is renewal at acquisition, not periodic renewal
+throughout a running task. A pending stop barrier retains the sandbox during
+handoff; idle retention is still bounded. A missing pinned provider session,
+incompatible workdir or runtime context, or a cold sandbox may force a fresh
+session; the successor must still execute the complete corrected work packet.
+
+The Qwen provider adapter currently does not return positive process-group
+exit proof. FC can obtain it from the server's second stop scan; local Qwen
+without that proof can retain the barrier. This is a provider-specific limitation,
+not something inferred from an employee's display name. The 2026-10-04
+Qwen-DWS restaurant task actually used provider Pi, as recorded in its
+`agent_task` trace.
 
 ## Limits and validation
 

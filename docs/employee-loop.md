@@ -63,7 +63,7 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 ## 纠正在途任务（steer）
 
-`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务：Host 选目标，只有请求者恰好一个候选（运行中，或 30 分钟内 ready/成功）时才直接作用于它；有多个候选时把候选列表交回模型，由模型带 `task_id` 再调用或追问请求者，不新建 Task。被人工停止或失败的任务不作为隐式目标，纠正也不会重启被人工停止的任务。
+`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务。自然对话目标使用当前 wake 的 `task_ref`（如 `t1`），Host 按冻结的 source/requester 候选映射解析真实 Task ID，并重新校验来源和任务归属；两种目标字段不能同时提供。旧 `task_id` UUID 与省略目标的唯一候选路径保留；旧冻结调用中的 `task_id=t1` 也只能通过同一 source 绑定解析，不能把短引用当 UUID 或跨消息复用。有多个候选时需明确目标或追问，不新建 Task。被人工停止或失败的任务不作为隐式目标，纠正不会重启被人工停止的任务。
 
 完整纠正在任何取消或合并写入前读取，最多一百条、总六十四 KiB；读取失败或加上本次后超限就回滚，不静默丢弃旧约束。执行中的 Run 被取消并挂上退出门闩，进程确认退出后续跑才能被认领；续跑带着全部纠正和原工作包，在同一 runtime 上接回原 provider session 与 workdir。尚未认领的 Run 直接吸收纠正。纠正只带来自己的身份令牌，续跑的结果仍作为原请求的回复送达；被替换的旧 Run 不发取消通知。前台调用预算不变，一次模型调用即可完成纠正与接单回复。
 
@@ -376,4 +376,4 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 **明确追加工作与方法继承。**当前source明确对既有Task追加一个工作步骤、扩展/调整/重做交付时，先source-bound `read_task`，再 `continue_task`；原请求的实际执行方法与约束（例如Python实际执行）继续约束新步骤，除非请求人明确改方法。已有数据、步骤短或可口算不免除真实执行；只执行新步骤，不无故重跑旧sleep。普通口算问题或解释已交付报告的数字含义仍direct，不按「继续/合计」词判派发。询问现在进度须read_task，冻结state/历史成功不是当前读取；复述已实际交付的报告内容可直接答，但不能当新执行证明。新独立产出仍dispatch_task+builds_on。一般选择规则进入现有trusted ForegroundBoundary，TaskBrief只给来源事实；新快照冻结该版本、旧快照不改，marker16保持。原失败及Why见26-task-execution-inheritance.md。
 
 
-**本人跨源私人记录撤销（`[employee-loop:17]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
+**本人跨源私人记录撤销（`[employee-loop:18]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
