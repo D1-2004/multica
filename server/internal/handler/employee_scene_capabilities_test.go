@@ -62,6 +62,72 @@ func TestEmployeeSceneCapabilitiesEffectivePromptsAndSkills(t *testing.T) {
 	}
 }
 
+func TestEmployeeSceneConfigurationPersonalMCPProjection(t *testing.T) {
+	f := newCtxcapFixture(t)
+	ctx := context.Background()
+	const secret = "PERSONAL_CREDENTIAL_SENTINEL"
+	if _, err := contextcap.PutScopeMCPConfig(ctx, testPool, contextcap.ScopeMCPConfigWrite{
+		WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent), ScopeType: contextcap.ScopePerson,
+		OrgID: ctxcapOrg, ScopeKey: ctxcapStaff,
+		MCPConfig: json.RawMessage(`{"mcpServers":{"personal-only":{"url":"https://safe.example.test/connect/` + secret + `","headers":{"Authorization":"Bearer ` + secret + `"}},"personal-disabled":{"url":"https://safe.example.test/disabled","disabled":true}}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		messages []DispatchMessage
+		selected bool
+	}{
+		{"single_requester", []DispatchMessage{{SenderUID: "alice", SenderStaffID: ctxcapStaff}}, true},
+		{"mixed_requesters", []DispatchMessage{{SenderUID: "alice", SenderStaffID: ctxcapStaff}, {SenderUID: "bob", SenderStaffID: "staff-bob"}}, false},
+		{"unknown_person", []DispatchMessage{{SenderUID: "alice"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := testPool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			host := &employeeSceneHost{
+				worker:    NewEmployeeSceneWorker(f.h, &employeeTestModel{}),
+				job:       employeeentry.Job{Scope: employeeentry.Scope{WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent), TenantOrgID: ctxcapOrg, SceneID: ctxcapScene}},
+				envelopes: []employeeDispatchEnvelope{{PrincipalID: testUserID, Command: DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: tc.messages}}}}},
+			}
+			raw, err := host.sceneConfiguration(ctx, tx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(raw, secret) || strings.Contains(raw, ctxcapStaff) {
+				t.Fatal("personal projection leaked a credential or person identifier")
+			}
+			var value struct {
+				SceneServers []employeeConfiguredMCP `json:"mcp_servers"`
+				Effective    struct {
+					PersonalScope string                  `json:"personal_scope"`
+					Personal      []employeeConfiguredMCP `json:"personal_mcp_servers"`
+					Servers       []employeeConfiguredMCP `json:"mcp_servers"`
+				} `json:"effective_context"`
+			}
+			if err = json.Unmarshal([]byte(raw), &value); err != nil {
+				t.Fatal(err)
+			}
+			if len(value.SceneServers) != 0 {
+				t.Fatal("personal MCP was misrepresented as scene-owned")
+			}
+			if tc.selected {
+				if value.Effective.PersonalScope != "selected" || len(value.Effective.Personal) != 2 ||
+					len(value.Effective.Servers) != 1 || value.Effective.Servers[0].Name != "personal-only" ||
+					value.Effective.Servers[0].Layer != contextcap.LayerPerson || !value.Effective.Servers[0].Enabled ||
+					value.Effective.Personal[0].Name != "personal-disabled" || value.Effective.Personal[0].Enabled {
+					t.Fatalf("personal-only configuration omitted or disabled entry applied: %+v", value.Effective)
+				}
+			} else if value.Effective.PersonalScope != "not_selected" || len(value.Effective.Personal) != 0 || len(value.Effective.Servers) != 0 {
+				t.Fatalf("mixed or unknown window borrowed personal configuration: %+v", value.Effective)
+			}
+		})
+	}
+}
+
 func TestEmployeeSceneCapabilitiesToolsHaveHostOwnedLinks(t *testing.T) {
 	found := map[string]bool{}
 	for _, tool := range employeeSceneTools() {
