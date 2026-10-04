@@ -53,7 +53,8 @@ import (
 // is upgraded; the new reader resumes older snapshots without rewriting tools.
 // Marker 17 reads same-owner private tombstones across source scenes in a DM.
 // Mixed 16/17 readers pause admission, recovery and sending at the existing gate.
-const EmployeeLoopReplicaMarker = "[employee-loop:17]"
+// Marker 18 adds durable scene participation and its Host tool/send guard.
+const EmployeeLoopReplicaMarker = "[employee-loop:18]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -372,6 +373,24 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 			return true, w.retryPersisted(ctx, job, "invalid persisted callback target", "persisted_callback_target_invalid")
 		}
 	}
+	participationDB, participationDBReady := employeeEntryDB(h)
+	if !participationDBReady {
+		return true, errors.New("participation storage unavailable")
+	}
+	participation, participationErr := employeeReadParticipation(runCtx, participationDB, job.Scope)
+	if participationErr != nil {
+		return true, w.store.Retry(ctx, job, participationErr.Error())
+	}
+	if len(job.Outcome) == 0 && participation.Mode == "quiet" && !employeeParticipationOwner(participation, job, envelopes) {
+		saved.Outcome.Kind = employeeloop.Quiet
+		raw, _ := json.Marshal(saved)
+		if err = w.store.SaveOutcome(ctx, job, raw); err != nil {
+			return true, err
+		}
+		err = w.complete(ctx, job, envelopes, saved)
+		committed = err == nil
+		return true, err
+	}
 	if len(job.Outcome) > 0 {
 		if err = json.Unmarshal(job.Outcome, &saved); err != nil {
 			return true, err
@@ -659,6 +678,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if err = memory.freeze(ctx, &input); err != nil {
 		return employeeSavedInput{}, err
 	}
+	if err := w.freezeParticipation(ctx, job, &input); err != nil {
+		return employeeSavedInput{}, err
+	}
 	return input, nil
 }
 
@@ -824,6 +846,10 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 		if err != nil {
 			return err
 		}
+		participation, err := employeeReadParticipation(ctx, tx, job.Scope)
+		if err != nil {
+			return err
+		}
 		for i, env := range envelopes {
 			if err := employeePrincipalAllowed(ctx, permissionView, job.Scope, env.PrincipalID); err != nil {
 				return err
@@ -835,6 +861,9 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 					text += "\n"
 				}
 				text += strings.TrimSpace(saved.Outcome.Reply)
+			}
+			if participation.Mode == "quiet" && participation.SourceJobID != job.ID {
+				text = ""
 			}
 			command := env.Command
 			if command.CompletionCallback != nil {
@@ -859,7 +888,7 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 					return errors.New("employee response outbox is unavailable")
 				}
 				sender := firstNonEmpty(command.Event.Data.Sender.OpenDingTalkID, command.Event.Data.Sender.SenderOpenDingTalkID)
-				in := dingtalkresponse.ActionInput{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, DWSUID: command.ExternalIdentity.DWS.UID, DWSOrgID: job.Scope.TenantOrgID, SceneID: job.Scope.SceneID, ConversationID: registered.ExternalSceneID, IsGroup: registered.SceneKind == scene.KindGroup, SenderOpenDingTalkID: sender, DWSEnvironment: commandDWSEnvironment(command), Text: text}
+				in := dingtalkresponse.ActionInput{EmployeeMessageJobID: job.ID, WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, DWSUID: command.ExternalIdentity.DWS.UID, DWSOrgID: job.Scope.TenantOrgID, SceneID: job.Scope.SceneID, ConversationID: registered.ExternalSceneID, IsGroup: registered.SceneKind == scene.KindGroup, SenderOpenDingTalkID: sender, DWSEnvironment: commandDWSEnvironment(command), Text: text}
 				if command.ResponsePolicy != nil {
 					in.ShowAITag = command.ResponsePolicy.ShowAITag
 				}

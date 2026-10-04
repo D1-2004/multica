@@ -316,6 +316,13 @@ func TestProactiveGateDecisions(t *testing.T) {
 	// Quiet until told it is over.
 	quiet := answered.Add(5 * time.Minute)
 	o.at(t, "boss", "@员工 先别在群里说话，等我说结束。", "m-quiet", quiet)
+	// The semantic Host tool, not a Chinese text regex, owns persistent control.
+	if _, err := testPool.Exec(ctx, `INSERT INTO employee_scene_participation(workspace_id,agent_id,tenant_org_id,scene_id,mode,requester_ref,source_job_id,source_ref,instruction_quote,revision) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'quiet','boss',$5::uuid,'test-source','quiet instruction',1)`, key.WorkspaceID, key.AgentID, key.TenantOrgID, key.SceneID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM employee_scene_participation WHERE agent_id=$1`, key.AgentID)
+	})
 	o.observe(t, "peer", "值班员工请核对刚才三项候选，哪一项没有回执？", "q-quiet", quiet.Add(time.Minute))
 	if n, err := o.proactiveWorker(&admits, quiet.Add(time.Minute+employeeProactiveWait+time.Second)).RunProactiveOnce(ctx); err != nil || n != 1 || admits != 1 {
 		t.Fatalf("quiet: decided=%d admits=%d err=%v", n, admits, err)
@@ -325,6 +332,9 @@ func TestProactiveGateDecisions(t *testing.T) {
 	}
 	ended := quiet.Add(10 * time.Minute)
 	o.at(t, "boss", "@员工 安静结束了。", "m-end", ended)
+	if _, err := testPool.Exec(ctx, `UPDATE employee_scene_participation SET mode='active',revision=revision+1 WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid`, key.WorkspaceID, key.AgentID, key.TenantOrgID, key.SceneID); err != nil {
+		t.Fatal(err)
+	}
 	o.observe(t, "peer", "值班核对：本场候选哪一项还没有回执？", "q-after", ended.Add(time.Minute))
 	if n, err := o.proactiveWorker(&admits, ended.Add(time.Minute+employeeProactiveWait+time.Second)).RunProactiveOnce(ctx); err != nil || n != 1 || admits != 2 {
 		t.Fatalf("after quiet: decided=%d admits=%d err=%v", n, admits, err)

@@ -67,6 +67,7 @@ func employeeSceneTools() []employeeloop.Tool {
 	continueNoticeSchema["description"] = "Omit to inherit the existing Task delivery constraint. An earlier file-only instruction stays effective; always does not revoke it. Set if_not_delivered only for a new explicit file-only instruction quoted from this selected source."
 	tools = append(tools, employeeloop.Tool{Name: "continue_task", Effect: true, Description: "Continue the same successfully completed task only when this source explicitly requests a further step of that same goal, such as adding its next work step, redoing, extending or adjusting its own deliverable. Inherit the originally requested execution method and constraints unless the requester explicitly changes them: actual Python/tool execution cannot be replaced by mental arithmetic just because this step is short or all input values are here. Run only the new step, not an old sleep or completed step. A question that only explains an already delivered report stays a direct answer; mere continue/total words do not justify work. A different deliverable that only uses its results, or work combining several finished tasks, is dispatch_task with builds_on, not a continuation. First read_task on its source-bound task_ref, then use the returned read_ref. Do not change the goal contract, start while running, retry failed/cancelled work, or treat thanks as work. With multiple plausible candidates clarify. A quote reply may continue only its q1-style quoted candidate. A new Run is queued under the same Task; include its acceptance reply so no extra model call is required. Omit completion_notice_policy to preserve the Task delivery constraint; always cannot revoke an earlier file-only instruction without new requester authorization.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact candidate read this wake"), "read_ref": stringField("read_ref from this wake's successful read_task"), "instruction_quote": stringField("Exact outer-message excerpt explicitly requesting this continuation"), "prompt": stringField("Current requested step preserving user constraints; do not replace the stored goal"), "reply": stringField("Briefly confirm acceptance of the requested next step and intent to handle it. The previous run and this acceptance do not prove the new execution has started. Without separate observed evidence for the new execution, do not claim it has started, is running, has stopped, or has completed. Use natural wording such as 我来继续处理，跑完发你; do not narrate internal queue or sandbox states."), "completion_notice_policy": continueNoticeSchema}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote", "prompt", "reply"}, "additionalProperties": false}})
 	tools = append(tools, employeeStopTool(), employeeCancelCollectionTool())
+	tools = append(tools, employeeParticipationTool())
 	tools = append(tools, employeeCollectionTools(source, stringField)...)
 	return append(tools, employeeMemoryTools()...)
 }
@@ -205,7 +206,16 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		} else {
 			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
 		}
+		participation, participationErr := employeeReadParticipation(ctx, tx, h.job.Scope)
+		if participationErr != nil {
+			return nil, participationErr
+		}
+		if participation.Mode == "quiet" && call.Name != "set_scene_participation" && call.Name != "stay_quiet" {
+			return nil, errors.Join(employeeloop.ErrToolRefused, errors.New("scene participation is quiet; restore it before answering or starting work"))
+		}
 		switch call.Name {
+		case "set_scene_participation":
+			result, err = h.setParticipation(ctx, tx, source, env, call)
 		case "stay_quiet":
 			if len(call.Arguments) != 0 {
 				err = errors.New("stay_quiet accepts no arguments")
