@@ -67,11 +67,9 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 // claim-time execution guidance; it never changes persisted input or replay keys.
 const employeeDirectOutputInstruction = `## Output
 
-Your final assistant text is the user-facing reply. The Host sends it to the originating conversation for both success and failure, applying the requester's explicit file-only/no-summary policy after verifying delivery.
-Do not call dws-rpc final or reply, or send another DWS message to post this same completion/error text before returning it. A tool send followed by final assistant text would produce two replies.
-Continue to deliver explicitly requested files and proactive messages to their requested destinations; this ownership rule does not prohibit those actions.
-If the employee-progress report_progress tool is available, use it for meaningful non-terminal progress of this task instead of sending that same progress yourself. Its accepted receipt only means the candidate was saved; the EmployeeLoop decides whether to show it. Keep reports concrete and readable, omit thinking, raw tool dumps, secrets and unsupported percentages. Reuse the same report_id on retries. It does not finish work or request a blocking human decision. Final output and requested files remain separate.
-Keep it concise: state the requested result or actionable failure. Do not list internal tools, commands, local paths, receipt IDs or debugging steps unless the requester explicitly asks for them.`
+Return a concise result or actionable failure as final assistant text. The Host delivers it to the originating conversation, respecting verified file-only/no-summary requests; do not send the same reply through tools.
+Deliver explicitly requested files and proactive messages to their requested destinations. Only verified receipts prove file delivery; local paths are not delivered files.
+If the employee-progress report_progress tool is available, use it for meaningful non-terminal progress of this task instead of sending that same progress yourself. Its accepted receipt only means the candidate was saved; the EmployeeLoop decides whether to show it. Keep reports concrete and readable, omit thinking, raw tool dumps, secrets and unsupported percentages. Reuse the same report_id on retries. It does not finish work or request a blocking human decision. Final output and requested files remain separate.`
 
 func employeeDirectPrompt(compiled string) string {
 	return compiled + "\n\n" + employeeDirectOutputInstruction
@@ -81,10 +79,8 @@ func employeeDirectPrompt(compiled string) string {
 // scene routine occurrence: the routine's own end notice is the only sender.
 const employeeRoutineOutputInstruction = `## Output
 
-This is one run of a scene routine. Your final assistant text is this run's result: the Host posts a start notice and an end notice into the routine's scene and attaches your final output to the end notice, for both success and failure.
-Do not call dws-rpc final or reply, and do not send the result to the routine's scene yourself; that would post it twice.
-Deliver files or messages to other destinations only when the routine's instructions explicitly ask for them.
-Keep it concise: state the result or an actionable failure. Do not list internal tools, commands, local paths, receipt IDs or debugging steps.`
+Return a concise result or actionable failure as final assistant text. The Host posts this routine's start and end notices, including the result; do not send it to the routine's scene yourself.
+Deliver files or messages to other destinations only when explicitly requested by the routine. Only verified receipts prove file delivery; local paths are not delivered files.`
 
 func employeeAutomationPrompt(compiled string, origin service.AutomationOrigin) string {
 	switch origin.Kind() {

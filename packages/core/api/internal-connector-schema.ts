@@ -225,6 +225,8 @@ export interface ContextGitHubInstallation {
   repositories: ContextGitHubRepository[];
   repositoryCount: number;
   repositoriesTruncated: boolean;
+  /** Write grants this installation still lacks: contents, pull_requests, issues. */
+  missingPermissions: string[];
 }
 
 /** Installations of the GitHub App for one scene, org, or person credential. */
@@ -271,6 +273,7 @@ export const ContextGitHubInstallationsSchema = z
             .default([]),
           repository_count: z.number().int().nonnegative().optional().default(0),
           repositories_truncated: z.boolean().optional().default(false),
+          missing_permissions: z.array(z.string()).optional().default([]),
         }),
       )
       .default([]),
@@ -295,6 +298,7 @@ export const ContextGitHubInstallationsSchema = z
         ),
         repositoryCount: item.repository_count,
         repositoriesTruncated: item.repositories_truncated,
+        missingPermissions: item.missing_permissions,
       })),
       error: value.error,
       truncated: value.truncated,

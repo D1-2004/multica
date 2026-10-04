@@ -1153,6 +1153,19 @@ function OAuthConnectionControl({
   );
 }
 
+function labelGitHubMissingPermission(code: string): string {
+  switch (code) {
+    case "contents:write":
+      return "Contents 写";
+    case "pull_requests:write":
+      return "Pull requests 写";
+    case "issues:write":
+      return "Issues 写";
+    default:
+      return "";
+  }
+}
+
 function GitHubInstallLink({ url, label }: { url: string; label: string }) {
   if (!url) return null;
   return (
@@ -1252,6 +1265,13 @@ function GitHubAppInstallations({
                   </ul>
                 ) : null}
                 {item.repositoriesTruncated ? <p>{t(($) => $.context_config.install_repos_truncated)}</p> : null}
+                {(item.missingPermissions ?? []).length > 0 ? (
+                  <p>
+                    {t(($) => $.context_config.install_permission_notice, {
+                      missing: item.missingPermissions.map(labelGitHubMissingPermission).filter(Boolean).join("、"),
+                    })}
+                  </p>
+                ) : null}
               </li>
             ))}
             </ul>

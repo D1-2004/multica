@@ -41,11 +41,13 @@ Langfuse 前台 trace 名为 `employee_loop`，持久 job ID 用作 trace ID；�
 
 EmployeeTask、Run 与 agent_task_queue ID 独立。Task 保留定义和追加记录；Direct 使用已有队列、执行器、消息、usage 和轨迹，不创建 Issue 或永久 Autopilot。Work Object Compiler 使用真实 source、Host scope/principal、完整约束和实际 ContextUsed 组装执行输入，不新增模型请求或通用配置快照。
 
-Direct 的模型可见执行面只装配岗位原文、工作区与组织/场域/个人上下文、实际技能以及简短执行和结果约束。不会自动加入通用 Multica Runtime 命令目录、Issue/Chat/Autopilot 工作流、Mika 系统层或 OKR 标签指令。显式绑定的工作区与场域技能保留原名和内容，包括用户自定义的 `multica-` 名称；claim 内联技能和 bundle 补拉共用执行面策略，DWS 身份规则与 `config-qwen-tag-scene` 仍保留。
+Direct 的稳定执行面只装配岗位原文、工作区与组织/场域/个人上下文和实际技能。不会自动加入通用 Multica Runtime 命令目录、Issue/Chat/Autopilot 工作流、Mika 系统层、OKR 标签指令或 Multica 的执行/输出引导。显式绑定的工作区与场域技能保留原名和内容，包括用户自定义的 `multica-` 名称；claim 内联技能和 bundle 补拉共用执行面策略，DWS 身份规则与 `config-qwen-tag-scene` 仍保留。
 
 Direct 不自动挂载通用 `multica` MCP；场域配置 MCP、内部连接器、Agent 与 Runner 自定义 MCP 继续按原权限装配。Host token、claim finalize、取消、租约、轨迹与用量通路不变。文件通过已装配的钉钉文件工具交付，只有验证过的回执才可称为已送达，不能把沙箱本地路径当成用户可打开的文件。
 
 Direct claim 在原工作包末尾追加明确的 Output 合同：最终 assistant 文本就是用户回复，成功和失败均由 Host 发送到来源会话，执行器不得先调用 DWS `final/reply` 再重复报告。最终文本保持简短，除非用户要求，不列内部工具、命令、本地路径或回执 ID；用户明确要求的文件和其他目标的主动消息仍可执行。 成功且有文本输出时，Host 保留脱敏后的原输出与格式，不加固定结果前缀；空输出仍有完成说明。失败、取消以及文件送达未知或失败所需的状态说明保持原合同，原生文件已验证送达后的静音策略不变。
+
+Direct 不再额外包一层 Multica 开场或在稳定提示词中重复输出规则。工作包末尾保留最小 Output 合同，说明 Host 负责终态结果、避免工具重复发送和显式交付的边界。Tag 岗位提示词只描述岗位、表达和能力选择，不要求自主发送进度或最终答复，不内嵌工具定位与命令清单；通过实际 MCP 工具和技能获取操作说明。提示词收敛不改变拼装、能力、授权或协议。本地合同检查覆盖原工作包及岗位原文保留、没有平台引导和普通任务不受影响；真实模型是否仍误发需候选 Runtime 的 Direct/例行任务 canary 验证。
 
 可信 `dingtalk_message_policy` 仅在 Direct claim 带 `final_text_owner=host`。支持该可选字段的 Daemon 必须在 claim 解码后完整传入 `MULTICA_DINGTALK_MESSAGE_POLICY`，SDK 才能对来源会话的 `final` 执行无发送守卫。缺失或未知值保持旧工具行为，普通任务不新增此字段。旧 Daemon 使用固定结构解码，会丢弃未知字段，因此硬守卫交付须切换到包含该类型字段的新候选 Runtime，不能声称只有服务器升级就完成了协议交付。该所有权不替代原生文件的真实送达验证，也不根据任意文字回执抑制 Host。
 

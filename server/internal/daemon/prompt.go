@@ -154,7 +154,7 @@ func BuildPrompt(task Task, provider string) string {
 
 func buildPromptBody(task Task, provider string) string {
 	if task.DirectTaskPrompt != "" {
-		return "This is a Direct employee task. Complete the instructions below. Your final assistant output is captured automatically as this run’s result.\n\n" + task.DirectTaskPrompt + "\n"
+		return task.DirectTaskPrompt + "\n"
 	}
 	if task.ChatSessionID != "" {
 		return buildChatPromptForProvider(task, provider)

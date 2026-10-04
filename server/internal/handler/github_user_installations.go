@@ -52,7 +52,9 @@ type githubInstallationRepository struct {
 }
 
 // githubUserInstallationView is one installation the stored token can use.
-// It never carries a token, an installation access token, or a permissions blob.
+// It never carries a token, an installation access token, or the raw
+// permissions object. missing_permissions is only the three write grants the
+// connector still needs, so the configure page can ask an admin to approve.
 type githubUserInstallationView struct {
 	ID                    int64                          `json:"id"`
 	AccountLogin          string                         `json:"account_login"`
@@ -62,6 +64,7 @@ type githubUserInstallationView struct {
 	Repositories          []githubInstallationRepository `json:"repositories"`
 	RepositoryCount       int                            `json:"repository_count"`
 	RepositoriesTruncated bool                           `json:"repositories_truncated,omitempty"`
+	MissingPermissions    []string                       `json:"missing_permissions,omitempty"`
 }
 
 type githubUserInstallationsResponse struct {
@@ -80,10 +83,11 @@ type githubUserInstallationsResponse struct {
 }
 
 type githubUserInstallationPayload struct {
-	ID                  int64   `json:"id"`
-	SuspendedAt         *string `json:"suspended_at"`
-	RepositorySelection string  `json:"repository_selection"`
-	HTMLURL             string  `json:"html_url"`
+	ID                  int64           `json:"id"`
+	SuspendedAt         *string         `json:"suspended_at"`
+	RepositorySelection string          `json:"repository_selection"`
+	HTMLURL             string          `json:"html_url"`
+	Permissions         json.RawMessage `json:"permissions"`
 	Account             struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
@@ -313,6 +317,7 @@ func parseGitHubUserInstallations(body []byte) (parsedGitHubUserInstallations, e
 			RepositorySelection: githubRepositorySelection(item.RepositorySelection),
 			SettingsURL:         safeGitHubSettingsURL(item.HTMLURL),
 			Repositories:        emptyGitHubRepos(),
+			MissingPermissions:  missingGitHubWrites(item.Permissions),
 		})
 	}
 	return parsedGitHubUserInstallations{

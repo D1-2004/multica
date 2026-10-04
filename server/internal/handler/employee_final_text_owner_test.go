@@ -47,12 +47,17 @@ func TestEmployeeDirectPromptOwnsFinalTextWithoutBlockingRequestedDeliveries(t *
 	if !strings.HasPrefix(got, compiled+"\n\n") || !strings.HasSuffix(got, employeeDirectOutputInstruction) {
 		t.Fatal("source prompt changed or final ownership is not last", got)
 	}
-	for _, want := range []string{"final assistant text is the user-facing reply", "both success and failure", "Do not call dws-rpc final or reply", "explicitly requested files", "proactive messages", "Keep it concise", "internal tools"} {
+	for _, want := range []string{"result or actionable failure as final assistant text", "The Host delivers it", "verified file-only/no-summary requests", "do not send the same reply through tools", "explicitly requested files", "proactive messages", "verified receipts", "local paths are not delivered files"} {
 		if !strings.Contains(got, want) {
 			t.Fatal("output contract missing", want)
 		}
 	}
 	if strings.Contains(got, "no final assistant output") {
 		t.Fatal("failures could disappear")
+	}
+	for _, want := range []string{"result or actionable failure as final assistant text", "The Host posts this routine's start and end notices", "do not send it to the routine's scene yourself", "only when explicitly requested by the routine", "verified receipts"} {
+		if !strings.Contains(employeeRoutineOutputInstruction, want) {
+			t.Fatal("routine output contract missing", want)
+		}
 	}
 }
