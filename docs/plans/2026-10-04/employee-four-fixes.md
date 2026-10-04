@@ -32,3 +32,7 @@
 3. 提醒事实：短有截止收集，两真人回答后汇总；process_facts、答复时刻、真实IM结果和叙事一致。若没有实际提醒，不能签真实催促后叙事通过；最多短等待，不推进30min剧本。
 4. 安静：原G08群，发起者要求保持安静→异账号引用/@（完整短窗口无回复，Job Quiet/0模型）→本人恢复→重新回应；收尾确保active。
 不变更routine；若必须临时pause，先存原值、结束恢复并GET回读。仅精确清理本轮新memory/collection，不抹原失败历史；控制active回读，演员租约释放。IM/API/SLS/LF分面保存EMPLOYEE-FOUR-FIXES-PRE-20261004并逐项更新唯一表。
+
+
+## 部署与短E2E最终回填（10:30）
+已一次发布source11d6eb5061/release74802f1829/run3110373861，10:00:29成功，两live epoch18；真实短测完成，见[报告](employee-four-fixes-pre-report.md)。新Task原场域FAIL，TaskWake过滤/短收集/安静恢复已证；记忆lookup与删除确认仍不一致。业务消息10:25停止，恢复/精确清理完成，不继续自动修复或发布，不签实际催促/全R5。

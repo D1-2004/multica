@@ -104,3 +104,5 @@ LF 用本仓 `inspect-langfuse` / `inspect-langfuse-trace` 和 `scripts/query-la
 当前状态唯一入口见 [执行表](employee-delivery-execution.md)，本轮结论见 [最终验收报告](plans/2026-10-03/employee-loop-backend-delivery/23-acceptance-report.md)；15接续核对与11执行板仅作历史沿革。具体账号、群、run、runtime、marker 以当波 manifest 的实时读取为准，不能从个人 skill 永久抄固定值。
 
 最近独立修复批次：[四项局部修复交付报告](plans/2026-10-04/employee-four-fixes-report.md)。当前版本及部署事实仍以[唯一执行表](employee-delivery-execution.md)为准，不能把本地候选当已发布。
+
+本轮发布及真实短验收：[部署与简单E2E报告](plans/2026-10-04/employee-four-fixes-pre-report.md)。本地修复报告为此前里程碑，不代替该波真实结果。
