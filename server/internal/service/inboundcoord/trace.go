@@ -44,6 +44,7 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		"loop":              coordinatorTraceName,
 		"coord_trace_id":    strings.TrimSpace(turn.TraceID),
 		"decision_id":       strings.TrimSpace(turn.UserDecisionRequestID),
+		"scene_id":          strings.TrimSpace(turn.SceneID),
 		"conversation_id":   strings.TrimSpace(turn.ConversationID),
 		"conversation_name": conversationName(turn),
 		"conversation_kind": kind,

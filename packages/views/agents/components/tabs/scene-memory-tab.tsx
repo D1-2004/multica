@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Link2, MessageSquare, Pencil, Users } from "lucide-react";
+import { ArrowLeft, Building2, Link2, MessageSquare, Pencil, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useDefaultLayout } from "react-resizable-panels";
 import { api } from "@multica/core/api";
@@ -29,13 +29,14 @@ import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import {
   agentSceneMemoryKeys,
+  agentSceneMemoryLoop,
   agentSceneRelationKeys,
   agentSceneMemoryOptions,
   agentSceneRelationOptions,
 } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Agent, AgentSceneMemory } from "@multica/core/types";
+import type { Agent, AgentSceneMemory, AgentMemoryLoop } from "@multica/core/types";
 import { AppLink } from "../../../navigation";
 import { useT, useTimeAgo } from "../../../i18n";
 import {
@@ -65,20 +66,30 @@ export function SceneMemoryTab({
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const isCompact = useIsCompact();
-  const showList = canEdit && agent.scene_memory_ui_enabled === true;
+  const loop = agentSceneMemoryLoop(agent.coordination_mode);
+  const showList = canEdit && loop !== null
+    && (loop === "employee" || agent.scene_memory_ui_enabled === true);
   const {
-    data: memories = [],
+    data: queriedMemories,
     isLoading,
     isError,
     refetch,
-  } = useQuery(agentSceneMemoryOptions(wsId, agent.id, showList));
+  } = useQuery(agentSceneMemoryOptions(wsId, agent.id, showList, loop ?? "coordinator"));
+  const memories = useMemo(
+    () => (queriedMemories ?? []).filter((memory) =>
+      (memory.loop ?? "coordinator") === loop
+      && memory.workspace_id === wsId && memory.agent_id === agent.id,
+    ),
+    [queriedMemories, loop, wsId, agent.id],
+  );
+  // The selected scene's scene_id.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "multica_agent_memory_layout",
   });
 
   useEffect(() => {
-    if (selectedId && !memories.some((memory) => memory.id === selectedId)) {
+    if (selectedId && !memories.some((memory) => memory.scene_id === selectedId)) {
       setSelectedId(null);
     }
   }, [selectedId, memories]);
@@ -88,11 +99,11 @@ export function SceneMemoryTab({
     if (!showList || selectedId || !firstMemory) {
       return;
     }
-    setSelectedId(firstMemory.id);
+    setSelectedId(firstMemory.scene_id);
   }, [showList, selectedId, memories]);
 
   const selected =
-    memories.find((memory) => memory.id === selectedId) ?? null;
+    memories.find((memory) => memory.scene_id === selectedId) ?? null;
 
   if (!showList) {
     return (
@@ -114,7 +125,7 @@ export function SceneMemoryTab({
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
-      onSelect={(memory) => setSelectedId(memory.id)}
+      onSelect={(memory) => setSelectedId(memory.scene_id)}
     />
   );
 
@@ -248,6 +259,14 @@ function MemoryFlagCard({
 }) {
   const { t } = useT("agents");
   const flags = useMemoryFlags(agent);
+  if (agent.coordination_mode === "employee") {
+    return (
+      <p className="border-b px-4 py-3 text-caption text-muted-foreground">
+        {t(($) => $.tab_body.memory.employee_hint)}
+      </p>
+    );
+  }
+  if (agent.coordination_mode === "unknown") return null;
   return (
     <SettingsSection description={t(($) => $.tab_body.memory.flags_hint)}>
       <SettingsCard>
@@ -283,6 +302,14 @@ export function MemoryFlagBar({
 }) {
   const { t } = useT("agents");
   const flags = useMemoryFlags(agent);
+  if (agent.coordination_mode === "employee") {
+    return (
+      <p className="border-b px-4 py-3 text-caption text-muted-foreground">
+        {t(($) => $.tab_body.memory.employee_hint)}
+      </p>
+    );
+  }
+  if (agent.coordination_mode === "unknown") return null;
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b px-4 py-2.5">
       <p className="mr-auto text-caption text-muted-foreground">
@@ -366,7 +393,8 @@ function SceneMemoryList({
   onSelect: (memory: AgentSceneMemory) => void;
 }) {
   const { t } = useT("agents");
-  const { dms, groups } = partitionSceneMemories(memories);
+  const { dms, groups } = partitionSceneMemories(memories.filter((memory) => memory.scene_kind !== "enterprise"));
+  const enterprises = memories.filter((memory) => memory.scene_kind === "enterprise");
   if (isLoading) {
     return (
       <p className="px-4 py-6 text-caption text-muted-foreground">
@@ -395,6 +423,23 @@ function SceneMemoryList({
   }
   return (
     <div className="px-2 py-2">
+      {enterprises.length > 0 ? (
+        <section className="pb-2">
+          <p className="px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground">
+            {t(($) => $.tab_body.context_builder.layer_org)}
+          </p>
+          <ul>
+            {enterprises.map((memory) => (
+              <SceneMemoryRow
+                key={memory.scene_id}
+                memory={memory}
+                selected={memory.scene_id === selectedId}
+                onSelect={onSelect}
+              />
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {dms.length > 0 ? (
         <section className="pb-2">
           <p className="px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground">
@@ -403,9 +448,9 @@ function SceneMemoryList({
           <ul>
             {dms.map((memory) => (
               <SceneMemoryRow
-                key={memory.id}
+                key={memory.scene_id}
                 memory={memory}
-                selected={memory.id === selectedId}
+                selected={memory.scene_id === selectedId}
                 onSelect={onSelect}
               />
             ))}
@@ -420,9 +465,9 @@ function SceneMemoryList({
           <ul>
             {groups.map((memory) => (
               <SceneMemoryRow
-                key={memory.id}
+                key={memory.scene_id}
                 memory={memory}
-                selected={memory.id === selectedId}
+                selected={memory.scene_id === selectedId}
                 onSelect={onSelect}
               />
             ))}
@@ -444,16 +489,20 @@ function SceneMemoryRow({
 }) {
   const { t } = useT("agents");
   const untitled =
-    memory.scene_kind === "group"
-      ? t(($) => $.tab_body.inbound.memory_untitled_group)
-      : t(($) => $.tab_body.inbound.memory_untitled_dm);
+    memory.scene_kind === "enterprise"
+      ? t(($) => $.tab_body.context_builder.layer_org)
+      : memory.scene_kind === "group"
+        ? t(($) => $.tab_body.inbound.memory_untitled_group)
+        : t(($) => $.tab_body.inbound.memory_untitled_dm);
   const title = sceneDisplayTitle(memory, untitled);
   const preview = scenePreview(memory);
   const status = memoryStatusKey(memory.status);
   const kind =
-    memory.scene_kind === "group"
-      ? t(($) => $.tab_body.inbound.memory_kind_group)
-      : t(($) => $.tab_body.inbound.memory_kind_dm);
+    memory.scene_kind === "enterprise"
+      ? t(($) => $.tab_body.context_builder.layer_org)
+      : memory.scene_kind === "group"
+        ? t(($) => $.tab_body.inbound.memory_kind_group)
+        : t(($) => $.tab_body.inbound.memory_kind_dm);
   return (
     <li>
       <button
@@ -468,7 +517,7 @@ function SceneMemoryRow({
           aria-hidden="true"
           className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
         >
-          {memory.scene_kind === "group" ? (
+          {memory.scene_kind === "enterprise" ? <Building2 className="size-3.5" /> : memory.scene_kind === "group" ? (
             <Users className="size-3.5" />
           ) : (
             <MessageSquare className="size-3.5" />
@@ -501,15 +550,38 @@ function SceneMemoryRow({
   );
 }
 
-export function SceneMemoryDetail({
+export function SceneMemoryDetail(props: {
+  agent: Agent;
+  memory: AgentSceneMemory;
+  canEdit: boolean;
+  showTitle?: boolean;
+}) {
+  const wsId = useWorkspaceId();
+  const loop = agentSceneMemoryLoop(props.agent.coordination_mode);
+  if (
+    !loop || (props.memory.loop ?? "coordinator") !== loop
+    || props.memory.agent_id !== props.agent.id || props.memory.workspace_id !== wsId
+  ) return null;
+  return (
+    <BoundSceneMemoryDetail
+      key={`${wsId}:${props.agent.id}:${loop}:${props.memory.org_id}:${props.memory.scene_id}`}
+      {...props}
+      loop={loop}
+    />
+  );
+}
+
+function BoundSceneMemoryDetail({
   agent,
   memory,
   canEdit,
+  loop,
   showTitle = true,
 }: {
   agent: Agent;
   memory: AgentSceneMemory;
   canEdit: boolean;
+  loop: AgentMemoryLoop;
   /** false inside a scene detail, whose own header already names the scene. */
   showTitle?: boolean;
 }) {
@@ -524,19 +596,26 @@ export function SceneMemoryDetail({
   useEffect(() => {
     setDraft(memory.memory_text);
     setEditing(false);
-  }, [memory.id, memory.memory_revision, memory.memory_text]);
+    setConfirm(null);
+  }, [memory.scene_id, memory.memory_revision, memory.memory_text]);
   const { data: relations = [], isLoading: relationsLoading } = useQuery(
-    agentSceneRelationOptions(wsId, agent.id, memory.scene_key, true),
+    agentSceneRelationOptions(wsId, agent.id, memory.scene_id, loop === "coordinator"),
   );
+  const selection = {
+    loop,
+    scene_id: memory.scene_id,
+    org_id: memory.org_id,
+    expected_revision: memory.memory_revision,
+  };
   const save = useMutation({
     mutationFn: () =>
-      api.updateAgentSceneMemory(agent.id, memory.id, {
+      api.updateAgentSceneMemory(agent.id, memory.scene_id, {
         memory_text: draft,
-        expected_revision: memory.memory_revision,
-      }),
+        ...selection,
+      }, loop),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: agentSceneMemoryKeys.list(wsId, agent.id),
+        queryKey: agentSceneMemoryKeys.list(wsId, agent.id, loop),
       });
       setEditing(false);
       toast.success(t(($) => $.tab_body.inbound.memory_saved));
@@ -546,15 +625,15 @@ export function SceneMemoryDetail({
     },
   });
   const reset = useMutation({
-    mutationFn: () => api.resetAgentSceneMemory(agent.id, memory.id),
+    mutationFn: () => api.resetAgentSceneMemory(agent.id, memory.scene_id, selection),
     onSuccess: async () => {
       setConfirm(null);
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: agentSceneMemoryKeys.list(wsId, agent.id),
+          queryKey: agentSceneMemoryKeys.list(wsId, agent.id, loop),
         }),
         queryClient.invalidateQueries({
-          queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+          queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_id),
         }),
       ]);
       toast.success(t(($) => $.tab_body.inbound.memory_reset_done));
@@ -564,11 +643,11 @@ export function SceneMemoryDetail({
     },
   });
   const clearRelations = useMutation({
-    mutationFn: () => api.clearAgentSceneRelations(agent.id, memory.id),
+    mutationFn: () => api.clearAgentSceneRelations(agent.id, memory.scene_id, selection),
     onSuccess: async () => {
       setConfirm(null);
       await queryClient.invalidateQueries({
-        queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+        queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_id),
       });
       toast.success(t(($) => $.tab_body.inbound.relations_cleared));
     },
@@ -577,14 +656,18 @@ export function SceneMemoryDetail({
     },
   });
   const untitled =
-    memory.scene_kind === "group"
-      ? t(($) => $.tab_body.inbound.memory_untitled_group)
-      : t(($) => $.tab_body.inbound.memory_untitled_dm);
+    memory.scene_kind === "enterprise"
+      ? t(($) => $.tab_body.context_builder.layer_org)
+      : memory.scene_kind === "group"
+        ? t(($) => $.tab_body.inbound.memory_untitled_group)
+        : t(($) => $.tab_body.inbound.memory_untitled_dm);
   const title = sceneDisplayTitle(memory, untitled);
   const kind =
-    memory.scene_kind === "group"
-      ? t(($) => $.tab_body.inbound.memory_kind_group)
-      : t(($) => $.tab_body.inbound.memory_kind_dm);
+    memory.scene_kind === "enterprise"
+      ? t(($) => $.tab_body.context_builder.layer_org)
+      : memory.scene_kind === "group"
+        ? t(($) => $.tab_body.inbound.memory_kind_group)
+        : t(($) => $.tab_body.inbound.memory_kind_dm);
   const status = memoryStatusKey(memory.status);
   const statusLabel =
     status === "pending"
@@ -597,10 +680,9 @@ export function SceneMemoryDetail({
             ? t(($) => $.tab_body.inbound.status_blocked)
             : t(($) => $.tab_body.inbound.status_clean);
   const dirty = draft !== memory.memory_text;
-  const sections = visibleMemorySections(
-    memory.memory_text,
-    memory.scene_kind,
-  );
+  const sections = loop === "employee"
+    ? (memory.memory_text.trim() ? [{ heading: "", body: memory.memory_text }] : [])
+    : visibleMemorySections(memory.memory_text, memory.scene_kind);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -629,7 +711,7 @@ export function SceneMemoryDetail({
         </div>
         {canEdit && !editing ? (
           <div className="flex shrink-0 gap-2">
-            <Button
+            {loop === "coordinator" ? <Button
               type="button"
               size="sm"
               variant="outline"
@@ -638,7 +720,7 @@ export function SceneMemoryDetail({
             >
               <Pencil className="size-3.5" aria-hidden="true" />
               {t(($) => $.tab_body.inbound.memory_edit)}
-            </Button>
+            </Button> : null}
             <Button
               type="button"
               size="sm"
@@ -653,6 +735,7 @@ export function SceneMemoryDetail({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <section className="px-6 py-6">
+          {memory.truncated === true ? <p className="mb-3 text-caption text-muted-foreground">{t(($) => $.tab_body.memory.employee_truncated)}</p> : null}
           {editing ? (
             <div className="space-y-3">
               <label
@@ -707,7 +790,7 @@ export function SceneMemoryDetail({
                       {section.heading}
                     </h2>
                   ) : null}
-                  {isEmptyMemoryBody(section.body) || !section.body ? (
+                  {(loop === "coordinator" && isEmptyMemoryBody(section.body)) || !section.body ? (
                     <p className="text-body text-muted-foreground">
                       {t(($) => $.tab_body.inbound.memory_empty_section)}
                     </p>
@@ -721,7 +804,7 @@ export function SceneMemoryDetail({
             </div>
           )}
         </section>
-        <section className="border-t px-6 py-6">
+        {loop === "coordinator" ? <section className="border-t px-6 py-6">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-1.5 text-caption font-medium text-muted-foreground">
               <Link2 className="size-3.5" aria-hidden="true" />
@@ -779,7 +862,7 @@ export function SceneMemoryDetail({
               })}
             </ul>
           )}
-        </section>
+        </section> : null}
       </div>
       <AlertDialog
         open={confirm !== null}
@@ -797,7 +880,7 @@ export function SceneMemoryDetail({
             <AlertDialogDescription>
               {confirm === "clear"
                 ? t(($) => $.tab_body.inbound.relations_clear_confirm)
-                : t(($) => $.tab_body.inbound.memory_reset_confirm)}
+                : loop === "employee" ? t(($) => $.tab_body.memory.employee_reset_confirm) : t(($) => $.tab_body.inbound.memory_reset_confirm)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

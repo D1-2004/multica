@@ -37,6 +37,13 @@ type AutopilotService struct {
 	TxStarter      TxStarter
 	Bus            *events.Bus
 	TaskSvc        *TaskService
+	// SceneRoutines binds scene routine autopilots to their Agent work
+	// scene; nil leaves every autopilot ordinary. When it also implements
+	// EmployeeRoutineHost, routines of employee-mode agents run as
+	// EmployeeTask Direct executions (employee_routine_task.go).
+	SceneRoutines SceneRoutines
+	// employeeRoutineFault injects write-boundary failures in tests.
+	employeeRoutineFault func(stage string) error
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
@@ -172,9 +179,17 @@ func (s *AutopilotService) AdmitAutopilotWebhookDelivery(
 		return nil, fmt.Errorf("admit webhook delivery: lookup existing run: %w", err)
 	}
 
+	s, routineSkip, err := s.withSceneRoutine(ctx, autopilot)
+	if err != nil {
+		return nil, fmt.Errorf("admit webhook delivery: scene routine context: %w", err)
+	}
 	// Webhook admission has no member actor → automation principal (rule_owner);
 	// the per-run reason code is not surfaced to a human here, so it is dropped.
-	if reason, _, skip := s.shouldSkipDispatch(ctx, autopilot, pgtype.UUID{}); skip {
+	reason, _, skip := s.shouldSkipDispatch(ctx, autopilot, pgtype.UUID{})
+	if routineSkip != "" {
+		reason, skip = routineSkip, true
+	}
+	if skip {
 		run, err := s.recordSkippedRun(
 			ctx,
 			autopilot,
@@ -372,6 +387,23 @@ func (s *AutopilotService) DispatchAutopilotForPlan(
 	}
 	plannedTS := pgtype.Timestamptz{Time: plannedAt.UTC(), Valid: true}
 
+	// A scene routine of an employee-mode agent admits the occurrence as an
+	// EmployeeTask with a frozen receipt; its replays read that receipt and
+	// never reach the partial-run recovery below.
+	if source == "schedule" {
+		if run, _, handled, err := s.dispatchEmployeeRoutine(ctx, autopilot, routineFire{TriggerID: triggerID, PlannedAt: plannedAt.UTC()}); handled {
+			return run, err
+		}
+	}
+
+	trigger, err := s.Queries.GetAutopilotTrigger(ctx, triggerID)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch for plan: load trigger: %w", err)
+	}
+	if trigger.Kind == "once" {
+		return nil, errors.New("one-shot scene schedule requires ready Employee routine admission")
+	}
+
 	// Fast path: prior attempt already created a run for this exact
 	// occurrence. The partial unique index uq_autopilot_run_trigger_planned
 	// would also reject a duplicate INSERT, but doing the lookup up
@@ -466,6 +498,21 @@ func (s *AutopilotService) dispatchAutopilot(
 	webhookDeliveryID pgtype.UUID,
 	actorUserID pgtype.UUID,
 ) (*db.AutopilotRun, dispatch.ReasonCode, error) {
+	// A manual run of an employee-mode scene routine takes the same
+	// EmployeeTask path as its schedule, recorded as manual.
+	if source == "manual" && !plannedAt.Valid && !webhookDeliveryID.Valid {
+		if run, code, handled, err := s.dispatchEmployeeRoutine(ctx, autopilot, routineFire{TriggerID: triggerID, ManualActorID: actorUserID}); handled {
+			return run, code, err
+		}
+	}
+	s, routineSkip, err := s.withSceneRoutine(ctx, autopilot)
+	if err != nil {
+		return nil, dispatch.ReasonInternalError, fmt.Errorf("scene routine context: %w", err)
+	}
+	if routineSkip != "" {
+		run, err := s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, plannedAt, webhookDeliveryID, routineSkip)
+		return run, dispatch.ReasonTargetUnavailable, err
+	}
 	if reason, code, skip := s.shouldSkipDispatch(ctx, autopilot, actorUserID); skip {
 		run, err := s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, plannedAt, webhookDeliveryID, reason)
 		return run, code, err
@@ -957,6 +1004,9 @@ func (s *AutopilotService) dispatchRunOnlyTask(ctx context.Context, ap db.Autopi
 	if notify {
 		s.TaskSvc.NotifyTaskEnqueued(ctx, task)
 	}
+	if s.SceneRoutines != nil && IsSceneRoutineContext(run.RuntimeContext) {
+		s.SceneRoutines.RoutineTaskQueued(ctx, ap, *run, task)
+	}
 
 	slog.Info("autopilot dispatched (run_only)",
 		"autopilot_id", util.UUIDToString(ap.ID),
@@ -1013,6 +1063,9 @@ func (s *AutopilotService) SyncRunFromIssue(ctx context.Context, issue db.Issue)
 func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTaskQueue) {
 	if !task.AutopilotRunID.Valid {
 		return
+	}
+	if s.SceneRoutines != nil && IsSceneRoutineContext(task.Context) {
+		defer s.SceneRoutines.RoutineTaskSettled(ctx, task)
 	}
 
 	run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)

@@ -185,6 +185,7 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // WS request/response support (MUL-4257).
 func daemonClientCapabilities() string {
 	capabilities := []string{
+		protocol.DaemonCapabilityEmployeeDirectV1,
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityTaskInstructionV1,
@@ -352,8 +353,20 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/tasks/%s/prepare-lease", runtimeID, taskID), map[string]any{}, nil)
 }
 
-func (c *Client) StartTask(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+func (c *Client) StartTask(ctx context.Context, taskID string) (int32, error) {
+	var response struct {
+		MessageSeq int32 `json:"message_seq"`
+	}
+	err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, &response)
+	// Older servers may acknowledge start with an empty body. A malformed
+	// nonempty JSON response is still an error.
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	if response.MessageSeq < 0 {
+		return 0, errors.New("invalid transcript cursor")
+	}
+	return response.MessageSeq, err
 }
 
 // MarkTaskWaitingLocalDirectory parks a freshly-dispatched task in the
@@ -376,8 +389,9 @@ func (c *Client) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID, reas
 // returns after executeAndDrain's drain wait), so the server can settle its
 // deferred chat finalization now instead of waiting out the sweeper grace
 // period (#5219). Idempotent server-side.
-func (c *Client) AckTaskCancelled(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), map[string]any{}, nil)
+func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, stopped ...bool) error {
+	confirmed := len(stopped) > 0 && stopped[0]
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), map[string]any{"process_group_stopped": confirmed}, nil)
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
@@ -390,12 +404,13 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq     int                       `json:"seq"`
+	Type    string                    `json:"type"`
+	Tool    string                    `json:"tool,omitempty"`
+	Content string                    `json:"content,omitempty"`
+	Input   map[string]any            `json:"input,omitempty"`
+	Output  string                    `json:"output,omitempty"`
+	Event   *protocol.TaskEventSource `json:"event,omitempty"`
 }
 
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {

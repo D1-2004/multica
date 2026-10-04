@@ -76,7 +76,7 @@ func TestClosedActionsStatusAndMemoryReferencesAreHostOwned(t *testing.T) {
 }
 
 func TestClosedActionsCompletionBindsCurrentResultAndScene(t *testing.T) {
-	turn := Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, IssueID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ConversationID: "cid-current", TaskResult: "查证结果：会生成两份。", TaskDeliveryContext: `{"status":"not_loaded"}`}
+	turn := Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, IssueID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", TaskResult: "查证结果：会生成两份。", TaskDeliveryContext: `{"status":"not_loaded"}`}
 	raw := completionFinishJSON(turn, "已查证，会生成两份。")
 	if d, err := parseValidatedWindowPlan(raw, turn, nil, nil); err != nil || d.Action != ActionReply || len(d.CoordinationActions) != 1 {
 		t.Fatalf("current result not accepted: %#v err=%v", d, err)

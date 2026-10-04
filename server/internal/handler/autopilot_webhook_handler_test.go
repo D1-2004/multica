@@ -482,7 +482,7 @@ func processQueuedWebhookDelivery(t *testing.T, deliveryID string) db.WebhookDel
 		if err != nil {
 			t.Fatalf("load queued delivery: %v", err)
 		}
-		if delivery.Status != deliveryStatusQueued {
+		if !webhookDeliveryPending(delivery.Status) {
 			return delivery
 		}
 		worked, err := testHandler.WebhookDeliveryWorker.ProcessNext(ctx)

@@ -26,6 +26,9 @@ function redirectLocation(
 }
 
 describe("proxy root path redirects", () => {
+  it("requires the app session before opening repository evaluation assets", () => {
+    expect(redirectLocation("/evals?tab=runtime")).toBe("https://app.multica.test/login");
+  });
   it("redirects logged-out root visitors to login before rendering the page", () => {
     expect(redirectLocation("/")).toBe("https://app.multica.test/login");
   });

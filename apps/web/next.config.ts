@@ -5,6 +5,7 @@ import {
   resolveDevDocsUrl,
   resolveDevRemoteApiUrl,
   resolveDocsUrl,
+  resolveForwardAssetPrefix,
   resolveRemoteApiUrl,
 } from "./config/runtime-urls";
 import { createMDX } from "fumadocs-mdx/next";
@@ -38,7 +39,13 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
       .filter(Boolean)
   : undefined;
 
+const forwardAssetPrefix = resolveForwardAssetPrefix(process.env);
+
 const nextConfig: NextConfig = {
+  // Next 15+ also serves this namespace locally, including next/font assets.
+  assetPrefix: forwardAssetPrefix,
+  // Keep public-file metadata aligned with the immutable CSS/font namespace.
+  env: { MULTICA_FORWARD_ASSET_PREFIX: forwardAssetPrefix ?? "" },
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
@@ -66,6 +73,10 @@ const nextConfig: NextConfig = {
         : [],
       afterFiles: remoteApiUrl
         ? [
+            {
+              source: "/evals",
+              destination: `${remoteApiUrl}/api/evals`,
+            },
             {
               source: "/api/:path*",
               destination: `${remoteApiUrl}/api/:path*`,

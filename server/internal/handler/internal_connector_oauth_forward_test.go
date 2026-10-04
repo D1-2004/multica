@@ -328,88 +328,79 @@ func TestConnectorOAuthClientNameRegistration(t *testing.T) {
 	}
 }
 
-// A 1:1 chat scene connects its person's account: the state stores the
-// person scope, the callback re-checks the dm request, and a manager who is
-// not that person cannot connect it.
-func TestContextConfigConnectionDMSceneConnectsThePerson(t *testing.T) {
+// A 1:1 chat is a scene like a group (docs/agent-scene.md): a manager
+// connects the scene's own account, stored on the scene; the person in the
+// chat connects her own account on her person scope, never on the scene.
+func TestContextConfigConnectionDMSceneConnectsTheScene(t *testing.T) {
 	f := newCatalogFixture(t)
 	f.cleanupAppScenes(t)
 	router := catalogAPIRouter(f.h)
 	ctx := context.Background()
-	const dmKey, doraStaff = "cidCatalogDora==", "staff-catalog-dora"
+	const dmScene, doraStaff = "ca7a1095-0000-4000-8000-0000000000d0", "staff-catalog-dora"
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM context_config_link WHERE agent_id = $1`, f.agentID)
 	})
 	dcr := f.storeTools(t, f.create(t, f.dcr))
 	f.offer(t, dcr.ID)
-	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, dmKey, "Dora"); err != nil {
-		t.Fatal(err)
-	}
+	registerFixedScene(t, f.agentID, catalogTestOrg, "dm", dmScene, "cidCatalogDora==", "Dora", time.Minute)
 	startPath := "/api/context-capabilities/agents/" + f.agentID + "/connections/start"
-	start := func(userID string) *httptest.ResponseRecorder {
+	start := func(userID, scopeType, key string) *httptest.ResponseRecorder {
 		return ctxcapMobile(t, router, http.MethodPost, startPath, userID, map[string]string{
-			"scope_type": contextcap.ScopeScene, "scope_key": dmKey, "connector_id": dcr.ID,
+			"scope_type": scopeType, "scope_key": key, "connector_id": dcr.ID,
 		})
 	}
-	// The workspace owner manages the agent, but nobody knows whose DM it is.
-	if rec := start(testUserID); rec.Code != http.StatusConflict || catalogErrorCode(t, rec) != contextCapErrDMPersonUnknown {
-		t.Fatalf("manager, DM of an unknown person: %d %s", rec.Code, rec.Body.String())
+	// The workspace owner manages the agent: the DM scene's own account.
+	query, cookies := f.takeAuthorizeURL(t, start(testUserID, contextcap.ScopeScene, dmScene))
+	var scopeType, scopeKey string
+	if err := testPool.QueryRow(ctx, `SELECT scope_type, scope_key FROM connector_oauth_state WHERE state_hash = $1`,
+		hashConnectorOAuthState(query.Get("state"))).Scan(&scopeType, &scopeKey); err != nil || scopeType != contextcap.ScopeScene || scopeKey != dmScene {
+		t.Fatalf("stored state scope = %q %q %v", scopeType, scopeKey, err)
+	}
+	rec := browserGet(router, ConnectorOAuthCallbackPath+"?code=good-code&state="+url.QueryEscape(query.Get("state")), cookies...)
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "connected="+url.QueryEscape(f.dcr.Slug)) {
+		t.Fatalf("manager DM connect: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	sceneKey := contextcap.CredentialBinding{WorkspaceID: testWorkspaceID, AgentID: f.agentID, ConnectorID: dcr.ID,
+		ScopeType: contextcap.ScopeScene, OrgID: catalogTestOrg, ScopeKey: dmScene}
+	if _, err := contextcap.GetCredential(ctx, testPool, sceneKey); err != nil {
+		t.Fatalf("the DM scene's account not on the scene: %v", err)
 	}
 
-	// Dora redeems the personal link minted in the DM (person and DM scene
-	// grants, as RedeemContextConfigLink writes them).
+	// Dora holds her person grant and the DM's scene grant (a personal link
+	// minted in the DM writes both).
 	dora := uuid.NewString()
-	link, err := contextcap.InsertLink(ctx, testPool, contextcap.Link{
-		TokenHash: contextcap.HashLinkToken(uuid.NewString()), WorkspaceID: testWorkspaceID, AgentID: f.agentID,
-		ScopeType: contextcap.ScopePerson, OrgID: catalogTestOrg, ScopeKey: doraStaff, ScopeTitle: "Dora", ExtraSceneKey: dmKey,
-	}, contextcap.LinkTTLPerson)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := contextcap.RedeemLink(ctx, testPool, link.TokenHash, dora); err != nil {
-		t.Fatal(err)
-	}
 	for _, grant := range []contextcap.Grant{
 		{ScopeType: contextcap.ScopePerson, ScopeKey: doraStaff},
-		{ScopeType: contextcap.ScopeScene, ScopeKey: dmKey},
+		{ScopeType: contextcap.ScopeScene, ScopeKey: dmScene},
 	} {
 		grant.UserID, grant.WorkspaceID, grant.AgentID, grant.OrgID, grant.ScopeTitle, grant.Source = dora, testWorkspaceID, f.agentID, catalogTestOrg, "Dora", contextcap.GrantSourceAgentLink
 		if _, err := contextcap.UpsertGrant(ctx, testPool, grant, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if rec := start(testUserID); rec.Code != http.StatusForbidden || catalogErrorCode(t, rec) != contextCapErrPersonOnly {
-		t.Fatalf("manager, Dora's DM: %d %s", rec.Code, rec.Body.String())
+	// Holding the DM scene's grant, Dora may connect the DM scene too.
+	if rec := start(dora, contextcap.ScopeScene, dmScene); rec.Code != http.StatusOK {
+		t.Fatalf("Dora connects the DM scene: %d %s", rec.Code, rec.Body.String())
 	}
-
-	query, cookies := f.takeAuthorizeURL(t, start(dora))
-	var scopeType, scopeKey string
-	if err := testPool.QueryRow(ctx, `SELECT scope_type, scope_key FROM connector_oauth_state WHERE state_hash = $1`,
-		hashConnectorOAuthState(query.Get("state"))).Scan(&scopeType, &scopeKey); err != nil || scopeType != contextcap.ScopePerson || scopeKey != doraStaff {
-		t.Fatalf("stored state scope = %q %q %v", scopeType, scopeKey, err)
+	// Managing the agent reaches no one's person scope: the 1:1 chat is not
+	// a way into it.
+	if rec := start(testUserID, contextcap.ScopePerson, doraStaff); rec.Code != http.StatusForbidden {
+		t.Fatalf("manager connects Dora's person scope: %d %s", rec.Code, rec.Body.String())
 	}
-	rec := browserGet(router, ConnectorOAuthCallbackPath+"?code=good-code&state="+url.QueryEscape(query.Get("state")), cookies...)
+	query, cookies = f.takeAuthorizeURL(t, start(dora, contextcap.ScopePerson, doraStaff))
+	rec = browserGet(router, ConnectorOAuthCallbackPath+"?code=good-code&state="+url.QueryEscape(query.Get("state")), cookies...)
 	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "connected="+url.QueryEscape(f.dcr.Slug)) {
-		t.Fatalf("Dora's DM connect: %d %q", rec.Code, rec.Header().Get("Location"))
+		t.Fatalf("Dora's own connect: %d %q", rec.Code, rec.Header().Get("Location"))
 	}
-	personKey := contextcap.CredentialBinding{WorkspaceID: testWorkspaceID, AgentID: f.agentID, ConnectorID: dcr.ID,
-		ScopeType: contextcap.ScopePerson, OrgID: catalogTestOrg, ScopeKey: doraStaff}
+	personKey := sceneKey
+	personKey.ScopeType, personKey.ScopeKey = contextcap.ScopePerson, doraStaff
 	if _, err := contextcap.GetCredential(ctx, testPool, personKey); err != nil {
 		t.Fatalf("Dora's account not in her personal scope: %v", err)
 	}
-	sceneKey := personKey
-	sceneKey.ScopeType, sceneKey.ScopeKey = contextcap.ScopeScene, dmKey
-	if _, err := contextcap.GetCredential(ctx, testPool, sceneKey); err == nil {
-		t.Fatal("Dora's account stored on the DM scene key")
-	}
-	bindings, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, f.agentID, contextcap.ScopePerson, catalogTestOrg, doraStaff)
-	if err != nil || len(bindings) != 1 || !bindings[0].Enabled || bindings[0].ResourceID != dcr.ID {
-		t.Fatalf("Dora's personal binding = %+v %v", bindings, err)
-	}
 
-	// The callback re-checks the DM request: once Dora's grants are gone,
-	// a connect she started is refused.
-	query, cookies = f.takeAuthorizeURL(t, start(dora))
+	// The callback re-checks the request: once Dora's grants are gone, a
+	// connect she started is refused.
+	query, cookies = f.takeAuthorizeURL(t, start(dora, contextcap.ScopePerson, doraStaff))
 	if _, err := testPool.Exec(ctx, `DELETE FROM context_config_grant WHERE agent_id = $1 AND user_id = $2`, f.agentID, dora); err != nil {
 		t.Fatal(err)
 	}

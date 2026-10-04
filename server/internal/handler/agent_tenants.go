@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/tag"
 )
 
 // Admin tenant and Context Builder API (docs/context-capabilities.md §1.3,
@@ -31,6 +32,7 @@ const (
 // Error codes of the tenant routes.
 const (
 	agentTenantErrExists      = "tenant_exists"
+	agentTenantErrTagManaged  = "tag_managed"
 	agentTenantErrIdentity    = "identity_tenant"
 	agentTenantErrInvalidOrg  = "invalid_org_id"
 	agentTenantErrInvalidName = "invalid_name"
@@ -126,9 +128,33 @@ func (h *Handler) CreateAgentTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tenant, err := contextcap.CreateTenant(ctx, h.DB, contextcap.TenantWrite{
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create the tenant")
+		return
+	}
+	defer tx.Rollback(ctx)
+	// A Tag's enterprises are its tenants, each embodied by its own employee
+	// agent. Extra organizations on the template or on an employee would
+	// bypass that one-tenant-per-employee model. The tenancy lock makes this
+	// check and the insert atomic against the agent joining the Tag.
+	if err := tag.LockAgentTenancy(ctx, tx, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create the tenant")
+		return
+	}
+	if role, err := tag.AgentRole(ctx, tx, caller.workspaceID, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return
+	} else if role != tag.RoleNone {
+		writeErrorCode(w, http.StatusConflict, agentTenantErrTagManaged, "tenants of the tag are managed on the tag page")
+		return
+	}
+	tenant, err := contextcap.CreateTenant(ctx, tx, contextcap.TenantWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: orgID, Name: input.Name, ActorID: requestUserID(r),
 	})
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	switch {
 	case errors.Is(err, contextcap.ErrTenantExists):
 		writeErrorCode(w, http.StatusConflict, agentTenantErrExists, "this organization is already a tenant of the agent")
@@ -193,9 +219,31 @@ func (h *Handler) RenameAgentTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tenant, err := contextcap.RenameTenant(ctx, h.DB, contextcap.TenantWrite{
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rename the tenant")
+		return
+	}
+	defer tx.Rollback(ctx)
+	// Renaming the identity tenant stores a row; a Tag agent holds none (its
+	// enterprise is named on the Tag page), so it cannot outlive a rebind.
+	if err := tag.LockAgentTenancy(ctx, tx, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rename the tenant")
+		return
+	}
+	if role, err := tag.AgentRole(ctx, tx, caller.workspaceID, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return
+	} else if role != tag.RoleNone {
+		writeErrorCode(w, http.StatusConflict, agentTenantErrTagManaged, "tenants of the tag are managed on the tag page")
+		return
+	}
+	tenant, err := contextcap.RenameTenant(ctx, tx, contextcap.TenantWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: current.OrgID, Name: input.Name, ActorID: requestUserID(r),
 	})
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	switch {
 	case errors.Is(err, contextcap.ErrNotFound):
 		writeErrorCode(w, http.StatusNotFound, contextCapErrTenantNotFound, "tenant not found")
@@ -281,9 +329,10 @@ func agentScenesPage(w http.ResponseWriter, r *http.Request) (int, int, bool) {
 	return limit, offset, true
 }
 
-// ListAgentTenantGroups lists the group scenes of one tenant, newest
-// activity first: GET /api/agents/{id}/tenants/{orgId}/groups?limit=&offset=
-// → {scenes: [S], has_more}.
+// ListAgentTenantGroups lists the conversation scenes (groups and 1:1 chats,
+// docs/agent-scene.md) of one tenant, newest activity first:
+// GET /api/agents/{id}/tenants/{orgId}/groups?limit=&offset=&groups_only=
+// → {scenes: [S], has_more}. groups_only=true keeps groups only.
 func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) {
 	caller, ok := h.agentSceneAdmin(w, r)
 	if !ok {
@@ -298,8 +347,8 @@ func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	scenes, hasMore, err := contextcap.ListAgentScenes(r.Context(), h.DB, contextcap.SceneListQuery{
-		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: tenant.OrgID, IdentityOrgID: caller.orgID,
-		Limit: limit, Offset: offset, GroupsOnly: true,
+		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: tenant.OrgID,
+		Limit: limit, Offset: offset, GroupsOnly: r.URL.Query().Get("groups_only") == "true",
 	})
 	if err != nil {
 		slog.ErrorContext(r.Context(), "agent tenants: group list failed", "agent_id", caller.agentID, "error", err)
@@ -316,7 +365,8 @@ func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) 
 type agentTenantPersonDTO struct {
 	StaffID string `json:"staff_id"`
 	Title   string `json:"title"`
-	// DMSceneKey is the person's 1:1 chat with the agent ("" when unknown).
+	// DMSceneKey is the scene_id of the person's 1:1 chat with the agent
+	// ("" when unknown); the chat is its own scene, not this person.
 	DMSceneKey   string `json:"dm_scene_key"`
 	LastActiveAt string `json:"last_active_at"`
 }
@@ -341,15 +391,15 @@ func (h *Handler) ListAgentTenantPersons(w http.ResponseWriter, r *http.Request)
 	}
 	out := make([]agentTenantPersonDTO, 0, len(persons))
 	for _, p := range persons {
-		out = append(out, agentTenantPersonDTO{StaffID: p.StaffID, Title: p.Title, DMSceneKey: p.DMSceneKey, LastActiveAt: contextCapTime(p.LastActiveAt)})
+		out = append(out, agentTenantPersonDTO{StaffID: p.StaffID, Title: p.Title, DMSceneKey: p.DMSceneID, LastActiveAt: contextCapTime(p.LastActiveAt)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"persons": out})
 }
 
 // agentContextNode is one node of the 场域 tree resolved for a Context
 // Builder call: the tenant, the agent working in the tenant's org, the
-// effective scope (a 1:1 chat's is its person's) and the scene shown with
-// it (the group, or the person's 1:1 chat).
+// node's scope and the scene shown with it (the scene of a scene node, or a
+// person's 1:1 chat scene).
 type agentContextNode struct {
 	caller agentSceneCaller
 	tenant contextcap.Tenant
@@ -359,13 +409,12 @@ type agentContextNode struct {
 }
 
 // agentContextNodeFromRoute resolves /tenants/{orgId}/context/{scopeType}/{scopeKey}
-// for need: org (scopeKey = orgId), scene (a group or 1:1 chat the agent
-// has seen in that org; a 1:1 chat maps to its person) or person (a person
-// known for that org). Managers read every node; what they may change is
-// contextCapScopeRights (org and group scopes, not someone else's person
+// for need: org (scopeKey = orgId), scene (scopeKey = a scene_id of the
+// agent in that org, a group or 1:1 chat) or person (a person known for that
+// org). Managers read every node; what they may change is
+// contextCapScopeRights (org and scene scopes, not someone else's person
 // scope). 400 for a malformed scope, 404 for an unknown tenant, scene or
-// person, 409 dm_person_unknown for a write to a 1:1 chat whose person is
-// unknown, 403 person_only for a write to someone else's person scope.
+// person, 403 person_only for a write to someone else's person scope.
 func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Request, need contextCapNeed) (agentContextNode, bool) {
 	caller, ok := h.agentSceneAdmin(w, r)
 	if !ok {
@@ -394,7 +443,7 @@ func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Reque
 			return agentContextNode{}, false
 		}
 	case contextcap.ScopeScene:
-		scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, caller.orgID, scopeKey)
+		scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, scopeKey)
 		if errors.Is(err, contextcap.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "scene not found")
 			return agentContextNode{}, false
@@ -418,8 +467,8 @@ func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Reque
 			return agentContextNode{}, false
 		}
 		personTitle = person.Title
-		if person.DMSceneKey != "" {
-			scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, caller.orgID, person.DMSceneKey)
+		if person.DMSceneID != "" {
+			scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, person.DMSceneID)
 			switch {
 			case err == nil:
 				node.scene = &scene
@@ -561,15 +610,13 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	org := node.tenant.OrgID
 	resp := agentContextNodeResponse{
 		Prompts: []agentContextPromptDTO{}, Connectors: []agentContextConnectorDTO{}, Skills: []agentContextSkillDTO{},
-		Rights: scope.Rights, CanEdit: scope.Rights.Toggle, CanConnect: scope.Rights.Connect && !scope.PersonUnknown,
+		Rights: scope.Rights, CanEdit: scope.Rights.Toggle, CanConnect: scope.Rights.Connect,
 		Effective: agentContextEffectiveDTO{
 			Prompts: []agentContextEffectivePromptDTO{}, Connectors: []agentContextEffectiveResourceDTO{},
 			Skills: []agentContextEffectiveResourceDTO{}, MCPServers: []agentContextEffectiveServerDTO{},
 		},
 	}
-	if !scope.PersonUnknown {
-		resp.Scope = &agentContextScopeDTO{Type: scope.ScopeType, OrgID: org, Key: scope.ScopeKey, Title: scope.ScopeTitle}
-	}
+	resp.Scope = &agentContextScopeDTO{Type: scope.ScopeType, OrgID: org, Key: scope.ScopeKey, Title: scope.ScopeTitle}
 	if node.scene != nil {
 		view := agentSceneView(*node.scene)
 		resp.Scene = &view
@@ -581,13 +628,11 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	}
 	// The layers of the node: org, then the node's own scope.
 	selection := contextcap.LayerSelection{OrgID: org, Org: true}
-	if !scope.PersonUnknown {
-		switch scope.ScopeType {
-		case contextcap.ScopeScene:
-			selection.SceneKey = scope.ScopeKey
-		case contextcap.ScopePerson:
-			selection.PersonKey = scope.ScopeKey
-		}
+	switch scope.ScopeType {
+	case contextcap.ScopeScene:
+		selection.SceneID = scope.ScopeKey
+	case contextcap.ScopePerson:
+		selection.PersonKey = scope.ScopeKey
 	}
 	layers, err := contextcap.LoadLayers(ctx, h.DB, caller.workspaceID, caller.agentID, selection)
 	if err != nil {
@@ -600,7 +645,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 
 	enabled := map[string]bool{}
 	hints := map[string]string{}
-	if !scope.PersonUnknown {
+	{
 		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, caller.workspaceID, caller.agentID, scope.ScopeType, org, scope.ScopeKey)
 		if err != nil {
 			return resp, err
@@ -665,7 +710,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 			}
 			if app, ok := catalogApp(c.CatalogSlug); ok {
 				item.InstallURL = catalogAppInstallURL(app)
-				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailable(app)
+				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailableFor(ctx, caller.workspaceID, app)
 			}
 			if hint, connected := hints[c.ID]; connected {
 				item.Credential.Connected = true
@@ -1047,7 +1092,6 @@ func (h *Handler) StartAgentContextConnection(w http.ResponseWriter, r *http.Req
 		connectorOAuthScope: connectorOAuthScope{
 			WorkspaceID: node.caller.workspaceID, ConnectorID: uuidToString(connectorUUID), UserID: requestUserID(r),
 			ScopeType: node.scope.ScopeType, AgentID: node.caller.agentID, OrgID: node.tenant.OrgID, ScopeKey: node.scope.ScopeKey,
-			SceneKey: node.scope.DirectSceneKey,
 		},
 		ReturnTo: input.ReturnTo,
 	})

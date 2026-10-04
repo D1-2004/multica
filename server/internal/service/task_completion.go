@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,6 +61,36 @@ func taskExecutionUpdateResultMessage(result []byte) string {
 		return ""
 	}
 	return redact.Text(util.UnescapeBackslashEscapes(payload.Output))
+}
+
+var taskResultJSONString = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// taskExecutionCanonicalResult decodes only the transport envelope. Machine
+// output is not display text: unescaping it again destroys JSON string values.
+// Redact string tokens without rebuilding objects, so duplicate fields and
+// unknown control fields remain visible to the protocol's strict decoder.
+func taskExecutionCanonicalResult(result []byte) string {
+	var payload protocol.TaskCompletedPayload
+	if json.Unmarshal(result, &payload) != nil {
+		return ""
+	}
+	if !json.Valid([]byte(payload.Output)) {
+		// Scrubbing can turn malformed JSON (for example a multiline PEM value)
+		// into valid JSON. Return non-protocol text instead, so it stays rejected.
+		return "Invalid structured execution result."
+	}
+	return taskResultJSONString.ReplaceAllStringFunc(payload.Output, func(token string) string {
+		var value string
+		if json.Unmarshal([]byte(token), &value) != nil {
+			return token
+		}
+		clean := redact.Text(value)
+		if clean == value {
+			return token
+		}
+		encoded, _ := json.Marshal(clean) // strings are always JSON encodable
+		return string(encoded)
+	})
 }
 
 func freezeTaskExecutionUpdateResultMessage(
@@ -159,12 +190,23 @@ func taskCompletionRequestID(target taskCompletionTarget) string {
 func (s *TaskService) enqueueTaskCompletionInTx(
 	ctx context.Context,
 	qtx *db.Queries,
+	tx pgx.Tx,
 	task db.AgentTaskQueue,
 	status string,
 	result []byte,
 	errMessage string,
 	failureReason string,
 ) (bool, error) {
+	if err := s.recordEmployeeRunInTx(ctx, tx, task, status, result, errMessage); err != nil {
+		return false, fmt.Errorf("record employee run: %w", err)
+	}
+	// A scene routine run posts its end notice into its scene in the same
+	// terminal transaction (docs/context-capabilities.md §9).
+	if s.SceneRoutines != nil && task.AutopilotRunID.Valid && IsSceneRoutineContext(task.Context) {
+		if err := s.SceneRoutines.RoutineTaskFinished(ctx, tx, task, status, result, errMessage); err != nil {
+			return false, fmt.Errorf("scene routine end notice: %w", err)
+		}
+	}
 	commentRows, err := qtx.ListTaskCommentCompletionTargets(ctx, task.ID)
 	if err != nil {
 		return false, err
@@ -195,8 +237,12 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			})
 		}
 	}
+	aliasesQueued, aliasErr := enqueueSteerCallbackCompletions(ctx, qtx, task, status, result, errMessage, failureReason)
+	if aliasErr != nil {
+		return false, aliasErr
+	}
 	if len(targets) == 0 {
-		return false, nil
+		return aliasesQueued, nil
 	}
 	executionSummary, err := BuildTaskExecutionSummary(ctx, qtx, task)
 	if err != nil {
@@ -214,7 +260,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			return false, replyErr
 		}
 	}
-	queued := false
+	queued := aliasesQueued
 	for _, target := range targets {
 		lastReply := fallbackReply
 		if target.CommentID.Valid {
@@ -283,6 +329,48 @@ type failedTaskFinalization struct {
 	ExecutionUpdateReady bool
 }
 
+// retryChildForLockedTask decides one parent's logical retry operation. Every
+// caller holds the parent row lock after its workspace/chat fences; overlays
+// are prepared outside the transaction. Existing children are replay results,
+// never another insertion or notification.
+func retryChildForLockedTask(ctx context.Context, qtx *db.Queries, tx pgx.Tx, parent db.AgentTaskQueue, overlay runtimeMCPOverlayData) (*db.AgentTaskQueue, bool, error) {
+	if parent.Status != "failed" {
+		return nil, false, nil
+	}
+	child, err := qtx.GetRetryChildByParent(ctx, parent.ID)
+	if err == nil {
+		if err := observeOrDeferEmployeeIssueRetryInTx(ctx, tx, child); err != nil {
+			return nil, false, err
+		}
+		return &child, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, err
+	}
+	reason := parent.FailureReason.String
+	if !retryEligible(reason, parent) {
+		return nil, false, nil
+	}
+	var fireAt pgtype.Timestamptz
+	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
+		fireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
+	}
+	child, err = qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
+		ID:                   parent.ID,
+		FireAt:               fireAt,
+		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
+		RuntimeMcpOverlay:    overlay.Overlay,
+		RuntimeConnectedApps: overlay.ConnectedApps,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("create retry task: %w", err)
+	}
+	if err := observeOrDeferEmployeeIssueRetryInTx(ctx, tx, child); err != nil {
+		return nil, false, err
+	}
+	return &child, true, nil
+}
+
 func (s *TaskService) finalizeFailedTask(
 	ctx context.Context,
 	taskID pgtype.UUID,
@@ -307,36 +395,27 @@ func (s *TaskService) finalizeFailedTask(
 		}
 	}
 
-	err = s.runInTx(ctx, func(qtx *db.Queries) error {
+	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if IsEmployeeDirectTask(parent) || parent.IssueID.Valid {
+			if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+				return err
+			}
+		}
 		locked, lockErr := qtx.GetAgentTaskForCompletionFinalization(ctx, taskID)
 		if lockErr != nil {
 			return lockErr
 		}
 		result.Task = locked
+		reason = locked.FailureReason.String
 		if locked.Status != "failed" {
 			return nil
 		}
-		child, childErr := qtx.GetRetryChildByParent(ctx, locked.ID)
-		if childErr == nil {
-			result.Retry = &child
-			return nil
+		child, created, retryErr := retryChildForLockedTask(ctx, qtx, terminalTx, locked, retryOverlay)
+		if retryErr != nil {
+			return retryErr
 		}
-		if !errors.Is(childErr, pgx.ErrNoRows) {
-			return childErr
-		}
-
-		reason = locked.FailureReason.String
-		if retryEligible(reason, locked) {
-			child, createErr := qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-				ID:                   locked.ID,
-				RuntimeMcpOverlay:    retryOverlay.Overlay,
-				RuntimeConnectedApps: retryOverlay.ConnectedApps,
-			})
-			if createErr != nil {
-				return fmt.Errorf("create retry task: %w", createErr)
-			}
-			result.Retry = &child
-			result.RetryCreated = true
+		if child != nil {
+			result.Retry, result.RetryCreated = child, created
 			return nil
 		}
 		if locked.ChatSessionID.Valid {
@@ -350,6 +429,7 @@ func (s *TaskService) finalizeFailedTask(
 		queued, enqueueErr := s.enqueueTaskCompletionInTx(
 			ctx,
 			qtx,
+			terminalTx,
 			locked,
 			"failed",
 			locked.Result,
@@ -365,7 +445,7 @@ func (s *TaskService) finalizeFailedTask(
 	if err != nil {
 		return failedTaskFinalization{}, err
 	}
-	if result.RetryCreated && result.Retry != nil {
+	if result.RetryCreated && result.Retry != nil && result.Retry.Status == "queued" {
 		slog.Info("task auto-retry enqueued",
 			"parent_task_id", util.UUIDToString(result.Task.ID),
 			"child_task_id", util.UUIDToString(result.Retry.ID),
@@ -419,7 +499,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 			}
 			continue
 		}
-		if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
 			task, err := qtx.GetAgentTask(ctx, taskID)
 			if err != nil {
 				return err
@@ -453,6 +533,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 			queued, enqueueErr = s.enqueueTaskCompletionInTx(
 				ctx,
 				qtx,
+				terminalTx,
 				task,
 				status,
 				task.Result,

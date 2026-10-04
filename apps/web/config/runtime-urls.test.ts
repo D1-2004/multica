@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveBrowserApiBaseUrl,
+  resolveForwardAssetPrefix,
   resolveBrowserWsUrl,
   resolveDevDocsUrl,
   resolveDevRemoteApiUrl,
@@ -11,6 +12,10 @@ import {
 } from "./runtime-urls";
 
 describe("resolveRemoteApiUrl", () => {
+  it("rewrites the independent evaluation page to the backend reader", () => {
+    expect(runtimeRewriteDestination("/evals", { REMOTE_API_URL: "http://backend:8080" })).toBe("http://backend:8080/api/evals");
+    expect(runtimeRewriteDestination("/evals/", { REMOTE_API_URL: "http://backend:8080" })).toBe("http://backend:8080/api/evals");
+  });
   it("prefers REMOTE_API_URL when explicitly configured", () => {
     expect(
       resolveRemoteApiUrl({
@@ -315,5 +320,15 @@ describe("dev-only fallbacks", () => {
 
   it("falls back to the local docs port", () => {
     expect(resolveDevDocsUrl({})).toBe("http://localhost:4000");
+  });
+});
+
+describe("resolveForwardAssetPrefix", () => {
+  it("only accepts a local forwarding namespace", () => {
+    expect(resolveForwardAssetPrefix({})).toBeUndefined();
+    expect(resolveForwardAssetPrefix({ MULTICA_FORWARD_ASSET_PREFIX: "/forward/pre" })).toBe("/forward/pre");
+    for (const value of ["https://pre.example", "/forward/pre/", "/forward/pre/../../", "/forward/", "/forward/Pre", "/forward/pre_blue"]) {
+      expect(() => resolveForwardAssetPrefix({ MULTICA_FORWARD_ASSET_PREFIX: value })).toThrow();
+    }
   });
 });

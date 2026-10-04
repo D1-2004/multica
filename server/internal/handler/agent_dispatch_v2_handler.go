@@ -100,6 +100,10 @@ func buildAgentDispatchIssueFollowUpParams(
 	if len(privateContext) == 0 {
 		privateContext = dispatchRuntimeContext(command, idempotencyKey)
 	}
+	queueMode := ""
+	if command.Control != nil && command.Control.Action == "dispatch" {
+		queueMode = command.Control.QueueMode
+	}
 	return service.IssueCommentCreateParams{
 		Issue:                     issue,
 		AuthorID:                  dispatchContext.UserID,
@@ -107,6 +111,8 @@ func buildAgentDispatchIssueFollowUpParams(
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
 		ParentTaskID:              parentTaskID,
+		QueueMode:                 queueMode,
+		IdempotencyKey:            idempotencyKey,
 	}
 }
 
@@ -145,6 +151,11 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	}
 	if origin := dispatchOriginOpenMsgID(c); origin != "" {
 		payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = origin
+	}
+	if c.AgentScene != nil {
+		// SceneRef of the Agent work scene (docs/agent-scene.md); scene
+		// configuration and follow-ups read it instead of the conversation.
+		payload[protocol.AgentSceneContextKey] = c.AgentScene
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
@@ -221,6 +232,19 @@ func (h *Handler) handleAgentDispatchV2(
 	if h.handleMessageStatistics(w, r, command, dispatchContext) {
 		return
 	}
+	if command.AgentID != "" {
+		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
+		if !ok {
+			return
+		}
+		if agentID != dispatchContext.AgentID {
+			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
+			return
+		}
+	}
+	if h.admitDispatchEvent(w, r, raw, &command, dispatchContext) {
+		return
+	}
 	if h.handleObservedEvent(w, r, &command, dispatchContext) {
 		return
 	}
@@ -287,17 +311,6 @@ func (h *Handler) handleAgentDispatchV2(
 		"serverOutboundSuppressed", plan.SuppressServerOutbound,
 		"displayBytes", len(plan.Prompt.DisplayContent),
 	)
-	if command.AgentID != "" {
-		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
-		if !ok {
-			return
-		}
-		if agentID != dispatchContext.AgentID {
-			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
-			return
-		}
-	}
-
 	if command.CompletionCallback == nil && !command.ProactiveConversation {
 		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
 		return
@@ -873,8 +886,14 @@ func (h *Handler) cancelAgentDispatchIMTask(
 		}
 		return
 	}
-	if task.AgentID != dispatchContext.AgentID || !task.ChatSessionID.Valid ||
-		uuidToString(task.ChatSessionID) != command.Continuation.ChatSessionID {
+	belongs := task.ChatSessionID.Valid && uuidToString(task.ChatSessionID) == command.Continuation.ChatSessionID
+	if command.Continuation.Kind == "issue" {
+		issue, loadErr := h.Queries.GetIssue(r.Context(), task.IssueID)
+		belongs = loadErr == nil && issue.WorkspaceID == dispatchContext.WorkspaceID &&
+			issue.AssigneeType.String == "agent" && issue.AssigneeID == dispatchContext.AgentID &&
+			uuidToString(issue.ID) == command.Continuation.IssueID
+	}
+	if task.AgentID != dispatchContext.AgentID || !belongs {
 		writeError(w, http.StatusForbidden, "target task does not belong to the IM dispatch session")
 		return
 	}
@@ -907,6 +926,7 @@ func (h *Handler) cancelAgentDispatchIMTask(
 	if cancelled.Task.Status == "cancelled" {
 		status = "cancelled"
 	}
+	h.reconcileCommentsOnCompletion(r.Context(), &cancelled.Task)
 	writeJSON(w, http.StatusOK, AgentDispatchControlResponse{ControlResult: AgentDispatchControlResult{
 		Action:               "cancel",
 		Status:               status,
@@ -1394,7 +1414,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			if i == 0 {
 				createParams.AttachmentIDs = attachmentIDs(imported)
 			}
-			result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+			result, err := h.createCoordinatorIssue(r.Context(), itemCommand, dispatchContext, itemKey, createParams, service.IssueCreateOpts{
 				ActorID:          uuidToString(dispatchContext.UserID),
 				AnalyticsAgentID: uuidToString(agent.ID),
 				Platform:         "webhook",
@@ -1535,7 +1555,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		overrides,
 	)
 	createParams.AttachmentIDs = attachmentIDs(imported)
-	result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+	result, err := h.createCoordinatorIssue(r.Context(), c, dispatchContext, idempotencyKey, createParams, service.IssueCreateOpts{
 		ActorID:          uuidToString(dispatchContext.UserID),
 		AnalyticsAgentID: uuidToString(agent.ID),
 		Platform:         "webhook",
@@ -1695,10 +1715,7 @@ func coordinatorHistoryInputs(command DispatchCommand, agentID pgtype.UUID, fall
 	if command.Source.Type == "digital_employee" {
 		source = inboundcoord.SourceDigitalEmployee
 	}
-	chatType := "p2p"
-	if strings.EqualFold(strings.TrimSpace(command.Event.Data.Conversation.Type), "group") {
-		chatType = "group"
-	}
+	chatType := coordinatorChatType(command.Event.Data.Conversation.Type)
 	ids := dispatchAssocIDs(command)
 	turn := inboundcoord.Turn{
 		Source:                source,
@@ -1706,6 +1723,7 @@ func coordinatorHistoryInputs(command DispatchCommand, agentID pgtype.UUID, fall
 		ProactiveConversation: command.ProactiveConversation,
 		ChatType:              chatType,
 		AgentID:               agentID,
+		SceneID:               dispatchSceneID(command),
 		ConversationID:        ids.ConversationID,
 		PersonID:              ids.PersonID,
 		EvidenceID:            ids.EvidenceID,
@@ -1801,7 +1819,9 @@ func (h *Handler) inboundCoordinator() *inboundcoord.Coordinator {
 	if h.InboundCoordinator != nil {
 		return h.InboundCoordinator
 	}
-	return inboundcoord.New(h.LLM, h.Queries, h.Assoc)
+	c := inboundcoord.New(h.LLM, h.Queries, h.Assoc)
+	c.SetSceneLookup(coordinatorSceneLookup{h: h})
+	return c
 }
 
 const inboundResetMemoryCommand = "/reset-memory"
@@ -1849,88 +1869,67 @@ func (h *Handler) tryDispatchResetMemory(
 	}
 	ids := dispatchAssocIDs(command)
 	conversationID := ids.ConversationID
-	if conversationID != "" && !assoc.ValidSceneID(conversationID) {
+	if conversationID != "" && !assoc.ValidConversationID(conversationID) {
 		conversationID = ""
 	}
 	var closeErr error
 	closedEdges := 0
 	unlinkedEvents := 0
-	if h != nil && h.Assoc != nil && conversationID != "" {
+	sceneID := ""
+	// Reset clears the dispatch's scene: its graph links and its memory.
+	// A dispatch without a resolved scene has nothing to clear.
+	var sc db.AgentScene
+	hasScene := false
+	if h != nil && h.Queries != nil && command.AgentScene != nil {
+		found, sceneErr := dispatchScene(r.Context(), h.Queries, command, dispatchContext)
+		if sceneErr != nil {
+			closeErr = sceneErr
+		} else {
+			sc, hasScene, sceneID = found, true, uuidToString(found.ID)
+		}
+	}
+	if hasScene && h.Assoc != nil {
 		result, err := h.Assoc.CloseSceneAssociations(
 			r.Context(),
 			uuidToString(dispatchContext.WorkspaceID),
 			uuidToString(dispatchContext.AgentID),
-			conversationID,
+			sceneID,
 		)
 		closeErr = err
 		closedEdges = result.ClosedEdges
 		unlinkedEvents = result.UnlinkedEvents
 	}
-	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
-		command.Source.Type == "digital_employee" {
-		kind, title := dispatchSceneIdentity(command)
-		orgID := ""
-		var identityErr error
-		if h.Queries != nil {
-			identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
-				WorkspaceID: dispatchContext.WorkspaceID,
-				AgentID:     dispatchContext.AgentID,
-			})
-			if err == nil {
-				orgID = identity.OrgID
-			} else {
-				identityErr = err
-			}
+	if hasScene && h.SceneMemoryStore != nil && command.Source.Type == "digital_employee" {
+		oldRevision := int64(0)
+		if existing, err := h.SceneMemoryStore.Get(r.Context(), sc); err == nil {
+			oldRevision = existing.MemoryRevision
 		}
-		if orgID == "" && command.ExternalIdentity.DWS != nil {
-			orgID = strings.TrimSpace(command.ExternalIdentity.DWS.OrgID)
-		}
-		if orgID == "" && closeErr == nil {
-			if identityErr != nil {
-				closeErr = identityErr
-			} else {
-				closeErr = errors.New("scene memory identity is unavailable")
+		if _, err := h.SceneMemoryStore.Reset(r.Context(), sc, scenememory.DirtyTrigger{
+			OccurredAt: dispatchMessageOccurredAt(command),
+			EvidenceID: ids.EvidenceID,
+		}); err != nil {
+			slog.Warn("scene memory reset-memory failed",
+				"event", "scene_memory_reset",
+				"scene_id", sceneID,
+				"old_revision", oldRevision,
+				"error", err,
+			)
+			if closeErr == nil {
+				closeErr = err
 			}
-		}
-		if orgID != "" {
-			identity := scenememory.Identity{
-				WorkspaceID: dispatchContext.WorkspaceID,
-				AgentID:     dispatchContext.AgentID,
-				OrgID:       orgID,
-				SceneKey:    conversationID,
-				SceneKind:   kind,
-				SceneTitle:  title,
-			}
-			oldRevision := int64(0)
-			if existing, err := h.SceneMemoryStore.Get(r.Context(), identity); err == nil {
-				oldRevision = existing.MemoryRevision
-			}
-			if _, err := h.SceneMemoryStore.Reset(r.Context(), identity, scenememory.DirtyTrigger{
-				OccurredAt: dispatchMessageOccurredAt(command),
-				EvidenceID: ids.EvidenceID,
-			}); err != nil {
-				slog.Warn("scene memory reset-memory failed",
-					"event", "scene_memory_reset",
-					"scene_key", conversationID,
-					"old_revision", oldRevision,
-					"error", err,
-				)
-				if closeErr == nil {
-					closeErr = err
-				}
-			} else {
-				slog.Info("scene memory reset",
-					"event", "scene_memory_reset",
-					"scene_key", conversationID,
-					"old_revision", oldRevision,
-				)
-			}
+		} else {
+			slog.Info("scene memory reset",
+				"event", "scene_memory_reset",
+				"scene_id", sceneID,
+				"old_revision", oldRevision,
+			)
 		}
 	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "reset_memory",
 		"event", "inbound_reset_memory",
 		"protocol", "dispatch_command_v2",
+		"scene_id", sceneID,
 		"conversation_id", conversationID,
 		"closed_edges", closedEdges,
 		"unlinked_events", unlinkedEvents,
@@ -1939,6 +1938,7 @@ func (h *Handler) tryDispatchResetMemory(
 	if closeErr != nil {
 		slog.Error("assoc reset-memory failed",
 			"event", "inbound_reset_memory",
+			"scene_id", sceneID,
 			"conversation_id", conversationID,
 			"error", closeErr,
 		)
@@ -2174,6 +2174,9 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	keepAttachments = true
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
+	if result.PreemptedTask != nil {
+		h.reconcileCommentsOnCompletion(r.Context(), result.PreemptedTask)
+	}
 	taskID := uuidToString(result.Task.ID)
 	if coordinatorDecision != nil {
 		coordinatorDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
@@ -2212,5 +2215,12 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 		"commentFingerprint", agentDispatchIdentifierFingerprint(commentID),
 		"taskFingerprint", agentDispatchIdentifierFingerprint(taskID),
 	)
-	writeJSON(w, http.StatusCreated, AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: issueIDString}, CommentID: commentID, TaskID: taskID})
+	response := AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: issueIDString}, CommentID: commentID, TaskID: taskID}
+	if followUpParams.QueueMode == "steer" {
+		response.ControlResult = &AgentDispatchControlResult{Action: "steer", Status: "queued", TargetExternalTaskID: taskID}
+		if result.PreemptedTask != nil {
+			response.ControlResult.PreemptedExternalTaskID = uuidToString(result.PreemptedTask.ID)
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
 }

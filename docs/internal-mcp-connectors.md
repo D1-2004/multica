@@ -188,13 +188,18 @@ contact for it:
 | Slug | MCP URL | Authorization |
 | --- | --- | --- |
 | `github` | `https://api.githubcopilot.com/mcp/` | the deployment's GitHub App (`oauth_github_app`); a Personal Access Token is also accepted |
+| `slack` | `https://mcp.slack.com/mcp` | pre-registered Slack app (`oauth_preregistered`); user token via `oauth.v2.user.access`. No dynamic registration |
 | `notion` | `https://mcp.notion.com/mcp` | MCP OAuth with dynamic client registration and S256 PKCE (`oauth_dcr`) |
 | `linear` | `https://mcp.linear.app/mcp` | `oauth_dcr` |
 | `atlassian` | `https://mcp.atlassian.com/v1/mcp` | `oauth_dcr` (authorization server metadata at the MCP origin) |
 | `sentry` | `https://mcp.sentry.dev/mcp` | `oauth_dcr` |
-| `asana` | `https://mcp.asana.com/mcp` | `oauth_dcr` |
+| `asana` | `https://mcp.asana.com/v2/mcp` | pre-registered MCP app (`oauth_preregistered`); authorize and token send `resource=https://mcp.asana.com/v2` |
 | `figma` | `https://mcp.figma.com/mcp` | `oauth_dcr` (confidential client) |
 | `stripe` | `https://mcp.stripe.com/` | `oauth_dcr` |
+| `outlook` | `https://graph.microsoft.com/v1.0` | Microsoft identity platform (`oauth_preregistered`), authority `/common` (work and personal accounts). The deployment client is `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` (Azure app QwenTagPre). People do not paste a key. Tools are in-process Graph calls (`whoami`, `list_messages`, `list_events`, `list_contacts`); the MCP URL is not called |
+| `agentmail` | `https://mcp.agentmail.to/mcp` | MCP OAuth with dynamic client registration (`oauth_dcr`) on `clerk.console.agentmail.to`. The inbox REST API is API-key only; this connector uses the public MCP OAuth, so people do not paste a key |
+
+Outlook's authorize URL adds `prompt=select_account`. Its redirect URI is the production connector callback (`https://fde-workbench.dingtalk.com/api/connectors/oauth/callback`); a pre-release deployment forwards that callback back. Scene and person Outlook connects are shareable, like GitHub App installs, so a phone that opens the consent page outside the starting webview can finish. Workspace Outlook connects stay bound to the starting browser. Delegated scopes are `offline_access`, `openid`, `profile`, `email`, `User.Read`, `Mail.Read`, `Calendars.Read` and `Contacts.Read`. A work tenant that has disabled user consent still needs an admin to approve those Graph permissions.
 
 A catalog connector is an ordinary `internal_connector` row with
 `catalog_slug` set, `auth_mode='oauth'`, `upstream_url` equal to the catalog
@@ -345,64 +350,82 @@ desktop list refetches on focus, so the new account shows up on return.
   hands states with the `mcpc.` prefix to the connector callback before its
   install-cookie check; every other state keeps the GitHub App install flow.
   **The GitHub App's callback URL must stay `/api/github/authorize`.**
-  GitHub App user tokens only see repositories where the App is installed,
-  so the UI links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
-  (`install_url`, omitted when `GITHUB_APP_SLUG` is unset).
+  GitHub App user tokens do not use OAuth scopes (`scope` on the token
+  response is empty; requesting `repo` or `read:org` on the authorize URL
+  does not grant them). A token sees a repository only when this App is
+  installed on that account or organization and the signed-in user can
+  access it. One authorization already covers every installation of the
+  App. Connecting the environment app opens
+  `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new?state=`
+  (the page where the person picks the account or organization, then all
+  repositories or selected repositories). `GITHUB_APP_SLUG` must be set;
+  an empty slug refuses the start instead of falling back to
+  `/login/oauth/authorize`. A workspace-saved GitHub OAuth client keeps
+  that user authorize URL. The callback accepts `code`, `installation_id`
+  and `setup_action` together. A code that arrives with the installation
+  is exchanged without PKCE. A post-install redirect that has
+  `installation_id` and `setup_action` but no `code` continues, on the
+  same unconsumed state and the same browser cookie, to the user
+  authorization endpoint when the scope has no credential yet; when a
+  credential is already stored it returns to the configure page and does
+  not replace the token. The configure page lists each installation as
+  all repositories or selected repositories
+  (`GET /api/context-capabilities/agents/{agentId}/github-installations`,
+  refetched when the window regains focus). Adding an account goes through
+  the same start. Changing repositories links to the installation's
+  GitHub settings page. `install_url` (omitted when `GITHUB_APP_SLUG` is
+  unset) remains that installation page without a state, for display.
+  A personal access token cannot list installations (GitHub returns 403);
+  the page says so instead of pretending the token is an App installation.
+
+  A workspace owner or admin can register that client on Settings →
+  连接器配置, or with the same admin API
+  (`/api/workspaces/{id}/connector-apps`, including a `wmcp_` token bound
+  to that workspace). The client secret and each authorization instance's
+  token are sealed with the internal connector secret box and are never
+  returned; an empty secret on update keeps the stored one. Dynamic client
+  registration does not read this table. When the workspace has no enabled
+  GitHub application, `GITHUB_APP_CLIENT_ID` /
+  `GITHUB_APP_CLIENT_SECRET` remain the fallback and can be removed after
+  the workspace application is in use.
+
+  One application has many authorization instances (accounts, orgs, or
+  installations). Each instance binds to a workspace, an agent, a project,
+  or a deployment environment (`AONE_ENV_TYPE`, else `ENV_TYPE`, else
+  `APP_ENV`). A call uses the most specific enabled binding: agent, then
+  project, then environment, then workspace. A disabled instance is
+  skipped. An enabled match with no usable token does not fall through to
+  another account. No match keeps the existing person, scene, org, and
+  workspace credentials. Several enabled applications for one provider use
+  the oldest as the catalog client; further accounts are instances of that
+  application. `callback_mode` `production_forward` (the default) keeps a
+  pre-release connect on the production callback. `self` uses this
+  deployment's own callback. The callback path does not change.
 
 ### Callback origin and forwarding
 
-The origins follow the deployment (no origin configuration); the only
-setting is the shared secret both deployments already have for A2A forward
-registrations (`MULTICA_A2A_FORWARD_REGISTRATION_SECRET`). A
-pre-release deployment serves the production host with a `pre-` prefix
-(`https://pre-fde-workbench.dingtalk.com` is the pre-release of
-`https://fde-workbench.dingtalk.com`).
+The shared forwarding layer is documented in [environment-forwarding.md](environment-forwarding.md).
+Connects opened through the production `/forward/{target}/dingtalk/configure`
+page register an additional `forward_target` alongside their state hash and
+home origin. Production validates that target against its fixed origin map,
+consumes the signed registration once, and proxies the callback. The browser
+stays on production, and only the state-bound nonce cookie reaches the home
+deployment. The home deployment validates PKCE/state/browser binding, stores
+the credential and returns to the production configuration page.
 
-- A connect started on pre-release sends providers the PRODUCTION callback:
-  `<production origin>/api/connector-oauth/callback` for DCR apps and
-  `<production origin>/api/github/authorize` for the GitHub connect. Its
-  state names the pre-release:
-  `mcpc.<43 base64url random>.<base64url(pre-release origin)>` (a canonical
-  origin: lowercase scheme and host, no path). The `mcpc.` prefix still
-  routes GitHub callbacks to the connector flow, and the pre-release hashes
-  and looks up the whole state unchanged. The sealed state keeps the redirect
-  URI the authorization used, and the code is exchanged with it.
-- A connect started anywhere else (production, local) uses its own callback
-  and a state without an origin, as before.
-- Registration (the A2A forward registration shape: pre-release signs,
-  production verifies). Before returning the authorize URL, the pre-release
-  registers the connect with its production:
-  `POST <production>/api/internal/connector-oauth/forward-registrations`
-  with `{state_sha256, home_origin, workspace_id, agent_id, connector_id,
-  scope_type, expires_at_ms}`, signed with HMAC-SHA256 over
-  `<timestamp ms>\n<body>` (`X-Multica-Connector-OAuth-Forward-Timestamp` /
-  `-Signature`, the A2A signing function and secret). Production accepts
-  only its own `pre-` origin, a fresh signature (±5 minutes) and an expiry
-  within 15 minutes, and keeps the registration in Redis until the state
-  expires. Without the secret, Redis or a 200 the pre-release refuses to
-  start the connect (`forward_unavailable`, 503), so a callback is never
-  stranded.
-- Production forwards: both callback routes (`/api/connector-oauth/callback`
-  and the `mcpc.` branch of `/api/github/authorize`) look at the state before
-  any local handling (`internal_connector_oauth_forward.go`, self-contained
-  and byte-identical on the forwarder-only branch
-  `feat/connector-oauth-forwarder`, which production can ship alone). A
-  state naming `https://pre-` + one of production's own hosts
-  (`MULTICA_APP_URL`, `FRONTEND_ORIGIN`) is sent with a 302 to
-  `<that origin><same path>?<same raw query>` only when the pre-release
-  registered that state for one of its Workspaces/Agents; the registration
-  is taken (single use). An unregistered, used or expired state, or one
-  naming any other foreign origin, gets the invalid-connection page (400).
-  Each forward and refusal is logged (`connector_oauth_forwarded` /
-  `connector_oauth_forward_refused`, with workspace, agent and connector).
-  States without an origin, naming this deployment, or malformed are
-  handled locally.
-- The browser binding cookie is set by the start response on the
-  pre-release origin (see "Browser binding"), so the forwarded callback finds
-  it; a callback opened anywhere else still fails with `browser_mismatch`.
-- The GitHub install flow (non-`mcpc.` states) is unchanged and keeps using
-  the deployment's own `/api/github/authorize`; a GitHub App serving both
-  flows needs both callback URLs registered (GitHub Apps accept several).
+Provider consoles keep the canonical production DCR callback
+`/api/connectors/oauth/callback` (the legacy `/api/connector-oauth/callback`
+still accepts in-flight callbacks), and GitHub keeps `/api/github/authorize`.
+A non-`mcpc.` GitHub install state is unaffected.
+
+Direct pre-release connects retain the existing `pre-` sibling-origin
+registration and 302 flow; their binding cookie stays on pre-release.
+Both registration modes share `MULTICA_A2A_FORWARD_REGISTRATION_SECRET`,
+HMAC over timestamp + newline + exact body, the five-minute clock window,
+fifteen-minute maximum registration TTL and production Redis. Missing
+configuration, an unregistered origin/target, expired state or replay fails
+closed. The shared package must ship with the adapters; copying a single
+handler file between branches is no longer the rollout mechanism.
 
 ### Client name
 

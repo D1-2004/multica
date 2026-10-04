@@ -1,8 +1,8 @@
 # Langfuse observability
 
-The server exports LLM traces to a Langfuse project for the three loops that
-call or drive models: the inbound Coordinator short loop, the Scene Memory
-flush loop, and agent task execution (the Daemon side). The exporter lives in
+The server exports LLM traces to a Langfuse project for the loops that
+call or drive models: the inbound Coordinator short loop, EmployeeLoop,
+the Scene Memory flush loop, and agent task execution (the Daemon side). The exporter lives in
 `server/internal/langfuse` and speaks OTLP/HTTP to
 `<LANGFUSE_BASE_URL>/api/public/otel/v1/traces`; Langfuse marks its legacy
 `/api/public/ingestion` batch API as deprecated, so OTLP is the only path used.
@@ -67,6 +67,59 @@ Metadata keys present on every span of a trace include `coord_trace_id`,
 `status`, and `failure_reason`. A coordinator-created Issue task carries the
 coordinator's `coord_trace_id` (stamped into `task.context.coordinator_trace_id`),
 so the two traces can be joined in either direction.
+
+### Employee turn (`employee_loop`)
+
+`server/internal/handler/employee_scene_trace.go` exports each Employee job as
+its own trace. The trace ID is the job UUID without dashes; its session is the
+canonical `agent_scene.scene_id`, not the provider conversation ID. Metadata
+contains the workspace, agent, tenant org, receipt IDs, and lease generation.
+The user ID identifies the authenticated job principal, not proof of the
+individual message speaker or a human sender.
+
+- `employee_model` is a real provider request, with the redacted messages,
+  tool schemas, model, response, timing, and token usage. Check
+  `input_truncated` / `output_truncated` before treating the payload as complete;
+  each attribute has a 64 KiB budget. A journal replay does not manufacture a
+  generation or token usage for a request that was not made.
+- Tool observations carry actual arguments and Host results. Rejected batches
+  emit `tool_batch_rejected`. A committed reply produces root state
+  `outbox_committed`; this is not proof that DingTalk delivered the message.
+  Confirm delivery using the outbound receipt and actual IM readback.
+- `dispatch_task` and typed-answer `continue_question_work` index `employee_task_id`, `employee_run_id`, and
+  `queue_task_id`. Use the queue ID to inspect the separate `agent_task` trace
+  and its `llm.call.N` generations. Background tool names and schemas follow
+  the explicit capture limitations below; frontend schema export does not
+  imply background schema export.
+- Capability bearer links and recognized credentials are redacted. The trace
+  retains sensitive conversation context and is intended for authorized
+  debugging, not as a public transcript.
+
+A typed `human_response` wake adds Host-read `question_id`, `response_id`,
+`source_job_id`, and `source_receipt_id` lookup metadata. The source message
+remains its authority anchor; the current typed job is the effect owner.
+`continue_question_work` emits arguments and the committed Host result only
+when its tool journal callback actually runs. Replaying that journal does not
+create another tool observation or manufacture another execution receipt.
+These observations share the existing redaction and asynchronous exporter;
+no extra model call is made and a tool receipt is still not delivery proof.
+
+For an exact job or queue UUID, use `langfuse_lookup.py trace <uuid> --json`.
+For discovery, use `recent employee_loop 20 --environment pre` or the canonical
+scene session. On 2026-10-03, some agent-tag queries returned no rows despite
+the exact Employee traces being readable; an empty filtered list therefore
+does not prove the job was untraced. Actual IM evidence and trace IDs are in
+`docs/plans/2026-10-03/employee-loop-parity-acceptance.md`.
+
+Terminal Direct Run facts add an `employee_execution_event` Event to the
+original Employee job trace after the receipt and consumption commit. This
+adds no generation or token usage. `state` describes consumption
+(`completed` / `held`); `run_state` describes the actual Run terminal state.
+`result_ref` points to the durable result without exporting its body again.
+Indexes link the original source receipt, execution receipt, domain Task, Run,
+and queue task. Inspect the event separately from the frontend generations;
+its presence is not proof of DingTalk delivery. Invalid historical origins can
+be durably skipped without inventing a source job or a consumption event.
 
 ### Coordinator turn (`inbound_coordinator`)
 
@@ -190,6 +243,30 @@ messages, usage, and completion to the server, and FC runtime images with the
   runtime's retries of one pair upsert the same generation, and a task with no
   dispatch context (a web-created Issue) is accepted with 204 once the
   observer has it instead of being rejected with 503.
+- Tool inventory is separate from the message input. `modelParameters.tools`
+  counts tool entries in the captured request; `tool_names_total`,
+  `tool_names_recorded`, `tool_names_unresolved`, and `tool_names_truncated`
+  explain how many names were extracted and exported. There is no 40-name cap:
+  names retain request order up to a 32 KiB JSON budget, with explicit omission
+  counts when exceeded. `tool_names_complete=true` requires a complete request
+  capture, valid tool entries, and no omitted names. `tool_capture_status`
+  distinguishes `complete`, `tools_absent`, `request_missing`,
+  `request_unparseable`, `tools_invalid`, and `request_truncated`;
+  `tool_count_known=false` means the total available tool count is unknown.
+  Counts on a truncated capture describe only the captured entries.
+- Full tool schemas are **not exported as a structured schema artifact**:
+  `tool_schemas_recorded=false` and `tool_schemas_status=not_exported` make this
+  limitation explicit. For recognized APIs, generation input retains messages
+  and instructions, not the tool schemas. Unknown/malformed request fallbacks
+  can contain raw schema fragments, which are not proof of a complete schema.
+  The proxy's `request_truncated=false` only describes body capture; it does not
+  prove that Langfuse contains full tool definitions. The existing 64 KiB
+  attribute limit is unchanged. If other model parameters would exceed it,
+  the largest parameter values are omitted first while preserving inventory;
+  `model_parameters_truncated` and `model_parameters_omitted` report this.
+  Messages retain their own unchanged input attribute and budget. This is a
+  server relay change: existing `llm_trace_v1` runtimes need no rebuild. Older
+  exported observations are not retroactively repaired.
 - The root observation (type `agent`) is emitted once the terminal status
   commits, from `TaskService.captureTaskCompleted/Failed/Cancelled`, on a
   detached goroutine: issue title and trigger as input, result or error as

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -233,10 +234,9 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // StartContextConfigConnection starts connecting the caller's own account
 // (person scope) or a group's account (scene scope) of an official app
 // connector from the mobile configuration page. It requires the caller's
-// live grant for exactly that scope, or for a group scene of an agent the
-// caller manages (contextCapRequireScope). A 1:1 chat scene connects its
-// person's account, which only that person may do (403 person_only for a
-// manager; 409 dm_person_unknown when the person is unknown).
+// live grant for exactly that scope, or for a scene (a group or a 1:1 chat)
+// of an agent the caller manages (contextCapRequireScope). Only managers
+// connect a scene's account; only the person connects their own.
 // startConnectorOAuth then applies the PUT credentials connector rule
 // (offered or globally granted) and re-checks it at
 // the callback.
@@ -271,14 +271,10 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	// The state stores the effective scope (a 1:1 chat scene's person), so
-	// the account lands there; SceneKey keeps the dm scene the caller asked
-	// for, so the callback re-checks the same request.
 	started, err := h.startConnectorOAuth(r.Context(), connectorOAuthStart{
 		connectorOAuthScope: connectorOAuthScope{
 			WorkspaceID: a.WorkspaceID, ConnectorID: uuidToString(connectorUUID), UserID: userID,
 			ScopeType: grant.ScopeType, AgentID: a.ID, OrgID: a.OrgID, ScopeKey: grant.ScopeKey,
-			SceneKey: grant.DirectSceneKey,
 		},
 		ReturnTo: input.ReturnTo,
 	})
@@ -297,40 +293,84 @@ func init() {
 // from a provider redirect (serveConnectorOAuthCallback has already
 // forwarded other deployments' callbacks) and sends the browser to the
 // destination recorded at start with
-// ?connected=<slug> or ?connect_error=<code>. It reads and clears the
-// state's browser binding cookie. An unknown, expired or replayed state has
-// no trusted destination and gets a small page linking back to the app
-// instead. The work runs detached from the browser request (bounded by its
-// own timeout), because the state is consumed first and a dropped
-// connection must not lose a code that was already accepted.
+// ?connected=<slug> or ?connect_error=<code>. It reads the state's browser
+// binding cookie and clears it once the callback is finished. A GitHub
+// installation return that still has to collect the user authorization
+// keeps the cookie: the same state completes on the next redirect. An
+// unknown, expired or replayed state has no trusted destination and gets a
+// small page linking back to the app instead. The work runs detached from
+// the browser request (bounded by its own timeout). A code that was already
+// accepted has its state consumed, so a dropped connection does not lose it.
 func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
-	callback := connectorOAuthCallback{Via: via, State: query.Get("state"), Code: query.Get("code"), Error: query.Get("error")}
+	callback := githubConnectorCallbackFromQuery(via, query)
 	if len(callback.Code) > connectorOAuthMaxCode {
 		// Treated like a provider error: the state is still consumed.
 		callback.Code, callback.Error = "", "invalid_request"
 	}
+	var clearBinding func()
 	if validConnectorOAuthState(callback.State) {
 		stateHash := hashConnectorOAuthState(callback.State)
 		if cookie, err := r.Cookie(connectorOAuthCookieName(stateHash)); err == nil {
 			callback.BrowserNonce = cookie.Value
 			origin, path := h.connectorOAuthCallbackTarget(via)
-			http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
-			if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
-				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
+			clearBinding = func() {
+				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
+				if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
+					http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
+				}
 			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), connectorOAuthCallbackTimeout)
 	defer cancel()
 	outcome := h.completeConnectorOAuth(ctx, callback)
+	if !outcome.Continue && clearBinding != nil {
+		clearBinding()
+	}
+	if !outcome.Continue {
+		if _, err := r.Cookie(connectorOAuthActiveInstallCookie); err == nil {
+			http.SetCookie(w, connectorOAuthActiveInstallCookieValue("", h.githubFrontend()))
+		}
+	}
+	if outcome.SceneSession != "" && !outcome.Continue {
+		origin := h.connectorOAuthAppOrigin()
+		http.SetCookie(w, auth.NewSceneSessionCookie(outcome.SceneSession, origin, time.Now()))
+	}
 	if outcome.RedirectURL == "" {
-		h.writeConnectorOAuthInvalidPage(w)
+		h.writeConnectorOAuthInvalidPage(w, r)
 		return
 	}
 	http.Redirect(w, r, outcome.RedirectURL, http.StatusFound)
+}
+
+// OpenSceneConfigSession turns the signed token on a GitHub return into the
+// configure-page cookie. It is public: the phone that finished GitHub has no
+// DingTalk session. A bad or expired token is 400, not 401, so the page does
+// not start a login from this call. The token stays valid until it expires;
+// the OAuth state is what is single use.
+// POST /api/scene-config/session
+func (h *Handler) OpenSceneConfigSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeOptionalJSONBody(w, r, 4096, &body) {
+		return
+	}
+	token := strings.TrimSpace(body.Token)
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "invalid scene session")
+		return
+	}
+	if _, err := auth.OpenSceneSession(token, time.Now()); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid scene session")
+		return
+	}
+	http.SetCookie(w, auth.NewSceneSessionCookie(token, h.connectorOAuthAppOrigin(), time.Now()))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // writeConnectorOAuthStartError maps a startConnectorOAuth error to a

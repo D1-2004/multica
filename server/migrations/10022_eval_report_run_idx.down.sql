@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS eval_report_run_idx;

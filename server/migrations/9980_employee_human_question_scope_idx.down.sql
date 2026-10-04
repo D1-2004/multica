@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_human_question_scope_idx;

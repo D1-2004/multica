@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Brain, Building2, Loader2, MessageSquare, RefreshCw, User, Users } from "lucide-react";
 import type { Agent } from "@multica/core/types";
-import { agentCoordinatorConversationsKeys, agentSceneMemoryDetailOptions } from "@multica/core/agents";
+import { agentCoordinatorConversationsKeys, agentSceneMemoryDetailOptions, agentSceneMemoryLoop } from "@multica/core/agents";
 import {
   agentContextCapabilitiesOptions,
   agentTenantGroupsOptions,
@@ -14,6 +14,7 @@ import {
   contextNodeOptions,
   type AgentTenant,
   type ContextNodeRef,
+  type ContextSceneKind,
 } from "@multica/core/context-capabilities";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -40,24 +41,39 @@ import { CoordinatorConversationMessages, CoordinatorSessionsTab } from "./coord
 import { MemoryFlagBar, SceneMemoryDetail, SceneMemoryTab } from "./scene-memory-tab";
 import { SceneTree, type SceneSelection } from "./scene-tree";
 import { TenantCreateDialog, TenantSettings } from "./tenant-dialog";
+import { ScopeRoutines } from "../../../dingtalk/context-config-routines";
 
-export type SceneSubTab = "inbound" | "memory" | "config" | "settings";
+export type SceneSubTab = "inbound" | "memory" | "config" | "routines" | "settings";
 
-/** Sub-tabs of each node: a tenant has its 配置 and 设置; a group chat and a
- * person have 入站记录, 记忆 and 配置. The first one is the default. */
+/** Sub-tabs of each node: a tenant has its 配置 and 设置; a scene (a group
+ * chat or a 1:1 chat) has 入站记录, 记忆, 配置 and 例行任务; a person has
+ * 入站记录, 记忆 and 配置. The first one is the default. */
 const SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
   org: ["config", "settings"],
-  scene: ["inbound", "memory", "config"],
+  scene: ["inbound", "memory", "config", "routines"],
   person: ["inbound", "memory", "config"],
 };
 
-function subTabFor(type: SceneSelection["type"], value: string | null): SceneSubTab {
-  const tabs = SUB_TABS[type];
+/** A Tag employee's scenes: memory runs on defaults and tenants are managed
+ * on the Tag page, so a level is its configuration and its inbound history. */
+const TAG_SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
+  org: ["config"],
+  scene: ["config", "routines", "inbound"],
+  person: ["config", "inbound"],
+};
+
+function subTabsFor(type: SceneSelection["type"], tagManaged: boolean): readonly SceneSubTab[] {
+  return (tagManaged ? TAG_SUB_TABS : SUB_TABS)[type];
+}
+
+function subTabFor(type: SceneSelection["type"], value: string | null, tagManaged = false): SceneSubTab {
+  const tabs = subTabsFor(type, tagManaged);
   return tabs.find((tab) => tab === value) ?? tabs[0] ?? "config";
 }
 
-/** `?tenant=<orgId>&node=<scopeType>:<scopeKey>`; a tenant itself has no
- * `node` (or `node=org:<orgId>`). */
+/** `?tenant=<orgId>&node=<scopeType>:<scopeKey>` (a scene's key is its
+ * scene_id, a person's their staffId); a tenant itself has no `node` (or
+ * `node=org:<orgId>`). */
 function selectionFromParams(params: URLSearchParams): SceneSelection | null {
   const orgId = params.get("tenant") ?? "";
   if (!orgId) return null;
@@ -84,25 +100,43 @@ type SceneArchive = "inbound" | "memory";
 
 /**
  * 场域: a tree of the agent's tenants (企业, each with its DingTalk OrgId)
- * and, under each, its 群聊 and 个人 (a 1:1 chat is its person). A tenant
- * opens on 配置 (its Context Builder) and 设置; a group chat and a person on
- * 入站记录, 记忆 and 配置. The selection lives in the URL (`tenant`, `node`,
- * `scene_tab`); an old `scene=<key>` link opens that group under the agent's
- * own org. 其他记录 opens the full inbound conversation and scene memory
- * lists, which also cover records the tree does not list.
+ * and, under each, its scenes (群聊和单聊: a group chat or a 1:1 chat, each its
+ * own scene keyed by scene_id) and its 个人 (people's personal levels). A
+ * tenant opens on 配置 (its Context Builder) and 设置; a scene and a person on
+ * 入站记录, 记忆 and 配置 (a person's records are their 1:1 chat's). The
+ * selection lives in the URL (`tenant`, `node`, `scene_tab`); an old
+ * `scene=<key>` link opens that scene under the agent's own org. 其他记录
+ * opens the full inbound conversation and scene memory lists, which also
+ * cover records the tree does not list.
  *
  * Switching node, sub-tab or view unmounts the prompt editor, so it goes
  * through the same discard confirmation as the pane's own tabs while the
  * prompt components have unsaved edits.
  */
+/** Where a scene's connect flow returns when the scenes are not on the agent
+ * page (the Tag page shows them in its tenant pane). */
+export interface ScenesReturnPage {
+  pathname: string;
+  /** Params kept on return (e.g. the selected Tag tenant). */
+  params: string;
+  viewParam: string;
+}
+
 export function ScenesTab({
   agent,
   canEdit,
+  tagManaged = false,
+  returnPage,
   onUpdate,
   onDirtyChange,
 }: {
   agent: Agent;
   canEdit: boolean;
+  returnPage?: ScenesReturnPage;
+  /** The agent is a Tag tenant's employee: its one enterprise is its DingTalk
+   * identity and tenants are created, renamed and removed on the Tag page, so
+   * the tree offers no 新建租户 and org nodes have no 设置. */
+  tagManaged?: boolean;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -119,7 +153,7 @@ export function ScenesTab({
     selectionFromParams(navigation.searchParams),
   );
   const [subTab, setSubTab] = useState<SceneSubTab>(() =>
-    subTabFor(selection?.type ?? "org", navigation.searchParams.get("scene_tab")),
+    subTabFor(selection?.type ?? "org", navigation.searchParams.get("scene_tab"), tagManaged),
   );
   // An old `?scene=<key>` link, resolved once the tenants are known.
   const [legacyScene, setLegacyScene] = useState(() =>
@@ -133,14 +167,14 @@ export function ScenesTab({
       if (next) {
         params.set("tenant", next.orgId);
         if (next.type !== "org") params.set("node", `${next.type}:${next.key}`);
-        if (tab !== SUB_TABS[next.type][0]) params.set("scene_tab", tab);
+        if (tab !== subTabsFor(next.type, tagManaged)[0]) params.set("scene_tab", tab);
       }
       // An app dialog belongs to the node it was opened in.
       params.delete(APP_PARAM);
       const search = params.toString();
       navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
     },
-    [navigation],
+    [navigation, tagManaged],
   );
 
   // Map an old scene link, or open the first tenant on wide screens, once
@@ -154,7 +188,7 @@ export function ScenesTab({
       setLegacyScene("");
       if (!tenant) return;
       const next: SceneSelection = { orgId: tenant.orgId, type: "scene", key: legacyScene };
-      const tab = subTabFor("scene", navigation.searchParams.get("scene_tab"));
+      const tab = subTabFor("scene", navigation.searchParams.get("scene_tab"), tagManaged);
       setSelection(next);
       setSubTab(tab);
       writeUrl(next, tab);
@@ -164,7 +198,7 @@ export function ScenesTab({
       setSelection({ orgId: firstTenant.orgId, type: "org", key: firstTenant.orgId });
       setSubTab("config");
     }
-  }, [firstTenant, isCompact, legacyScene, navigation.searchParams, selection, tenants, tenantsQuery.isSuccess, writeUrl]);
+  }, [firstTenant, isCompact, legacyScene, navigation.searchParams, selection, tagManaged, tenants, tenantsQuery.isSuccess, writeUrl]);
 
   const [archive, setArchive] = useState<SceneArchive | null>(null);
   const [creating, setCreating] = useState<{ orgId: string } | null>(null);
@@ -194,7 +228,7 @@ export function ScenesTab({
     a?.orgId === b?.orgId && a?.type === b?.type && a?.key === b?.key;
 
   const select = (next: SceneSelection | null) => {
-    const tab = next ? (sameNode(next, selection) ? subTab : SUB_TABS[next.type][0] ?? "config") : "config";
+    const tab = next ? (sameNode(next, selection) ? subTab : subTabsFor(next.type, tagManaged)[0] ?? "config") : "config";
     const commit = () => {
       setSelection(next);
       setSubTab(tab);
@@ -274,7 +308,7 @@ export function ScenesTab({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <MemoryFlagBar agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
+      {tagManaged ? null : <MemoryFlagBar agent={agent} canEdit={canEdit} onUpdate={onUpdate} />}
       <div className="flex min-h-0 flex-1">
         <aside
           className={cn(
@@ -300,8 +334,12 @@ export function ScenesTab({
                 {tenants.length === 0 && unassignedOrgs.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-muted-foreground">
                     <Building2 className="size-8 text-faint-foreground" aria-hidden="true" />
-                    <p className="text-body font-medium text-foreground">{t(($) => $.tab_body.scenes.empty_title)}</p>
-                    <p className="text-caption text-pretty">{t(($) => $.tab_body.scenes.empty_hint)}</p>
+                    <p className="text-body font-medium text-foreground">
+                      {tagManaged ? t(($) => $.tab_body.scenes.tag_empty_title) : t(($) => $.tab_body.scenes.empty_title)}
+                    </p>
+                    <p className="text-caption text-pretty">
+                      {tagManaged ? t(($) => $.tab_body.scenes.tag_empty_hint) : t(($) => $.tab_body.scenes.empty_hint)}
+                    </p>
                   </div>
                 ) : null}
                 <SceneTree
@@ -311,7 +349,7 @@ export function ScenesTab({
                   unassignedOrgs={unassignedOrgs}
                   selection={selection}
                   onSelect={select}
-                  onCreateTenant={(orgId) => setCreating({ orgId: orgId ?? "" })}
+                  onCreateTenant={tagManaged ? undefined : (orgId) => setCreating({ orgId: orgId ?? "" })}
                 />
               </>
             )}
@@ -327,10 +365,12 @@ export function ScenesTab({
                 <MessageSquare className="size-3.5" aria-hidden="true" />
                 {t(($) => $.tab_body.scenes.all_inbound)}
               </Button>
-              <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => openArchive("memory")}>
-                <Brain className="size-3.5" aria-hidden="true" />
-                {t(($) => $.tab_body.scenes.all_memory)}
-              </Button>
+              {tagManaged ? null : (
+                <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => openArchive("memory")}>
+                  <Brain className="size-3.5" aria-hidden="true" />
+                  {t(($) => $.tab_body.scenes.all_memory)}
+                </Button>
+              )}
             </section>
           </div>
         </aside>
@@ -347,6 +387,8 @@ export function ScenesTab({
               subTab={subTab}
               onSubTab={selectSubTab}
               canEdit={canEdit}
+              tagManaged={tagManaged}
+              returnPage={returnPage}
               onBack={isCompact ? () => select(null) : undefined}
               onTenantDeleted={() => {
                 const next = tenants.find((tenant) => tenant.orgId !== selection.orgId);
@@ -387,16 +429,22 @@ export function ScenesTab({
 /** Connect plumbing of the agent detail page: the provider returns to this
  * node's 配置 with the app dialog open; desktop runs the connect in the
  * system browser. */
-function useAgentPageConnect(agentId: string, selection: SceneSelection): ContextBuilderConnect {
+function useAgentPageConnect(
+  agentId: string,
+  selection: SceneSelection,
+  returnPage?: ScenesReturnPage,
+): ContextBuilderConnect {
   const paths = useWorkspacePaths();
   const handOff = useDesktopConnectHandoff();
   return {
     returnPath: (slug) => {
-      const params = new URLSearchParams({ view: "scenes", tenant: selection.orgId });
+      const params = new URLSearchParams(returnPage?.params ?? "");
+      params.set(returnPage?.viewParam ?? "view", "scenes");
+      params.set("tenant", selection.orgId);
       if (selection.type !== "org") params.set("node", `${selection.type}:${selection.key}`);
       if (selection.type !== "org") params.set("scene_tab", "config");
       params.set(APP_PARAM, slug);
-      return `${paths.agentDetail(agentId)}?${params.toString()}`;
+      return `${returnPage?.pathname ?? paths.agentDetail(agentId)}?${params.toString()}`;
     },
     navigate: (url) => window.location.assign(url),
     handOff,
@@ -411,6 +459,8 @@ function NodeDetail({
   subTab,
   onSubTab,
   canEdit,
+  tagManaged,
+  returnPage,
   onBack,
   onTenantDeleted,
   onDirtyChange,
@@ -422,6 +472,8 @@ function NodeDetail({
   subTab: SceneSubTab;
   onSubTab: (tab: SceneSubTab) => void;
   canEdit: boolean;
+  tagManaged: boolean;
+  returnPage?: ScenesReturnPage;
   onBack?: () => void;
   onTenantDeleted: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -431,34 +483,40 @@ function NodeDetail({
   const queryClient = useQueryClient();
   const navigation = useNavigation();
   const replaceSearch = useReplaceSearch();
-  const connect = useAgentPageConnect(agent.id, selection);
+  const connect = useAgentPageConnect(agent.id, selection, returnPage);
   const capabilities = useQuery({
     ...agentContextCapabilitiesOptions(wsId, agent.id),
     enabled: canEdit && Boolean(wsId),
   });
   const configureUrl = capabilities.data?.configureUrl ?? "";
-  const summary = useNodeSummary(wsId, agent.id, selection);
+  const summary = useNodeSummary(wsId, agent.id, selection, agent.coordination_mode === "employee");
   const labels: Record<SceneSubTab, string> = {
     inbound: t(($) => $.tab_body.scenes.tab_inbound),
     memory: t(($) => $.tab_body.scenes.tab_memory),
     config: t(($) => $.tab_body.scenes.tab_config),
+    routines: t(($) => $.tab_body.scenes.tab_routines),
     settings: t(($) => $.tab_body.scenes.tab_settings),
   };
   const tenantTitle = tenant ? tenant.name || tenant.orgId : selection.orgId;
+  const dm = selection.type === "scene" && summary.kind === "dm";
   const title =
     selection.type === "org"
       ? tenantTitle
       : summary.title ||
-        (selection.type === "scene"
-          ? t(($) => $.tab_body.scenes.untitled_group)
-          : selection.key);
+        (selection.type === "person"
+          ? selection.key
+          : dm
+            ? t(($) => $.context_config.scene_untitled_dm)
+            : t(($) => $.tab_body.scenes.untitled_group));
   const kindLabel =
     selection.type === "org"
       ? t(($) => $.tab_body.context_builder.layer_org)
-      : selection.type === "scene"
-        ? t(($) => $.tab_body.context_builder.layer_scene)
-        : t(($) => $.tab_body.context_builder.layer_person);
-  const Icon = selection.type === "org" ? Building2 : selection.type === "scene" ? Users : User;
+      : selection.type === "person"
+        ? t(($) => $.tab_body.context_builder.layer_person)
+        : dm
+          ? t(($) => $.context_config.kind_dm)
+          : t(($) => $.tab_body.context_builder.layer_scene);
+  const Icon = selection.type === "org" ? Building2 : selection.type === "person" ? User : dm ? MessageSquare : Users;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: contextCapabilityKeys.tenants(wsId, agent.id) });
@@ -478,6 +536,7 @@ function NodeDetail({
           agentId={agent.id}
           node={nodeOf(selection)}
           canEdit={canEdit}
+          tagFraming={tagManaged}
           connect={connect}
           openApp={navigation.searchParams.get(APP_PARAM) ?? ""}
           onOpenAppChange={(slug) =>
@@ -535,9 +594,22 @@ function NodeDetail({
     ) : (
       <PanelNotice>{t(($) => $.tab_body.scenes.inbound_empty)}</PanelNotice>
     );
+  } else if (subTab === "routines" && selection.type === "scene") {
+    body = (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+          <SceneRoutinesPanel wsId={wsId} agentId={agent.id} node={nodeOf(selection)} canEdit={canEdit} />
+        </div>
+      </div>
+    );
   } else if (subTab === "memory") {
     body = (
-      <SceneMemoryPanel agent={agent} memoryId={summary.memoryId} loading={summary.loading} canEdit={canEdit} />
+      <SceneMemoryPanel
+        agent={agent}
+        sceneId={summary.memorySceneId}
+        loading={summary.loading}
+        canEdit={canEdit}
+      />
     );
   } else {
     body = builder;
@@ -574,23 +646,23 @@ function NodeDetail({
         role="tablist"
         aria-label={title}
       >
-        {SUB_TABS[selection.type].map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={subTab === tab}
-            onClick={() => onSubTab(tab)}
-            className={cn(
-              "relative shrink-0 py-2.5 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              subTab === tab
-                ? "font-medium text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {labels[tab]}
-          </button>
-        ))}
+        {subTabsFor(selection.type, tagManaged).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={subTab === tab}
+              onClick={() => onSubTab(tab)}
+              className={cn(
+                "relative shrink-0 py-2.5 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                subTab === tab
+                  ? "font-medium text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {labels[tab]}
+            </button>
+          ))}
       </div>
       {body}
     </div>
@@ -600,60 +672,65 @@ function NodeDetail({
 interface NodeSummary {
   loading: boolean;
   title: string;
+  /** Kind of the node's chat; "group" until it is known. */
+  kind: ContextSceneKind;
   inboundSessionId: string;
-  memoryId: string;
+  /** scene_id of the node's chat when it has Scene Memory, else "". */
+  memorySceneId: string;
 }
 
-/** What the detail shows about the selected group or person: its title,
- * and its chat's newest inbound session and memory row. The node's own read
- * (shared with the builder) names the chat, a person's 1:1 chat included; a
- * group's list row answers first when the tree has it. */
-function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection): NodeSummary {
+/** What the detail shows about the selected scene or person: its title,
+ * and its chat's kind, newest inbound session and memory. The node's own
+ * read (shared with the builder) names the chat, a person's 1:1 chat scene
+ * included; a scene's list row answers first when the tree has it. */
+function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection, employeeMemory = false): NodeSummary {
   const leaf = selection.type !== "org";
   const node = useQuery({
     ...contextNodeOptions(wsId, agentId, nodeOf(selection)),
     enabled: leaf && Boolean(wsId && agentId && selection.orgId && selection.key),
   });
   // The tree's lists, read from the cache only.
-  const groups = useInfiniteQuery({ ...agentTenantGroupsOptions(wsId, agentId, selection.orgId), enabled: false });
+  const scenes = useInfiniteQuery({ ...agentTenantGroupsOptions(wsId, agentId, selection.orgId), enabled: false });
   const persons = useQuery({ ...agentTenantPersonsOptions(wsId, agentId, selection.orgId), enabled: false });
-  if (!leaf) return { loading: false, title: "", inboundSessionId: "", memoryId: "" };
-  const listedGroup =
+  if (!leaf) return { loading: false, title: "", kind: "group", inboundSessionId: "", memorySceneId: "" };
+  const listedScene =
     selection.type === "scene"
-      ? (groups.data?.pages ?? []).flatMap((page) => page.scenes).find((scene) => scene.sceneKey === selection.key)
+      ? (scenes.data?.pages ?? []).flatMap((page) => page.scenes).find((scene) => scene.sceneId === selection.key)
       : undefined;
   const listedPerson =
     selection.type === "person" ? (persons.data ?? []).find((entry) => entry.staffId === selection.key) : undefined;
-  const scene = node.data?.scene ?? listedGroup ?? null;
+  const scene = node.data?.scene ?? listedScene ?? null;
   return {
-    loading: node.isLoading && !listedGroup,
-    title: listedGroup?.title || listedPerson?.title || node.data?.scope?.title || scene?.title || "",
+    loading: node.isLoading && !listedScene,
+    title: listedScene?.title || listedPerson?.title || node.data?.scope?.title || scene?.title || "",
+    kind: scene?.kind ?? "group",
     inboundSessionId: scene?.inboundSessionId ?? "",
-    memoryId: scene?.memoryId ?? "",
+    memorySceneId: scene && (employeeMemory || scene.hasMemory === true) ? scene.sceneId : "",
   };
 }
 
-/** A group's or person's memory row, loaded by id (the agent-wide list
- * holds only the 200 newest rows). */
+/** A scene's or person's memory, loaded by the scene_id of its chat (the
+ * agent-wide list holds only the 200 newest rows). */
 function SceneMemoryPanel({
   agent,
-  memoryId,
+  sceneId,
   loading,
   canEdit,
 }: {
   agent: Agent;
-  memoryId: string;
+  sceneId: string;
   loading: boolean;
   canEdit: boolean;
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const uiEnabled = agent.scene_memory_ui_enabled === true;
-  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, memoryId, uiEnabled));
+  const loop = agentSceneMemoryLoop(agent.coordination_mode);
+  const uiEnabled = loop !== null && (loop === "employee" || agent.scene_memory_ui_enabled === true);
+  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, sceneId, uiEnabled && canEdit, loop ?? "coordinator"));
   if (!uiEnabled) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_ui_off)}</PanelNotice>;
   }
-  if (loading || (memoryId && query.isLoading)) {
+  if (loading || (sceneId && query.isLoading)) {
     return (
       <PanelNotice>
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -661,7 +738,7 @@ function SceneMemoryPanel({
       </PanelNotice>
     );
   }
-  if (!memoryId) {
+  if (!sceneId) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }
   if (query.isError) {
@@ -674,12 +751,34 @@ function SceneMemoryPanel({
       </PanelNotice>
     );
   }
-  // A malformed response parses to a row without an id.
-  const memory = query.data?.id ? query.data : null;
+  // A malformed response parses to a row without a scene_id.
+  const memory = query.data?.scene_id ? query.data : null;
   if (!memory) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }
   return <SceneMemoryDetail agent={agent} memory={memory} canEdit={canEdit} showTitle={false} />;
+}
+
+/** A scene node's 例行任务. Who may change them is the node's rights. */
+function SceneRoutinesPanel({
+  wsId,
+  agentId,
+  node,
+  canEdit,
+}: {
+  wsId: string;
+  agentId: string;
+  node: ContextNodeRef;
+  canEdit: boolean;
+}) {
+  const detail = useQuery(contextNodeOptions(wsId, agentId, node));
+  return (
+    <ScopeRoutines
+      target={{ kind: "node", wsId, agentId, node }}
+      canEdit={canEdit && detail.data?.rights?.editRoutines === true}
+      reportError={() => false}
+    />
+  );
 }
 
 function PanelNotice({ children }: { children: React.ReactNode }) {

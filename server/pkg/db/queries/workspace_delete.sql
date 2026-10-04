@@ -433,6 +433,9 @@ WITH deleted_squads AS (
 DELETE FROM skill WHERE skill.workspace_id = $1;
 
 -- name: DeleteWorkspaceAgents :exec
+WITH deleted_events AS (
+    DELETE FROM scene_event_receipt WHERE workspace_id = $1
+)
 DELETE FROM agent WHERE agent.workspace_id = $1;
 
 -- name: DeleteWorkspaceRuntimesAndProjects :exec

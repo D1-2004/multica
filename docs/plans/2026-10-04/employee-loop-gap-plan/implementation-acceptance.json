@@ -1,0 +1,115 @@
+{
+  "schema": "employee-progress.implementation-acceptance.v1",
+  "current_status_entry": "implementation.md",
+  "user_selected": [
+    "B",
+    "C",
+    "D"
+  ],
+  "implementation_slice": "P explicit report_progress + display-only wake",
+  "source_baseline": "79645b5b7b176ab36aa73a38bf9493ce4c8dd105",
+  "local_evidence": "/Users/yuanzhan/d1/employee-e2e-evidence/EMPLOYEE-PROGRESS-20261004-LOCAL/summary.json",
+  "local_summary": {
+    "top_level": 32,
+    "subcases": 29,
+    "skipped": 0,
+    "race_top_level": 4,
+    "race_subcases": 6
+  },
+  "live_status": "not_run",
+  "live_owner": "01a10278-0dd8-7a83-be4c-72fc351bbecf",
+  "live_preconditions": [
+    "集成准确feature提交、10020–10023、canonical reader19或含组合能力的新marker，核全部live replica",
+    "当波manifest固定release/runtime/managed-MCP能力/actor/tenant/agent/scene；测试场域独占",
+    "新claim真实发现employee-progress.report_progress；冻结旧claim不热改",
+    "一个可保持running窗口的真实短工作，阶段输出核验后提报且仍继续；禁止伪造进度/终态",
+    "IM/API/完整generation/journal/outbox/原生messageId分面证据；每例落盘，用户已授权原会话集成发布"
+  ],
+  "cases": [
+    {
+      "id": "PRG-01",
+      "contract_ref": "progress-research-cases.json#PRG-01",
+      "local_test_refs": [
+        "TestEmployeeProgressMCPWakeDeliveryAndNoWorkMutation",
+        "TestEmployeeProgressRuntimeOwnerTokenIsNotBusinessPrincipal"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "实际Runtime工具发现、执行中有用报告、真实模型决定和IM投递待验"
+    },
+    {
+      "id": "PRG-02",
+      "contract_ref": "progress-research-cases.json#PRG-02",
+      "local_test_refs": [
+        "TestEmployeeProgressQuietReplayConflictAndDuplicateSummary",
+        "TestEmployeeProgressAuthorityQuotaAndReaderGate"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "同ID/正文去重本地已验；噪声不自动抽取；原约定/敏感内容静默语义及通用合并未证明"
+    },
+    {
+      "id": "PRG-03",
+      "contract_ref": "progress-research-cases.json#PRG-03",
+      "local_test_refs": [
+        "TestEmployeeProgressMCPWakeDeliveryAndNoWorkMutation"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "本地scripted回复只证明候选上下文和工具边界；真实新意/措辞判断待验"
+    },
+    {
+      "id": "PRG-04",
+      "contract_ref": "progress-research-cases.json#PRG-04",
+      "local_test_refs": [
+        "TestEmployeeProgressConcurrentAdmissionIsOneWake",
+        "TestEmployeeProgressQuietReplayConflictAndDuplicateSummary"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "本地并发与重投已验；真实崩溃/unknown按既有outbox对账的组合行为待验"
+    },
+    {
+      "id": "PRG-05",
+      "contract_ref": "progress-research-cases.json#PRG-05",
+      "local_test_refs": [
+        "TestEmployeeProgressCurrentRunFenceAndIndependentFinal",
+        "TestEmployeeProgressPendingRechecksOriginAndMixedReaders"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "本地revision/cancel/complete窗口和origin/identity/reader已验；真实D/退出/新版本结果待验"
+    },
+    {
+      "id": "PRG-06",
+      "contract_ref": "progress-research-cases.json#PRG-06",
+      "local_test_refs": [
+        "TestEmployeeProgressCurrentRunFenceAndIndependentFinal"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "本地final独立且终态拒旧progress；真实文件和明确禁止中间消息的模型语义待验"
+    },
+    {
+      "id": "PRG-07",
+      "contract_ref": "progress-research-cases.json#PRG-07",
+      "local_test_refs": [
+        "TestEmployeeProgressMCPWakeDeliveryAndNoWorkMutation",
+        "TestEmployeeCurrentTaskContinuesSucceededWithoutIssue",
+        "TestEmployeeLoopSteerTaskToolInterruptsRequesterTask"
+      ],
+      "local_status": "mechanism_passed_semantics_pending",
+      "live_status": "not_run",
+      "remaining": "本地B/C/D受影响路径和不推进工作已验；同scene串联真实效果与新任务原失败仍待验"
+    }
+  ],
+  "retained_failures": [
+    "BASE-TASK明确新执行被模型当旧结果问答；不能用本地回归消除已发生的真实失败"
+  ],
+  "not_in_slice": [
+    "全88重跑",
+    "前台首轮反馈/流式转发",
+    "通用provider进展抽取/批量合并",
+    "任意Run问答等待/完整Capsule"
+  ]
+}

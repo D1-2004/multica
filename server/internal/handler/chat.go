@@ -2227,7 +2227,11 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		allowed := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID)
+		if service.IsEmployeeDirectTask(task) {
+			allowed = h.canReadEmployeeDirectTask(r, task, agent)
+		}
+		if !allowed {
 			writeError(w, http.StatusForbidden, "you do not have access to this agent")
 			return
 		}

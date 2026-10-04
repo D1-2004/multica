@@ -19,13 +19,17 @@ import (
 
 var errDingTalkMessagePolicyCapability = errors.New("managed DingTalk response requires a daemon and runtime supporting dws_message_policy_v1")
 
-// Only capabilities understood by response-policy synchronization are stored.
-// The authenticated transport header is authoritative, never a metadata body.
+// Capabilities used by host admission are stored from the authenticated
+// transport header, never from a user-supplied metadata body.
 func localDingTalkClientCapabilities(header string) []string {
-	capabilities := []string{}
+	advertised := map[string]bool{}
 	for _, candidate := range strings.Split(header, ",") {
-		if strings.TrimSpace(candidate) == protocol.DWSMessagePolicyCapability {
-			return []string{protocol.DWSMessagePolicyCapability}
+		advertised[strings.TrimSpace(candidate)] = true
+	}
+	capabilities := []string{}
+	for _, capability := range []string{protocol.DWSMessagePolicyCapability, protocol.DaemonCapabilityEmployeeDirectV1} {
+		if advertised[capability] {
+			capabilities = append(capabilities, capability)
 		}
 	}
 	return capabilities
@@ -108,6 +112,9 @@ func resolveDingTalkTaskPolicy(ctx context.Context, reader dingTalkTaskPolicyRea
 		return nil, nil
 	}
 	policy := &protocol.DingTalkMessagePolicy{PlatformManagedLifecycle: managed}
+	if _, direct := service.ParseDirectTaskContext(task); direct {
+		policy.FinalTextOwner = protocol.DingTalkFinalTextOwnerHost
+	}
 	if stored.ResponsePolicy != nil {
 		policy.ShowAITag = stored.ResponsePolicy.ShowAITag
 		applyDingTalkOriginReply(policy, stored)

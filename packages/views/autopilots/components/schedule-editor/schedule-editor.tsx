@@ -59,6 +59,10 @@ export interface ScheduleEditorProps {
   /** Fires when the server accepts or rejects the current expression, so the
    *  owning dialog can keep its submit button in step with the inline error. */
   onValidityChange?: (valid: boolean) => void;
+  /** false skips the workspace cron preview (a caller outside a workspace,
+   *  such as the DingTalk configure page): no next-run list, and the
+   *  expression is only checked when the owner saves it. Default true. */
+  serverPreview?: boolean;
 }
 
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -339,6 +343,7 @@ export function ScheduleEditor({
   disabled,
   disabledReason,
   onValidityChange,
+  serverPreview = true,
 }: ScheduleEditorProps) {
   const { t, i18n } = useT("autopilots");
   const describe = useDescribeSchedule();
@@ -479,7 +484,7 @@ export function ScheduleEditor({
   const previewExpr = useDebouncedValue(committedCron, PREVIEW_DEBOUNCE_MS);
   const preview = useQuery(
     cronPreviewOptions(wsId, previewExpr, value.timezone, {
-      enabled: previewExpr.trim().length > 0,
+      enabled: serverPreview && previewExpr.trim().length > 0,
     }),
   );
   const { refetch } = preview;
@@ -897,7 +902,7 @@ export function ScheduleEditor({
             <p>
               {serverAccepted
                 ? t(($) => $.schedule_editor.advanced_hint)
-                : previewUnavailable
+                : previewUnavailable || !serverPreview
                   ? t(($) => $.schedule_editor.advanced_unverified)
                   : t(($) => $.schedule_editor.advanced_checking)}
             </p>
@@ -916,7 +921,7 @@ export function ScheduleEditor({
             instead of tearing the section down, so a re-render of the same
             schedule never flashes — it just dims and reports busy until the
             answer is current. */}
-        {cronErrorDetail === null && (
+        {cronErrorDetail === null && serverPreview && (
         <div
           aria-busy={previewShowsList ? previewIsPending : undefined}
           className={cn(

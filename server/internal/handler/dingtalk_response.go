@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/util"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -63,6 +66,30 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		ShowAITag:            c.ResponsePolicy.ShowAITag,
 		DWSEnvironment:       commandDWSEnvironment(c),
 		CallbackURL:          c.CompletionCallback.ResponseURL, CallbackTarget: c.CompletionCallback.Target,
+	}
+	// The reply goes to the dispatch's scene: its conversation id and kind
+	// are read back from the scene directory, not taken from the event again.
+	if c.AgentScene != nil {
+		sc, err := dispatchScene(ctx, db.New(tx), c, scope)
+		if err != nil {
+			return fmt.Errorf("load dispatch scene: %w", err)
+		}
+		in.SceneID = uuidToString(sc.ID)
+		in.ConversationID = sc.ExternalSceneID
+		in.IsGroup = sc.SceneKind == scene.KindGroup
+	} else if in.ReplyToOpenMsgID == "" {
+		// Without a scene the only way to answer would be a send chosen by
+		// the event's conversation type (a 1:1 send to the sender), which no
+		// scene backs (docs/agent-scene.md §3). A quote reply into the
+		// event's own conversation needs no scene; with nothing to quote no
+		// managed route is registered.
+		slog.InfoContext(ctx, "managed DingTalk response route skipped; no scene to answer in",
+			"event", "dingtalk_response_route_skipped",
+			"agent_id", uuidToString(scope.AgentID),
+			"conversation_type", c.Event.Data.Conversation.Type,
+			"reason", "scene_unresolved",
+		)
+		return nil
 	}
 	// Register both supplied callback paths; never reconstruct one from another.
 	for _, callback := range []string{c.CompletionCallback.URL, c.CompletionCallback.UpdateURL} {
@@ -282,9 +309,32 @@ func (h *Handler) BindVerifiedDingTalkSend(ctx context.Context, in dingtalkrespo
 		}
 		title = issue.Title
 	}
+	// The reply into the dispatch's own conversation binds the dispatch's
+	// scene. A delivery into any other conversation binds only a scene the
+	// agent already has: the provider receipt does not say whether that
+	// conversation is a group or a 1:1 chat, and a kind is never guessed.
+	var node assoc.SceneNode
+	found := false
+	if in.SceneID != "" && cid == in.ConversationID {
+		node, found = h.sceneNodeByID(ctx, in.WorkspaceID, in.AgentID, in.SceneID)
+	} else {
+		var err error
+		node, found, err = h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, "", in.DWSOrgID, false, false)
+		if err != nil {
+			return err
+		}
+	}
+	if !found {
+		slog.InfoContext(ctx, "dingtalk response outbound bind skipped; conversation has no scene",
+			"event", "assoc_outbound_bind_skipped",
+			"agent_id", in.AgentID,
+			"reason", "scene_unresolved",
+		)
+		return nil
+	}
 	_, err := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
 		WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, IssueID: in.IssueID, IssueTitle: title,
-		RunID: in.TaskID, ConversationID: cid, EvidenceID: messageID,
+		RunID: in.TaskID, Scene: node, EvidenceID: messageID,
 	})
 	return err
 }

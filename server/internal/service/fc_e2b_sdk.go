@@ -23,10 +23,10 @@ import (
 )
 
 const (
-	// The e2b CLI attaches to a sandbox for every `sandbox exec` through
-	// POST /sandboxes/{id}/connect with the JS SDK default lease of 300s.
-	// That call is not a read-only attach. Sending the same body keeps the
-	// sandbox lease behaviour of every exec unchanged.
+	// fcE2BSDKConnectTimeoutSeconds is the lease POST /sandboxes/{id}/connect
+	// uses when the caller did not pin one. Direct SDK exec keeps the CLI's
+	// 300s attach. The launcher pins the task lifetime (4800s floor) so a
+	// connect cannot shrink a sandbox that was just renewed for the task.
 	fcE2BSDKConnectTimeoutSeconds = e2b.DefaultSandboxTimeoutSeconds
 	// fcE2BSDKMaxOutputBytes bounds the stdout one command may return. The
 	// SDK accumulates the whole stream internally, so exceeding the bound stops
@@ -467,8 +467,24 @@ func compareFCE2BVersion(a, b string) int {
 	return 0
 }
 
+type fcE2BConnectTimeoutKey struct{}
+
+func withFCE2BConnectTimeout(ctx context.Context, seconds int) context.Context {
+	if seconds <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, fcE2BConnectTimeoutKey{}, seconds)
+}
+
+func fcE2BConnectTimeoutFromContext(ctx context.Context) int {
+	if seconds, ok := ctx.Value(fcE2BConnectTimeoutKey{}).(int); ok && seconds > 0 {
+		return seconds
+	}
+	return fcE2BSDKConnectTimeoutSeconds
+}
+
 func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request fcE2BExecRequest) (string, error) {
-	sandbox, err := client.ConnectSandbox(ctx, request.SandboxID, fcE2BSDKConnectTimeoutSeconds)
+	sandbox, err := client.ConnectSandbox(ctx, request.SandboxID, fcE2BConnectTimeoutFromContext(ctx))
 	if err != nil {
 		return "", fcE2BSDKFailure(fcE2BContextCause(ctx, err), "", "")
 	}

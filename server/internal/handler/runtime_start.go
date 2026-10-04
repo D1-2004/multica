@@ -65,6 +65,9 @@ func (h *Handler) RecordRuntimeStartEvent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "runtime start attempt not found")
 		return
 	}
+	if !h.requireEmployeeDirectExecution(w, r, task) {
+		return
+	}
 	attempt, err := h.Queries.GetAgentTaskRuntimeStartAttempt(r.Context(), db.GetAgentTaskRuntimeStartAttemptParams{
 		ID:        attemptID,
 		TaskID:    taskID,

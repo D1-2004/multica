@@ -91,7 +91,7 @@ func TestMergeRepairsOversizeCommitWithFreshBoundedDeadline(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(body))), Request: r}, nil
 			})
 			f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: "http://flush.test", MaxRetries: -1, HTTPClient: client})}
-			got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid", MemoryText: "旧约定"}, nil, nil)
+			got, fallback, err := f.merge(ctx, Memory{AgentSceneMemory: db.AgentSceneMemory{MemoryText: "旧约定"}, Scene: db.AgentScene{ExternalSceneID: "cid"}}, nil, nil)
 			if len(deadlines) != 2 || fallback {
 				t.Fatalf("calls=%d fallback=%v error=%v", len(deadlines), fallback, err)
 			}
@@ -130,7 +130,7 @@ func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
 		"## 稳定知识与约定",
 		"- 主链路跳转顺序已冻结 (来自圆畅, 9月3日 20:44的发言)",
 	}, "\n")
-	got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: old}, []HistoryEvent{
+	got, fallback, err := f.merge(ctx, Memory{AgentSceneMemory: db.AgentSceneMemory{MemoryText: old}, Scene: db.AgentScene{ExternalSceneID: "cid-ownergraph"}}, []HistoryEvent{
 		{Speaker: "圆畅", Content: "PoC主链路Demo筹备群口径不变"},
 	}, nil)
 	if err == nil || fallback {
@@ -153,7 +153,7 @@ func TestMergeDisablesThinkingAndRequiresCommitTool(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: server.URL, MaxRetries: -1})}
-	got, fallback, err := f.merge(context.Background(), db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: "口径"}, []HistoryEvent{
+	got, fallback, err := f.merge(context.Background(), Memory{AgentSceneMemory: db.AgentSceneMemory{MemoryText: "口径"}, Scene: db.AgentScene{ExternalSceneID: "cid-ownergraph"}}, []HistoryEvent{
 		{Speaker: "圆畅", Content: "口径不变"},
 	}, nil)
 	if err != nil || fallback || got != "口径" {
@@ -202,10 +202,7 @@ func TestFallbackMergeSeedsEmptyMemory(t *testing.T) {
 
 func TestPlanFlushRetriesWhenClaimedEvidenceMissing(t *testing.T) {
 	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(cutoff),
-		LeaseTargetThroughEvidenceID: "msg-inbound",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(cutoff), LeaseTargetThroughEvidenceID: "msg-inbound"}, Scene: db.AgentScene{}}
 	_, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "older",
 		OccurredAt: cutoff.Add(-time.Minute),
@@ -218,12 +215,7 @@ func TestPlanFlushRetriesWhenClaimedEvidenceMissing(t *testing.T) {
 
 func TestPlanFlushCaughtUpWhenClaimedEvidenceVisible(t *testing.T) {
 	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(cutoff),
-		LeaseTargetThroughEvidenceID: "msg-inbound",
-		SourceCursorAt:               timestamptz(cutoff.Add(-time.Hour)),
-		SourceCursorEvidenceID:       "old",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(cutoff), LeaseTargetThroughEvidenceID: "msg-inbound", SourceCursorAt: timestamptz(cutoff.Add(-time.Hour)), SourceCursorEvidenceID: "old"}, Scene: db.AgentScene{}}
 	plan, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "msg-inbound",
 		OccurredAt: cutoff,
@@ -239,12 +231,7 @@ func TestPlanFlushCaughtUpWhenClaimedEvidenceVisible(t *testing.T) {
 
 func TestPlanFlushIncludesTriggerBeforeCursor(t *testing.T) {
 	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(cutoff),
-		LeaseTargetThroughEvidenceID: "msg-new",
-		SourceCursorAt:               timestamptz(cutoff.Add(time.Second)),
-		SourceCursorEvidenceID:       "zzz",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(cutoff), LeaseTargetThroughEvidenceID: "msg-new", SourceCursorAt: timestamptz(cutoff.Add(time.Second)), SourceCursorEvidenceID: "zzz"}, Scene: db.AgentScene{}}
 	plan, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "msg-new",
 		OccurredAt: cutoff,
@@ -304,16 +291,7 @@ func TestPlanFlushMergesAllLateTriggersInWindow(t *testing.T) {
 	later := time.Date(2026, 9, 2, 12, 0, 2, 0, time.UTC)
 	mid := later.Add(-time.Second)
 	early := later.Add(-2 * time.Second)
-	row := db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(later),
-		LeaseTargetThroughEvidenceID: "msg-later",
-		LastTriggerAt:                timestamptz(mid),
-		LastTriggerEvidenceID:        "msg-mid",
-		PendingFromAt:                timestamptz(early),
-		PendingFromEvidenceID:        "msg-early",
-		SourceCursorAt:               timestamptz(later),
-		SourceCursorEvidenceID:       "msg-later",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(later), LeaseTargetThroughEvidenceID: "msg-later", LastTriggerAt: timestamptz(mid), LastTriggerEvidenceID: "msg-mid", PendingFromAt: timestamptz(early), PendingFromEvidenceID: "msg-early", SourceCursorAt: timestamptz(later), SourceCursorEvidenceID: "msg-later"}, Scene: db.AgentScene{}}
 	plan, err := planCompleteFlush(row, []HistoryEvent{
 		{EvidenceID: "msg-early", OccurredAt: early, Content: "late A"},
 		{EvidenceID: "msg-mid", OccurredAt: mid, Content: "late B"},
@@ -345,19 +323,12 @@ func TestPlanFlushSameSecondSmallerEvidence(t *testing.T) {
 	}
 }
 
-func claimedAfterLaterThenEarlier(laterAt time.Time, laterEv string, earlierAt time.Time, earlierEv string) db.SceneMemory {
-	return db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(laterAt),
-		LeaseTargetThroughEvidenceID: laterEv,
-		LastTriggerAt:                timestamptz(earlierAt),
-		LastTriggerEvidenceID:        earlierEv,
-		SourceCursorAt:               timestamptz(laterAt),
-		SourceCursorEvidenceID:       laterEv,
-	}
+func claimedAfterLaterThenEarlier(laterAt time.Time, laterEv string, earlierAt time.Time, earlierEv string) Memory {
+	return Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(laterAt), LeaseTargetThroughEvidenceID: laterEv, LastTriggerAt: timestamptz(earlierAt), LastTriggerEvidenceID: earlierEv, SourceCursorAt: timestamptz(laterAt), SourceCursorEvidenceID: laterEv}, Scene: db.AgentScene{}}
 }
 
 func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {
-	plan, err := planCompleteFlush(db.SceneMemory{}, nil)
+	plan, err := planCompleteFlush(Memory{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

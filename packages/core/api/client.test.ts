@@ -3892,16 +3892,22 @@ describe("ApiClient extractAgentVoice", () => {
 });
 
 describe("ApiClient agent scene memory", () => {
+  // The scene_id is the memory's identity; the DingTalk conversation id is
+  // display-only.
+  const sceneId = "66666666-6666-4666-8666-666666666666";
+
   it("lists scene memory rows through the validated endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify([
           {
-            id: "mem-1",
+            id: sceneId,
+            scene_id: sceneId,
             workspace_id: "ws-1",
             agent_id: "agent-1",
             org_id: "org-1",
-            scene_key: "cid+abc",
+            scene_key: sceneId,
+            conversation_id: "cid+abc",
             scene_kind: "dm",
             scene_title: "冬翔",
             memory_text: "GoalMate 是工具",
@@ -3921,8 +3927,10 @@ describe("ApiClient agent scene memory", () => {
       new ApiClient("https://api.example.test").listAgentSceneMemory("agent-1"),
     ).resolves.toEqual([
       expect.objectContaining({
-        id: "mem-1",
-        scene_key: "cid+abc",
+        id: sceneId,
+        scene_id: sceneId,
+        scene_key: sceneId,
+        conversation_id: "cid+abc",
         memory_text: "GoalMate 是工具",
         memory_revision: 2,
       }),
@@ -3949,13 +3957,15 @@ describe("ApiClient agent scene memory", () => {
     ).resolves.toEqual([]);
   });
 
-  it("loads one scene memory row by id", async () => {
+  it("loads one scene's memory by its scene_id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          id: "mem-9",
+          id: sceneId,
+          scene_id: sceneId,
           org_id: "org-old",
-          scene_key: "cid+abc",
+          scene_key: sceneId,
+          conversation_id: "cid+abc",
           scene_kind: "group",
           memory_text: "notes",
           memory_revision: 4,
@@ -3965,14 +3975,42 @@ describe("ApiClient agent scene memory", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     await expect(
-      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", "mem-9"),
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", sceneId),
     ).resolves.toEqual(
-      expect.objectContaining({ id: "mem-9", scene_key: "cid+abc", memory_revision: 4 }),
+      expect.objectContaining({ id: sceneId, scene_id: sceneId, conversation_id: "cid+abc", memory_revision: 4 }),
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/agents/agent-1/scene-memory/mem-9",
+      `https://api.example.test/api/agents/agent-1/scene-memory/${sceneId}`,
       expect.any(Object),
     );
+  });
+
+  it("names the scene by scene_key or id when scene_id or conversation_id is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ id: sceneId, scene_key: sceneId, conversation_id: null, memory_text: "notes" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    await expect(
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", sceneId),
+    ).resolves.toEqual(expect.objectContaining({ id: sceneId, scene_id: sceneId, conversation_id: "" }));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: sceneId, scene_id: 7, memory_text: "notes" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    await expect(
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", sceneId),
+    ).resolves.toEqual(expect.objectContaining({ scene_id: sceneId, scene_key: "", conversation_id: "" }));
   });
 
   it("falls back to an empty row for a malformed memory response", async () => {
@@ -3986,38 +4024,51 @@ describe("ApiClient agent scene memory", () => {
       ),
     );
     await expect(
-      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", "mem-9"),
-    ).resolves.toEqual(expect.objectContaining({ id: "", scene_key: "" }));
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", sceneId),
+    ).resolves.toEqual(expect.objectContaining({ id: "", scene_id: "", scene_key: "", conversation_id: "" }));
   });
 
-  it("updates scene memory through PUT and parses the row", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          id: "mem-1",
-          scene_key: "cid+abc",
-          memory_text: "edited",
-          memory_revision: 3,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+  it("updates, resets and clears relations of a scene's memory by its scene_id", async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: sceneId,
+            scene_id: sceneId,
+            scene_key: sceneId,
+            memory_text: "edited",
+            memory_revision: 3,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
     await expect(
-      new ApiClient("https://api.example.test").updateAgentSceneMemory("agent-1", "mem-1", {
+      client.updateAgentSceneMemory("agent-1", sceneId, {
         memory_text: "edited",
         expected_revision: 2,
       }),
     ).resolves.toEqual(
-      expect.objectContaining({ id: "mem-1", memory_text: "edited", memory_revision: 3 }),
+      expect.objectContaining({ id: sceneId, memory_text: "edited", memory_revision: 3 }),
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.example.test/api/agents/agent-1/scene-memory/mem-1",
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://api.example.test/api/agents/agent-1/scene-memory/${sceneId}`,
       expect.objectContaining({ method: "PUT" }),
+    );
+    await client.resetAgentSceneMemory("agent-1", sceneId);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://api.example.test/api/agents/agent-1/scene-memory/${sceneId}/reset`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    await client.clearAgentSceneRelations("agent-1", sceneId);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://api.example.test/api/agents/agent-1/scene-memory/${sceneId}/relations/clear`,
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("lists scene relations from assoc recall and falls back when malformed", async () => {
+  it("lists scene relations from assoc recall by scene_id and falls back when malformed", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -4035,7 +4086,7 @@ describe("ApiClient agent scene memory", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     await expect(
-      new ApiClient("https://api.example.test").listAgentSceneRelations("agent-1", "cid+abc"),
+      new ApiClient("https://api.example.test").listAgentSceneRelations("agent-1", sceneId),
     ).resolves.toEqual([
       expect.objectContaining({
         issue_id: "iss-1",
@@ -4043,6 +4094,12 @@ describe("ApiClient agent scene memory", () => {
         on_this_scene: true,
       }),
     ]);
+    const url = new URL(fetchMock.mock.calls[0]?.[0] as string);
+    expect(url.pathname).toBe("/api/assoc/recall");
+    expect(url.searchParams.get("agent_id")).toBe("agent-1");
+    expect(url.searchParams.get("scene_id")).toBe(sceneId);
+    expect(url.searchParams.has("conversation_id")).toBe(false);
+    expect(url.searchParams.get("since")).toBe("7d");
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -4053,7 +4110,7 @@ describe("ApiClient agent scene memory", () => {
       ),
     );
     await expect(
-      new ApiClient("https://api.example.test").listAgentSceneRelations("agent-1", "cid+abc"),
+      new ApiClient("https://api.example.test").listAgentSceneRelations("agent-1", sceneId),
     ).resolves.toEqual([]);
   });
 });

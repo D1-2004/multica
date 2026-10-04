@@ -1,16 +1,22 @@
 # FC Runtime candidate workflow contract
 
+Apply only the stages selected in the parent SKILL.md and current delivery
+contract. Agent/Issue creation, live task canaries and device matrices below
+belong to configured/running-runtime acceptance, not source review or build-only
+work. Missing real evidence remains unverified; it cannot be replaced by review
+when the requested claim is that the runtime actually works.
+
 ## Authorities
 
 | Concern | Authority |
 | --- | --- |
 | Runtime source | `dingtalk-ai-lab/multica-fc-hermes-runtime` on internal Code |
-| Dedicated candidate build | Aone CI pipeline `295064` |
-| Dedicated pipeline YAML | `.aoneci/runtime-fc-runtime-dev-loop-candidate.yaml` |
+| Dedicated candidate build | Verified candidate pipeline for the actual Runtime branch |
+| Dedicated pipeline YAML | Candidate YAML selected from the current Runtime repository |
 | Multica API | selected development/pre-release Multica server |
 | Runtime identity | E2B Template ID, not display alias |
 
-The verified pipeline ID is an environment binding, not source truth. It belongs to the Runtime branch `codex/fc-runtime-dev-loop-20260903`. `doctor` checks that the ID still points to the expected repository and candidate YAML before any build.
+Pipeline IDs and helper defaults are environment bindings, not source truth or required developer branches. `doctor` checks that the selected ID still points to the expected repository and candidate YAML before any build; explicitly override a mapping that does not match the task.
 
 For another long-lived Runtime branch, follow that repository's rule: add a separate candidate YAML that listens only to the branch and push it. Aone automatically creates the pipeline and starts its first `PUSH` run. Then pass the resulting `--pipeline-id` and `--pipeline-path`. The same values can be supplied as `FC_RUNTIME_CANDIDATE_PIPELINE_ID` and `FC_RUNTIME_CANDIDATE_PIPELINE_PATH`. Keeping ID and path as a checked pair prevents an agent from silently repurposing the formal `master` pipeline or somebody else's branch pipeline.
 
@@ -38,8 +44,8 @@ The script verifies `runtime_commit == Aone run.commit == --runtime-commit` and 
 For the dedicated development-loop pipeline, the deterministic sequence is:
 
 ```bash
-a1 ci pipeline get 295064 --repo dingtalk-ai-lab/multica-fc-hermes-runtime -f json
-a1 ci pipeline run 295064 --repo dingtalk-ai-lab/multica-fc-hermes-runtime --branch codex/fc-runtime-dev-loop-20260903 --param multica_ref=<40-char-commit> -f json
+a1 ci pipeline get <candidate-pipeline-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime -f json
+a1 ci pipeline run <candidate-pipeline-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime --branch <runtime-branch> --param multica_ref=<40-char-commit> -f json
 a1 ci run get <run-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime -f json
 a1 ci run log <run-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime --job build-publish-and-verify --step build-and-verify-e2b-template -f json
 ```
@@ -120,7 +126,7 @@ When persistent Daemon code or server daemon protocol changed, run the separate 
 | CI succeeded, API failed | reuse run ID; inspect-build then switch/create |
 | create response lost | rerun the same unique name with `--reconcile-only`; reuse one exact row, but never POST while zero matches remain an unknown outcome |
 | PAT invalid | refresh profile; no rebuild |
-| publisher permission missing | update server allowlist through the normal config/deploy path; no bypass |
+| publisher permission missing | report blocked configuration; do not bypass or expand this task into allowlist/deployment changes. An explicitly authorized permission change follows its normal separate config/deploy path |
 | existing Runtime is stable | create a separate candidate Runtime |
 | wrong provider | use a provider declared in Template metadata or rebuild the image contract |
 | FC canary failed after switch | restore `previous_template_id`, read back, retain failed task evidence |

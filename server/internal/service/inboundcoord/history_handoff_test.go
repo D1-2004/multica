@@ -13,7 +13,7 @@ const handoffScope = "仅改查询缓存，不改审批权限校验，不做生�
 func historyHandoffTurn(t *testing.T) Turn {
 	t.Helper()
 	before := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
-	turn := Turn{Source: SourceWeb, SenderName: "当前委托人", PersonID: "current-sender", Message: "按已确认范围继续同一事项", EvidenceID: "current-evidence", ConversationID: "cid-handoff", HistoryStatus: "loaded", HistoryBefore: before,
+	turn := Turn{Source: SourceWeb, SenderName: "当前委托人", PersonID: "current-sender", Message: "按已确认范围继续同一事项", EvidenceID: "current-evidence", SceneID: testSceneID("cid-handoff"), ConversationID: "cid-handoff", HistoryStatus: "loaded", HistoryBefore: before,
 		History: []HistoryLine{{Role: "user", SenderID: "original-author", EvidenceID: "scope-confirmation", Timestamp: before.Add(-time.Minute), Content: handoffScope, ReplyToEvidenceID: "prior-question", ReplyToSenderID: "question-author"}}}
 	seq := 0
 	if _, err := rememberCoordinationRead(&turn, &seq, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {

@@ -5,6 +5,7 @@ const (
 	DingTalkResponseModeCoordinator = "multica_coordinator"
 	DingTalkResponseModeLegacy      = "legacy"
 	DWSMessagePolicyCapability      = "dws_message_policy_v1"
+	DingTalkFinalTextOwnerHost      = "host"
 )
 
 // DingTalkResponsePolicy is frozen at ingress and never inferred from surface.
@@ -32,10 +33,36 @@ const (
 	// DingTalkReplyToOpenMsgIDContextKey is the inbound openMsgId this task
 	// should quote. IndependentIssueTaskContext preserves unknown keys.
 	DingTalkReplyToOpenMsgIDContextKey = "dingtalk_reply_to_open_msg_id"
+	// AgentSceneContextKey holds the task's SceneRef ({"scene_id": …}), the
+	// server-resolved Agent work scene of the dispatch (docs/agent-scene.md).
+	AgentSceneContextKey = "agent_scene"
+	// SceneRoutineContextKey marks a scene routine run: the Host-frozen
+	// binding of a cron or webhook routine to its Agent work scene
+	// ({"routine_id", "tenant_org_id", "kind", "person_staff_id", ...}). It
+	// travels with AgentSceneContextKey and carries no inbound message.
+	SceneRoutineContextKey = "scene_routine"
+	// SceneConfigMCPPathPrefix is the route of a task's config-qwen-tag-scene
+	// MCP server; the segment after it is the task's signed scene token, so
+	// every log that prints request paths redacts it
+	// (RedactSceneConfigMCPPath).
+	SceneConfigMCPPathPrefix = "/api/scene-config/mcp/"
 )
+
+// RedactSceneConfigMCPPath returns path with the scene token of a
+// config-qwen-tag-scene route replaced by "[redacted]"; other paths pass
+// through.
+func RedactSceneConfigMCPPath(path string) string {
+	if len(path) > len(SceneConfigMCPPathPrefix) && path[:len(SceneConfigMCPPathPrefix)] == SceneConfigMCPPathPrefix {
+		return SceneConfigMCPPathPrefix + "[redacted]"
+	}
+	return path
+}
 
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.
 type DingTalkMessagePolicy struct {
+	// FinalTextOwner is an additive Host declaration for Direct completion text.
+	// Empty and unrecognized values preserve the existing tool behavior.
+	FinalTextOwner           string `json:"final_text_owner,omitempty"`
 	ShowAITag                bool   `json:"show_ai_tag"`
 	PlatformManagedLifecycle bool   `json:"platform_managed_lifecycle"`
 	ReplyToOpenMsgID         string `json:"reply_to_open_msg_id,omitempty"`

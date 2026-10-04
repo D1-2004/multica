@@ -380,6 +380,10 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		h.writeMulticaMCPToolError(w, request.ID, "connector rate limit or store unavailable")
 		return
 	}
+	denied := ""
+	if request.Method == "tools/call" && c.CatalogSlug == "github" {
+		denied = githubToolBlockReason(params.Name, h.githubGrantView(r.Context(), c))
+	}
 	if err = h.connectorAudit(r, *c, task, agent, request.Method, params.Name, "forwarded"); err != nil {
 		h.writeMulticaMCPToolError(w, request.ID, "connector audit unavailable")
 		return
@@ -391,7 +395,13 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_ = http.NewResponseController(w).Flush()
-	result, err := h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
+	var result any
+	if denied != "" {
+		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: denied}}}
+		err = nil
+	} else {
+		result, err = h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
+	}
 	outcome := "ok"
 	failure := "Internal MCP tool list unavailable"
 	if errors.Is(err, errConnectorReconnectRequired) {
@@ -403,6 +413,13 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	} else if err != nil {
 		outcome = "upstream_error"
 		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "Internal MCP upstream unavailable"}}}
+	}
+	if c.CatalogSlug == "github" && request.Method == "tools/call" && err == nil {
+		if toolResult, ok := result.(multicaMCPToolResult); ok && toolResult.IsError && githubUpstreamPermissionFailure(toolResult) {
+			if message := githubUpstreamPermissionMessage(params.Name); message != "" {
+				result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: message}}}
+			}
+		}
 	}
 	if toolResult, ok := result.(multicaMCPToolResult); ok && toolResult.IsError && err == nil {
 		outcome = "tool_error"
@@ -437,6 +454,17 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 			if allowed[name] {
 				tools = append(tools, item)
 			}
+		}
+		if c.CatalogSlug == "github" {
+			access := h.githubGrantView(ctx, &c)
+			kept := make([]map[string]any, 0, len(tools))
+			for _, item := range tools {
+				name, _ := item["name"].(string)
+				if githubToolBlockReason(name, access) == "" {
+					kept = append(kept, item)
+				}
+			}
+			tools = kept
 		}
 		list["tools"] = tools
 	}

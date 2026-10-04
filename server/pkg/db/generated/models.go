@@ -167,6 +167,32 @@ type A2aTaskTurn struct {
 	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
 }
 
+type A2uiInteraction struct {
+	ID             pgtype.UUID        `json:"id"`
+	PublicID       string             `json:"public_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	SenderUid      string             `json:"sender_uid"`
+	SenderOrgID    string             `json:"sender_org_id"`
+	SceneID        string             `json:"scene_id"`
+	ConversationID string             `json:"conversation_id"`
+	MessageID      string             `json:"message_id"`
+	ThreadID       string             `json:"thread_id"`
+	SourceRef      string             `json:"source_ref"`
+	Kind           string             `json:"kind"`
+	Status         string             `json:"status"`
+	Header         string             `json:"header"`
+	Question       string             `json:"question"`
+	Request        []byte             `json:"request"`
+	CardBizID      string             `json:"card_biz_id"`
+	EventID        string             `json:"event_id"`
+	Result         []byte             `json:"result"`
+	OperatorUid    string             `json:"operator_uid"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type ActivityLog struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -212,6 +238,7 @@ type Agent struct {
 	DispatchAlwaysNewIssue  bool        `json:"dispatch_always_new_issue"`
 	DispatchPromptOverrides []byte      `json:"dispatch_prompt_overrides"`
 	CoordinatorContract     []byte      `json:"coordinator_contract"`
+	SandboxConnectionReuse  bool        `json:"sandbox_connection_reuse"`
 }
 
 type AgentA2aEndpoint struct {
@@ -762,6 +789,7 @@ type AutopilotTrigger struct {
 	MergeIntervalMinutes pgtype.Int4        `json:"merge_interval_minutes"`
 	MessageRevision      int64              `json:"message_revision"`
 	MessageAcceptAfter   pgtype.Timestamptz `json:"message_accept_after"`
+	RunAt                pgtype.Timestamptz `json:"run_at"`
 }
 
 type ChannelBindingToken struct {
@@ -1213,7 +1241,6 @@ type Feedback struct {
 	Metadata    []byte             `json:"metadata"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
-
 
 type GithubPendingCheckSuite struct {
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1927,6 +1954,7 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Event     []byte             `json:"event"`
 }
 
 type TaskToken struct {
@@ -2236,7 +2264,6 @@ type DshPluginCatalogEntry struct {
 	RefreshedAt    pgtype.Timestamptz `json:"refreshed_at"`
 }
 
-
 type GitConnection struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
@@ -2249,4 +2276,22 @@ type GitConnection struct {
 	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SceneEventReceipt struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	PrincipalID   pgtype.UUID        `json:"principal_id"`
+	TenantOrgID   string             `json:"tenant_org_id"`
+	Source        string             `json:"source"`
+	SourceEventID string             `json:"source_event_id"`
+	Fingerprint   string             `json:"fingerprint"`
+	Envelope      []byte             `json:"envelope"`
+	SceneID       pgtype.UUID        `json:"scene_id"`
+	Route         string             `json:"route"`
+	State         string             `json:"state"`
+	Reason        string             `json:"reason"`
+	ConfigVersion string             `json:"config_version"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }

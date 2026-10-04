@@ -58,6 +58,7 @@ type ConnectedAppData = runtimeapps.ConnectedApp
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	DirectTaskPrompt     string                    `json:"direct_task_prompt,omitempty"`
 	DSHNativePrompt      *protocol.DSHNativePrompt `json:"dsh_native_prompt,omitempty"`
 	ID                   string                    `json:"id"`
 	AgentID              string                    `json:"agent_id"`
@@ -292,14 +293,15 @@ type TaskUsageEntry struct {
 
 // TaskResult is the outcome of executing a task.
 type TaskResult struct {
-	Status        string `json:"status"`
-	Comment       string `json:"comment"`
-	BranchName    string `json:"branch_name,omitempty"`
-	EnvType       string `json:"env_type,omitempty"`
-	SessionID     string `json:"session_id,omitempty"` // Claude session ID for future resumption
-	WorkDir       string `json:"work_dir,omitempty"`   // working directory used during execution
-	EnvRoot       string `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
-	FailureReason string `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
+	ProcessGroupStopped bool   `json:"-"`
+	Status              string `json:"status"`
+	Comment             string `json:"comment"`
+	BranchName          string `json:"branch_name,omitempty"`
+	EnvType             string `json:"env_type,omitempty"`
+	SessionID           string `json:"session_id,omitempty"` // Claude session ID for future resumption
+	WorkDir             string `json:"work_dir,omitempty"`   // working directory used during execution
+	EnvRoot             string `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
+	FailureReason       string `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
 	// SessionRolloutMissing is set when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). Forwarded to
 	// the terminal report so the server clears the resume pointer and flags the

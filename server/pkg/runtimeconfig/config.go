@@ -83,6 +83,7 @@ type FeatureConfig struct {
 }
 
 type RuntimeConfig struct {
+	EventSceneRouter *EventSceneRouterConfig `json:"event_scene_router,omitempty"`
 	// FCE2BSDKRollout is the FC/E2B SDK switch; nil keeps the e2b CLI.
 	FCE2BSDKRollout *FCE2BSDKRollout `json:"fc_e2b_sdk_rollout,omitempty"`
 	// UseDWSForTag sends the server's DingTalk calls (history reads, sends,
@@ -98,6 +99,48 @@ type RuntimeConfig struct {
 	// A single Diamond rollout controls the performance batch. Missing or
 	// empty targets never opt an agent into a newly deployed optimization.
 	PerformanceOptimization *PerformanceOptimizationConfig `json:"performance_optimization,omitempty"`
+	// EmployeeWatchdog holds the stall-notice thresholds. It stays raw here and
+	// is decoded strictly (unknown keys rejected) by the server, which owns the
+	// schema; absent keeps the built-in defaults.
+	EmployeeWatchdog json.RawMessage `json:"employee_watchdog,omitempty"`
+	// EmployeeVision optionally overrides the code's probe-verified background
+	// vision executors (runtime provider + agent model). Raw here and decoded
+	// strictly by the server; absent keeps the code default.
+	EmployeeVision json.RawMessage `json:"employee_vision,omitempty"`
+}
+
+// EventSceneRouterConfig selects exact tenant/agent targets, never a wildcard.
+type EventSceneRouterConfig struct {
+	Enabled bool                     `json:"enabled"`
+	Targets []EventSceneRouterTarget `json:"targets"`
+}
+
+type EventSceneRouterTarget struct {
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	TenantOrgID string `json:"tenant_org_id"`
+}
+
+func (c EventSceneRouterConfig) Allows(workspaceID, agentID, orgID string) bool {
+	return c.Enabled && slices.Contains(c.Targets, EventSceneRouterTarget{workspaceID, agentID, orgID})
+}
+
+// Validate rejects broad or ambiguous deployment targets.
+func (rollout EventSceneRouterConfig) Validate() error {
+	seen := make(map[EventSceneRouterTarget]bool)
+	for _, target := range rollout.Targets {
+		for _, id := range []string{target.WorkspaceID, target.AgentID} {
+			if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
+				return fmt.Errorf("event_scene_router.targets requires canonical workspace and agent UUIDs")
+			}
+		}
+		if target.TenantOrgID == "" || len(target.TenantOrgID) > 128 || strings.TrimSpace(target.TenantOrgID) != target.TenantOrgID || seen[target] {
+			return fmt.Errorf("event_scene_router.targets requires unique targets with non-empty tenant_org_id")
+		}
+		seen[target] = true
+	}
+
+	return nil
 }
 
 type PerformanceOptimizationConfig struct {
@@ -198,6 +241,9 @@ type FCE2BConfig struct {
 	Domain                       string   `json:"domain"`
 	TimeoutSeconds               int      `json:"timeout_seconds"`
 	SandboxReadyTimeout          Duration `json:"sandbox_ready_timeout"`
+	// ConnectionReuse carries the per-sandbox task cap. Nil uses the default
+	// of 6. The agent switch decides whether reuse is on.
+	ConnectionReuse *FCE2BConnectionReuse `json:"connection_reuse,omitempty"`
 }
 
 type ASBConfig struct {
@@ -411,6 +457,11 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	if rollout := c.EventSceneRouter; rollout != nil {
+		if err := rollout.Validate(); err != nil {
+			return err
+		}
+	}
 	if rollout := c.PerformanceOptimization; rollout != nil {
 		if err := validateUnique("performance_optimization.agent_ids", rollout.AgentIDs, false); err != nil {
 			return err
@@ -492,6 +543,11 @@ func (c RuntimeConfig) validate() error {
 		}
 		if strings.TrimSpace(c.ASB.ResourceCPU) == "" || strings.TrimSpace(c.ASB.ResourceMemory) == "" {
 			return fmt.Errorf("asb resource_cpu and resource_memory are required when enabled")
+		}
+	}
+	if c.FCE2B.ConnectionReuse != nil {
+		if err := c.FCE2B.ConnectionReuse.validate(); err != nil {
+			return err
 		}
 	}
 	if c.FCE2BSDKRollout != nil {

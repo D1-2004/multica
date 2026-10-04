@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +40,13 @@ func TestCatalogConnectorWorkspaceStartBindsTheStartingBrowser(t *testing.T) {
 			}
 			query := f.provideAuthorizeURL(t, started.AuthorizeURL)
 			state := query.Get("state")
-			if !strings.HasPrefix(started.AuthorizeURL, f.provider.URL+"/") || query.Get("redirect_uri") != wantOrigin+wantPath || !isConnectorOAuthState(state) {
+			if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
+				parsed, parseErr := url.Parse(started.AuthorizeURL)
+				if parseErr != nil || parsed.Host != "github.com" || parsed.Path != "/apps/"+os.Getenv("GITHUB_APP_SLUG")+"/installations/new" ||
+					query.Get("client_id") != "" || query.Get("state") == "" || !isConnectorOAuthState(state) {
+					t.Fatalf("%s start = %s", app.Slug, started.AuthorizeURL)
+				}
+			} else if !strings.HasPrefix(started.AuthorizeURL, f.provider.URL+"/") || query.Get("redirect_uri") != wantOrigin+wantPath || !isConnectorOAuthState(state) {
 				t.Fatalf("%s start = %s", app.Slug, started.AuthorizeURL)
 			}
 			cookie := started.Cookie
@@ -334,6 +342,74 @@ func TestCatalogConnectorRefreshToolsSkipsCredentialsThatCannotList(t *testing.T
 
 // The router rate-limits GitHub App callbacks that complete a connector
 // connect, and only those.
+func TestPreregisteredAuthorizeURLPinsAsanaResource(t *testing.T) {
+	got, err := preregisteredAuthorizeURL(
+		"https://app.asana.com/-/oauth_authorize", "cid", "",
+		"https://example.test/cb", "state", "verifier", "https://mcp.asana.com/v2",
+	)
+	if err != nil || !strings.Contains(got, "resource=https%3A%2F%2Fmcp.asana.com%2Fv2") ||
+		strings.Contains(got, "scope=") || !strings.Contains(got, "response_type=code") {
+		t.Fatalf("asana authorize = %s %v", got, err)
+	}
+	slack, err := preregisteredAuthorizeURL(
+		"https://slack.com/oauth/v2_user/authorize", "cid", "search:read.public",
+		"https://example.test/cb", "state", "verifier", "",
+	)
+	if err != nil || strings.Contains(slack, "resource=") || strings.Contains(slack, "prompt=") || !strings.Contains(slack, "scope=search") {
+		t.Fatalf("slack authorize = %s %v", slack, err)
+	}
+	microsoft, err := preregisteredAuthorizeURL(
+		"https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "cid",
+		"offline_access openid profile email User.Read Mail.Read Calendars.Read Contacts.Read",
+		"https://fde-workbench.dingtalk.com/api/connectors/oauth/callback", "state", "verifier", "",
+	)
+	if err != nil || !strings.Contains(microsoft, "prompt=select_account") || !strings.Contains(microsoft, "response_type=code") ||
+		!strings.Contains(microsoft, "code_challenge_method=S256") || strings.Contains(microsoft, "resource=") {
+		t.Fatalf("microsoft authorize = %s %v", microsoft, err)
+	}
+	if !strings.Contains(got, "response_type=code") || strings.Contains(got, "prompt=") {
+		t.Fatalf("asana authorize gained a microsoft parameter: %s", got)
+	}
+}
+
+func TestConnectorOAuthShareableStaysOnSceneAndPerson(t *testing.T) {
+	scene := connectorOAuthScope{ScopeType: contextcap.ScopeScene}
+	person := connectorOAuthScope{ScopeType: contextcap.ScopePerson}
+	workspace := connectorOAuthScope{ScopeType: connectorOAuthScopeWorkspace}
+	github := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaGitHub, AuthFlow: connectorOAuthFlowInstall}
+	outlook := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaDCR, AuthFlow: connectorOAuthFlowOutlook}
+	notion := connectorSealedVerifier{Shareable: true, Via: connectorOAuthViaDCR}
+	if !connectorOAuthShareable(github, scene) || !connectorOAuthShareable(github, person) || connectorOAuthShareable(github, workspace) {
+		t.Fatal("github shareable scope")
+	}
+	if !connectorOAuthShareable(outlook, scene) || !connectorOAuthShareable(outlook, person) || connectorOAuthShareable(outlook, workspace) {
+		t.Fatal("outlook shareable scope")
+	}
+	if connectorOAuthShareable(notion, scene) || connectorOAuthShareable(connectorSealedVerifier{Via: connectorOAuthViaDCR, AuthFlow: connectorOAuthFlowOutlook}, scene) {
+		t.Fatal("dcr connect must stay bound to the starting browser")
+	}
+}
+
+func TestGitHubAppInstallAuthorizeURLRejectsABadSlug(t *testing.T) {
+	got, err := githubAppInstallAuthorizeURL("qwen-tag-pre", "mcpc.abc")
+	if err != nil || got != "https://github.com/apps/qwen-tag-pre/installations/new?state=mcpc.abc" {
+		t.Fatalf("install URL = %s %v", got, err)
+	}
+	for _, slug := range []string{"", "a/b", "a?b", "a#b"} {
+		if _, err := githubAppInstallAuthorizeURL(slug, "mcpc.abc"); err == nil {
+			t.Fatalf("slug %q was accepted", slug)
+		}
+	}
+	if parseConnectorOAuthInstallationID("12") != 12 || parseConnectorOAuthInstallationID("0") != 0 ||
+		parseConnectorOAuthInstallationID("x") != 0 || parseConnectorOAuthInstallationID("-3") != 0 {
+		t.Fatal("installation id")
+	}
+	if parseConnectorOAuthSetupAction(" install ") != "install" || parseConnectorOAuthSetupAction("update") != "update" ||
+		parseConnectorOAuthSetupAction("delete") != "" {
+		t.Fatal("setup action")
+	}
+}
+
 func TestIsConnectorOAuthCallbackSelectsConnectorStates(t *testing.T) {
 	for target, want := range map[string]bool{
 		"/api/github/authorize?code=c&state=mcpc.abc":             true,

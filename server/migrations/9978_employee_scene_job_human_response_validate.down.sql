@@ -1,0 +1,1 @@
+-- Validation changes no data; the preceding rollback restores the old lists.

@@ -329,8 +329,10 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	procDone := make(chan struct{})
+	cancelDone := make(chan struct{})
 
 	go func() {
+		defer close(cancelDone)
 		select {
 		case <-procDone:
 			return
@@ -385,6 +387,8 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		}
 		exitErr := cmd.Wait()
 		close(procDone)
+		<-cancelDone
+		processGroupStopped := finishProcessGroup(cmd.Process)
 
 		result := state.result
 		if result == nil {
@@ -426,6 +430,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		b.cfg.Logger.Info("dsh finished", "pid", cmd.Process.Pid, "status", result.Status,
 			"duration", time.Since(started).Round(time.Millisecond).String(), "frames", state.frameCount,
 			"invalid_frames", state.invalidFrames)
+		result.ProcessGroupStopped = processGroupStopped
 		resCh <- *result
 	}()
 

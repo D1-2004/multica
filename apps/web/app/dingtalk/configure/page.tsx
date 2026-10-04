@@ -12,6 +12,7 @@ import {
   type ContextConfigPageProps,
 } from "@multica/views/dingtalk";
 import { useT } from "@multica/views/i18n";
+import { browserForwarding } from "@/platform/forwarding";
 import { createGroupPicker, isDingTalk, type PickedGroup } from "./jsapi";
 import {
   beginOAuthState,
@@ -164,7 +165,8 @@ function DingTalkConfigureContent() {
         setStage({ kind: "auth" });
         try {
           const login = await api.fdeDingtalkLogin(code ?? "");
-          api.setToken(login.token);
+          // Forwarded sessions use the gateway-scoped HttpOnly cookie.
+          if (!browserForwarding()) api.setToken(login.token);
           setUser(login.user);
           completedOAuth.current = true;
         } catch {
@@ -190,6 +192,7 @@ function DingTalkConfigureContent() {
       }
 
       const initial = readConfigureParams(searchParams);
+      const sceneSession = searchParams.get("scene_session") ?? "";
       // Back from a connector's provider sign-in: reopen the scope the
       // connection was started from and report the outcome once.
       const returned = readConnectResult(searchParams);
@@ -206,9 +209,20 @@ function DingTalkConfigureContent() {
         setConnectResult(returned);
         connectReturn.current = { target: pending, result: returned, at: Date.now() };
       }
-      // Drop the link token and the connect outcome from the address bar
-      // before anything can copy, share or sign (dd.config) the URL.
-      if (initial.linkToken || returned) {
+      // A GitHub return carries a signed page token. Exchange it for the
+      // cookie before the page asks for configuration, then drop it from
+      // the address bar. A bad token still opens the page.
+      if (sceneSession) {
+        try {
+          await api.openSceneConfigSession(sceneSession);
+        } catch {
+          // The next configuration call may ask for DingTalk.
+        }
+      }
+      // Drop the link token, the page token and the connect outcome from
+      // the address bar before anything can copy, share or sign (dd.config)
+      // the URL.
+      if (initial.linkToken || returned || sceneSession) {
         window.history.replaceState({}, "", cleanConfigureUrl(initial));
       }
       setParams(initial);
@@ -255,8 +269,9 @@ function DingTalkConfigureContent() {
         }
       : null;
   // A provider sign-in returns to the bound scope (on the default tab).
-  const connectReturnTo =
-    params.agentId && params.binding
+  const connectReturnTo = browserForwarding()
+    ? `${window.location.origin}${cleanConfigureUrl({ agentId: params.agentId, binding: params.binding })}`
+    : params.agentId && params.binding
       ? cleanConfigureUrl({ agentId: params.agentId, binding: params.binding })
       : undefined;
 

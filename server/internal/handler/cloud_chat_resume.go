@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -136,8 +137,26 @@ func (h *Handler) shouldWarmResumeCloudChat(
 	resp AgentTaskResponse,
 	currentIdentity string,
 ) bool {
+	// Local continuity is already guarded by the daemon's workdir checks. A
+	// cloud-only opt-in must never clear a local provider session.
+	if !service.IsCloudSandboxRuntime(runtime) {
+		return true
+	}
 	if agentLoadErr != nil {
 		return false
+	}
+	var private struct {
+		Steer bool `json:"task_steer"`
+	}
+	if json.Unmarshal(task.Context, &private) == nil && private.Steer &&
+		!task.ForceFreshSession && strings.TrimSpace(resp.PriorSessionID) != "" &&
+		strings.TrimSpace(resp.PriorWorkDir) != "" && !h.cloudSandboxAttemptIsColdStart(ctx, task) {
+		stored, err := h.Queries.GetChatSessionResumeIdentity(ctx, session.ID)
+		// An explicit steer may resume its canceled first turn (and a group
+		// turn); it still requires the same frozen agent/runtime configuration.
+		if err == nil && currentIdentity != "" && stored == currentIdentity {
+			return true
+		}
 	}
 	enabled, err := h.Queries.GetAgentChatSessionResume(ctx, agent.ID)
 	if err != nil || !enabled {

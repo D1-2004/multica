@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,12 +20,13 @@ import (
 // (COORD.F04). describe_capabilities stays the model's own answer; after the
 // plan passed review and before it is checkpointed, Host runs the
 // context_config_link effect once and appends the link as the answer's last
-// line: a group chat gets the scene link, a 1:1 chat the personal link (which
-// also grants that 1:1 scene). The model never writes or sees the link, so the
-// review judges only the model's words, like the Host-owned work receipt.
+// line: the conversation's scene link, minted the same way for a group chat
+// and a 1:1 chat (keyed by the scene_id of its openConversationId, never by
+// the sender). The model never writes or sees the link, so the review judges
+// only the model's words, like the Host-owned work receipt.
 //
-// The issuer derives scene and person only from the server-written dispatch
-// context and reuses the executor tool's minting (TTL, single use, audit).
+// The issuer derives the scene only from the server-written dispatch context
+// and reuses the executor tool's minting (TTL, audit).
 // Every failure is closed: no issuer, no trusted scope, an error, a timeout or
 // a malformed result leaves the reviewed answer exactly as it was.
 
@@ -47,16 +49,18 @@ type ConfigLinkRequest struct {
 // ConfigLink is one minted configuration link. URL carries a bearer token:
 // it is delivered in the reply and never logged or traced.
 type ConfigLink struct {
-	URL       string
-	Scope     string // "scene" or "person"
+	URL   string
+	Scope string // "scene"
+	// SceneKind is the conversation's kind in the scene directory: "group"
+	// or "dm" (a 1:1 chat). It only picks the link's label.
+	SceneKind string
 	ValidFor  time.Duration
-	SingleUse bool
 	ExpiresAt time.Time
 }
 
 // ConfigLinkIssuer mints the context configuration link for the conversation
 // of an inbound DingTalk turn. It returns an error whenever the turn has no
-// trusted scene (group) or person (1:1) to configure.
+// trusted conversation scene (a group or a 1:1 chat) to configure.
 type ConfigLinkIssuer interface {
 	IssueConfigLink(ctx context.Context, req ConfigLinkRequest) (ConfigLink, error)
 }
@@ -105,9 +109,9 @@ func (c *Coordinator) attachConfigLink(ctx context.Context, turn Turn, decision 
 		TraceID:         strings.TrimSpace(turn.TraceID),
 	})
 	cancel()
-	line := ""
+	line, deepLink := "", ""
 	if err == nil {
-		line, err = configLinkLine(workReceiptLanguage(turn, decision.CoordinationActions[target]), link)
+		line, deepLink = configLinkLine(workReceiptLanguage(turn, decision.CoordinationActions[target]), link)
 	}
 	elapsed := time.Since(started).Milliseconds()
 	status := "issued"
@@ -122,7 +126,9 @@ func (c *Coordinator) attachConfigLink(ctx context.Context, turn Turn, decision 
 		actions[target].Reply = strings.TrimSpace(actions[target].Reply) + "\n\n" + line
 		decision.CoordinationActions = actions
 		decision.UserText = ComposeDecisionReplies(actions)
-		decision.configLinkURL = link.URL
+		// The reply carries the link only inside the DingTalk deep link, so
+		// that exact string is what logs and traces replace.
+		decision.configLinkURL = deepLink
 	}
 	output, _ := json.Marshal(summary)
 	if lt != nil {
@@ -160,7 +166,7 @@ func issueConfigLink(ctx context.Context, issuer ConfigLinkIssuer, req ConfigLin
 	if (!strings.HasPrefix(link.URL, "https://") && !strings.HasPrefix(link.URL, "http://")) || strings.ContainsAny(link.URL, " \t\r\n") {
 		return ConfigLink{}, errors.New("configuration link has no usable url")
 	}
-	if link.Scope != "scene" && link.Scope != "person" {
+	if link.Scope != "scene" {
 		return ConfigLink{}, fmt.Errorf("configuration link has unknown scope %q", link.Scope)
 	}
 	if link.ValidFor <= 0 {
@@ -169,40 +175,49 @@ func issueConfigLink(ctx context.Context, issuer ConfigLinkIssuer, req ConfigLin
 	return link, nil
 }
 
-// configLinkLine is the fixed Host line that ends the capability answer. The
-// URL comes last so the answer ends with the link itself.
-func configLinkLine(language string, link ConfigLink) (string, error) {
-	if link.Scope == "person" && !link.SingleUse {
-		return "", errors.New("personal configuration link must be single use")
-	}
+// ConfigLinkDeepLink wraps a configuration page URL in the DingTalk client
+// link that opens it inside DingTalk: the side panel on desktop
+// (pc_slide=true), the in-app browser on mobile.
+func ConfigLinkDeepLink(pageURL string) string {
+	return "dingtalk://dingtalkclient/page/link?url=" + url.QueryEscape(pageURL) + "&pc_slide=true"
+}
+
+// configLinkLine is the fixed Host line that ends the capability answer: a
+// Markdown link to the DingTalk deep link (the reply is sent as Markdown, so
+// people see the label, never the bearer URL), then its lifetime. The label
+// names the conversation the link configures: this group or this 1:1 chat.
+// It returns the line and the deep link it carries.
+func configLinkLine(language string, link ConfigLink) (string, string) {
 	minutes := int(math.Round(link.ValidFor.Minutes()))
 	if minutes < 1 {
 		minutes = 1
 	}
+	direct := link.SceneKind == "dm"
 	var format string
 	switch language {
 	case "en":
-		format = "Configure this group's capabilities (valid for %d min): %s"
-		if link.Scope == "person" {
-			format = "Configure your personal capabilities (valid for %d min, single use): %s"
+		format = "[Configure this group's capabilities](%s) (valid for %d min)"
+		if direct {
+			format = "[Configure this chat's capabilities](%s) (valid for %d min)"
 		}
 	case "ja":
-		format = "このグループの機能設定（%d 分間有効）：%s"
-		if link.Scope == "person" {
-			format = "あなた個人の機能設定（%d 分間有効、1 回限り）：%s"
+		format = "[このグループの機能設定](%s)（%d 分間有効）"
+		if direct {
+			format = "[この個別チャットの機能設定](%s)（%d 分間有効）"
 		}
 	case "ko":
-		format = "이 그룹의 기능 설정 (%d분간 유효): %s"
-		if link.Scope == "person" {
-			format = "개인 기능 설정 (%d분간 유효, 1회용): %s"
+		format = "[이 그룹의 기능 설정](%s) (%d분간 유효)"
+		if direct {
+			format = "[이 1:1 채팅의 기능 설정](%s) (%d분간 유효)"
 		}
 	default:
-		format = "本群能力配置（%d 分钟内有效）：%s"
-		if link.Scope == "person" {
-			format = "你的个人能力配置（%d 分钟内有效，限用一次）：%s"
+		format = "[本群能力配置](%s)（%d 分钟内有效）"
+		if direct {
+			format = "[本单聊能力配置](%s)（%d 分钟内有效）"
 		}
 	}
-	return fmt.Sprintf(format, minutes, link.URL), nil
+	deepLink := ConfigLinkDeepLink(link.URL)
+	return fmt.Sprintf(format, deepLink, minutes), deepLink
 }
 
 // redactConfigLink removes the bearer URL of an attached configuration link

@@ -31,7 +31,7 @@ func (s *recentStateReaderStub) ListRecentCoordinatorState(ctx context.Context, 
 func recentStateTurn(t *testing.T) Turn {
 	t.Helper()
 	_, id := testOwnedIssue(t, testAgentID())
-	return Turn{Source: SourceDigitalEmployee, WorkspaceID: util.UUIDToString(id.WorkspaceID), AgentID: testAgentID(), TraceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", ConversationID: "cid-a", Message: "刚才分了几个任务？"}
+	return Turn{Source: SourceDigitalEmployee, WorkspaceID: util.UUIDToString(id.WorkspaceID), AgentID: testAgentID(), TraceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", SceneID: testSceneID("cid-a"), ConversationID: "cid-a", Message: "刚才分了几个任务？"}
 }
 func decodeRecentState(t *testing.T, raw string) recentCoordinationStateView {
 	t.Helper()

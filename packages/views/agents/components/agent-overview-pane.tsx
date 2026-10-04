@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
@@ -75,8 +76,47 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "configuration", labelKey: "configuration" },
 ];
 
+/** How the agent takes part in the workspace Tag. The template holds the
+ * Tag's shared configuration; an employee embodies one tenant and owns its
+ * digital employee and scenes, so its shared configuration is managed by the
+ * Tag rather than edited here. */
+export type AgentTagRole = "template" | "employee";
+
+/** Config views a Tag agent shows; everything else (this computer, local
+ * MCP access, runtime-specific tuning, export/publish, access) does not apply
+ * to a cloud-only multi-tenant employee. */
+const TAG_TEMPLATE_VIEWS = new Set<DetailTab>(["instructions", "skills", "mcp_config", "dsh", "general"]);
+const TAG_EMPLOYEE_VIEWS = new Set<DetailTab>(["digital_employee"]);
+
+/** A Tag employee's sections: its tenant configuration, its scenes and its
+ * recent work. The template has no sections, only the shared configuration. */
+const TAG_EMPLOYEE_TABS: { id: DetailSection; label: "tenant_config" | "scenes" | "recent_work" }[] = [
+  { id: "configuration", label: "tenant_config" },
+  { id: "scenes", label: "scenes" },
+  { id: "overview", label: "recent_work" },
+];
+
+/** What a Tag employee's 租户配置 renders: identity, event perception and the
+ * inbound coordinator, supplied by the Tag page. */
+export type TagTenantConfigRenderer = (props: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) => ReactNode;
+
 interface AgentOverviewPaneProps {
   agent: Agent;
+  /** Set when the agent is shown on the Tag page. */
+  tagRole?: AgentTagRole;
+  /** Renders a Tag employee's 租户配置. */
+  renderTenantConfig?: TagTenantConfigRenderer;
+  /** URL search param holding the selected view (default "view"). */
+  viewParam?: string;
+  /** Set by the Tag page, which owns the tab bar: the pane shows exactly
+   * this view, with no tab bar, config nav or URL view of its own. */
+  tagTab?: DetailTab;
+  /** Unsaved edits in the shown view, for a guard owned by the caller. */
+  onDirtyChange?: (dirty: boolean) => void;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
   runtimes: AgentRuntime[];
@@ -105,6 +145,11 @@ interface AgentOverviewPaneProps {
  */
 export function AgentOverviewPane({
   agent,
+  tagRole,
+  renderTenantConfig,
+  viewParam = "view",
+  tagTab,
+  onDirtyChange,
   runtime,
   owner,
   runtimes,
@@ -125,12 +170,18 @@ export function AgentOverviewPane({
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const navigation = useNavigation();
-  const urlView = navigation.searchParams.get("view");
+  const urlView = navigation.searchParams.get(viewParam);
   const composioMCPAppsEnabled = useFeatureEnabled(
     COMPOSIO_MCP_APPS_FLAG,
     false,
   );
-  const initialView = normalizeDetailView(urlView) ?? "overview";
+  // The template opens on its first config view (it has no sections); an
+  // employee opens on its tenant configuration.
+  const defaultView: DetailTab =
+    tagRole === "template" ? "instructions" : tagRole === "employee" ? "digital_employee" : "overview";
+  const ownsSceneParams = tagRole !== "template";
+  const controlled = tagTab !== undefined;
+  const initialView = normalizeDetailView(urlView) ?? defaultView;
   const [activeView, setActiveView] = useState<DetailTab>(() => initialView);
   const lastConfigViewRef = useRef<DetailTab>(
     isConfigView(initialView) ? initialView : "digital_employee",
@@ -176,9 +227,12 @@ export function AgentOverviewPane({
     const showComposioMcp =
       composioMCPAppsEnabled && isAgentOwner;
 
+    const tagViews =
+      tagRole === "template" ? TAG_TEMPLATE_VIEWS : tagRole === "employee" ? TAG_EMPLOYEE_VIEWS : null;
     return AGENT_CONFIG_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
+        if (tagViews && !tagViews.has(item.id)) return false;
         if (item.id === "dsh") return runtime?.provider === "dsh";
         if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud";
         if (item.id === "composio_mcp") return showComposioMcp;
@@ -204,27 +258,34 @@ export function AgentOverviewPane({
     composioMCPAppsEnabled,
     isAgentOwner,
     runtime,
+    tagRole,
   ]);
 
   const visibleViews = useMemo(
     () =>
       new Set<DetailTab>([
-        "overview",
-        "work",
-        "scenes",
+        ...(tagRole === "template"
+          ? []
+          : tagRole === "employee"
+            ? (["overview", "scenes"] as DetailTab[])
+            : (["overview", "work", "scenes"] as DetailTab[])),
         ...visibleConfigGroups.flatMap((group) =>
           group.items.map((item) => item.id),
         ),
       ]),
-    [visibleConfigGroups],
+    [tagRole, visibleConfigGroups],
   );
 
   const defaultConfigView = visibleConfigGroups[0]?.items[0]?.id;
-  const effectiveView = visibleViews.has(activeView)
+  const effectiveView: DetailTab = tagTab !== undefined
+    ? tagTab
+    : visibleViews.has(activeView)
     ? activeView
-    : isConfigView(activeView) && defaultConfigView
+    : (isConfigView(activeView) || tagRole === "template") && defaultConfigView
       ? defaultConfigView
-      : "overview";
+      : tagRole === "employee"
+        ? "digital_employee"
+        : "overview";
   const activeSection = sectionForView(effectiveView);
 
   const commitView = useCallback(
@@ -232,11 +293,11 @@ export function AgentOverviewPane({
       if (isConfigView(next)) lastConfigViewRef.current = next;
       setActiveView(next);
       const params = new URLSearchParams(navigation.searchParams);
-      if (next === "overview") params.delete("view");
-      else params.set("view", next);
+      if (next === defaultView) params.delete(viewParam);
+      else params.set(viewParam, next);
       // The selected tenant, group or person only means something inside
       // the scenes section.
-      if (next !== "scenes") {
+      if (next !== "scenes" && ownsSceneParams) {
         params.delete("tenant");
         params.delete("node");
         params.delete("scene");
@@ -248,7 +309,7 @@ export function AgentOverviewPane({
       const query = params.toString();
       navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
     },
-    [navigation],
+    [defaultView, navigation, ownsSceneParams, viewParam],
   );
 
   const requestView = useCallback(
@@ -285,17 +346,18 @@ export function AgentOverviewPane({
   };
 
   useEffect(() => {
+    if (controlled) return;
     if (urlView === lastUrlViewRef.current) return;
     lastUrlViewRef.current = urlView;
     const nextView =
-      urlView === null ? "overview" : normalizeDetailView(urlView);
+      urlView === null ? defaultView : normalizeDetailView(urlView);
     if (!nextView || !visibleViews.has(nextView)) return;
 
     if (activeDirty && nextView !== effectiveView) {
       setPendingView(nextView);
       const params = new URLSearchParams(navigation.searchParams);
-      if (effectiveView === "overview") params.delete("view");
-      else params.set("view", effectiveView);
+      if (effectiveView === defaultView) params.delete(viewParam);
+      else params.set(viewParam, effectiveView);
       const query = params.toString();
       navigation.replace(
         `${navigation.pathname}${query ? `?${query}` : ""}`,
@@ -304,35 +366,39 @@ export function AgentOverviewPane({
     }
     if (isConfigView(nextView)) lastConfigViewRef.current = nextView;
     setActiveView(nextView);
-  }, [activeDirty, effectiveView, navigation, urlView, visibleViews]);
+  }, [activeDirty, controlled, defaultView, effectiveView, navigation, urlView, viewParam, visibleViews]);
 
   // Legacy view names keep working and are rewritten to their new home.
   useEffect(() => {
-    if (urlView === null) return;
+    if (controlled || urlView === null) return;
     const normalized = normalizeDetailView(urlView);
     if (normalized === null || normalized === urlView) return;
     const params = new URLSearchParams(navigation.searchParams);
-    params.set("view", normalized);
+    params.set(viewParam, normalized);
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
-  }, [navigation, urlView]);
+  }, [controlled, navigation, urlView, viewParam]);
 
   useEffect(() => {
-    if (urlView === null || normalizeDetailView(urlView) !== null) {
+    if (controlled || urlView === null || normalizeDetailView(urlView) !== null) {
       return;
     }
     const params = new URLSearchParams(navigation.searchParams);
-    params.delete("view");
+    params.delete(viewParam);
     const query = params.toString();
     navigation.replace(
       `${navigation.pathname}${query ? `?${query}` : ""}`,
     );
-  }, [navigation, urlView]);
+  }, [controlled, navigation, urlView, viewParam]);
 
   useEffect(() => {
     if (navIntent == null) return;
     if (visibleViews.has(navIntent)) requestView(navIntent);
     onNavIntentHandled?.();
   }, [navIntent, onNavIntentHandled, requestView, visibleViews]);
+
+  useEffect(() => {
+    onDirtyChange?.(activeDirty);
+  }, [activeDirty, onDirtyChange]);
 
   useEffect(() => {
     if (!activeDirty) return;
@@ -344,6 +410,14 @@ export function AgentOverviewPane({
     return () => window.removeEventListener("beforeunload", preventUnload);
   }, [activeDirty]);
 
+  // A Tag employee's scenes live on the Tag page: connect flows return there,
+  // keeping its non-scene params (the selected tenant).
+  const sceneReturnPage = useMemo(() => {
+    const params = new URLSearchParams(navigation.searchParams);
+    for (const key of [viewParam, "tenant", "node", "scene", "scene_tab", "app"]) params.delete(key);
+    return { pathname: navigation.pathname, params: params.toString(), viewParam };
+  }, [navigation.pathname, navigation.searchParams, viewParam]);
+
   const secondaryTabs =
     activeSection === "configuration"
       ? visibleConfigGroups.flatMap((group) => group.items)
@@ -354,33 +428,52 @@ export function AgentOverviewPane({
   const isSecondaryLayout =
     secondaryTabs.length > 0 && activeSecondaryTab != null;
 
+  // The Tag template is only its shared configuration; a Tag employee has
+  // its tenant configuration, scenes and recent work.
+  const topTabs: { id: DetailSection; label: string }[] =
+    tagRole === "template"
+      ? []
+      : tagRole === "employee"
+        ? TAG_EMPLOYEE_TABS.map((tab) => ({
+            id: tab.id,
+            label:
+              tab.label === "scenes"
+                ? t(($) => $.tabs.scenes)
+                : tab.label === "tenant_config"
+                  ? t(($) => $.tag_tenant.tab_tenant_config)
+                  : t(($) => $.tag_tenant.tab_recent_work),
+          }))
+        : TOP_TABS.map((tab) => ({ id: tab.id, label: t(($) => $.tabs[tab.labelKey]) }));
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <div
-        className="shrink-0 overflow-x-auto border-b px-4 sm:px-6"
-        role="tablist"
-        aria-label={t(($) => $.tabs.page_navigation_aria)}
-      >
-        <div className="mx-auto flex max-w-[1440px] items-center gap-6">
-          {TOP_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={activeSection === tab.id}
-              onClick={() => requestSection(tab.id)}
-              className={cn(
-                "relative shrink-0 py-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                activeSection === tab.id
-                  ? "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t(($) => $.tabs[tab.labelKey])}
-            </button>
-          ))}
+      {topTabs.length > 0 && !controlled ? (
+        <div
+          className="shrink-0 overflow-x-auto border-b px-4 sm:px-6"
+          role="tablist"
+          aria-label={t(($) => $.tabs.page_navigation_aria)}
+        >
+          <div className="mx-auto flex max-w-[1440px] items-center gap-6">
+            {topTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeSection === tab.id}
+                onClick={() => requestSection(tab.id)}
+                className={cn(
+                  "relative shrink-0 py-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  activeSection === tab.id
+                    ? "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {/* Overview/Work scroll as one page. Sidebar views split scrolling on
           md+ (nav rail pinned, content pane scrolls) like settings-page.tsx;
@@ -395,7 +488,13 @@ export function AgentOverviewPane({
               : "overflow-y-auto",
         )}
       >
-        {effectiveView === "overview" && (
+        {effectiveView === "overview" && tagRole === "employee" && (
+          <div className="mx-auto max-w-3xl p-4 sm:p-6">
+            <ActivityTab agent={agent} showPerformance={false} />
+          </div>
+        )}
+
+        {effectiveView === "overview" && tagRole !== "employee" && (
           <div className="mx-auto max-w-[1440px] p-4 sm:p-6">
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
               <ActivityTab agent={agent} showPerformance={false} />
@@ -429,6 +528,8 @@ export function AgentOverviewPane({
               key={agent.id}
               agent={agent}
               canEdit={canEdit}
+              tagManaged={tagRole === "employee"}
+              returnPage={tagRole === "employee" ? sceneReturnPage : undefined}
               onUpdate={onUpdate}
               onDirtyChange={setActiveDirty}
             />
@@ -436,21 +537,43 @@ export function AgentOverviewPane({
             <CoordinatorSessionsTab key={agent.id} agent={agent} />
           ))}
 
-        {secondaryTabs.length > 0 && activeSecondaryTab && (
+        {secondaryTabs.length > 0 && activeSecondaryTab && tagRole === "employee" && (
+          <section className="min-h-full md:h-full md:overflow-y-auto">
+            <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+              {renderTenantConfig?.({ agent, canEdit, onUpdate: (data) => onUpdate(agent.id, data) })}
+            </div>
+          </section>
+        )}
+
+        {secondaryTabs.length > 0 && activeSecondaryTab && tagRole !== "employee" && (
           <div className="flex min-h-full flex-col md:h-full md:flex-row">
-            <AgentConfigNav
-              groups={visibleConfigGroups}
-              activeView={effectiveView}
-              onSelect={requestView}
-            />
+            {controlled ? null : (
+              <AgentConfigNav
+                groups={visibleConfigGroups}
+                activeView={effectiveView}
+                onSelect={requestView}
+              />
+            )}
 
             <section className="min-w-0 flex-1 md:overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 md:p-8">
-                <header>
-                  <h2 className="text-title-sm font-medium text-balance">
-                    {t(($) => $.tabs[activeSecondaryTab.labelKey])}
-                  </h2>
-                </header>
+                {controlled ? null : (
+                  <header>
+                    <h2 className="text-title-sm font-medium text-balance">
+                      {t(($) => $.tabs[activeSecondaryTab.labelKey])}
+                    </h2>
+                  </header>
+                )}
+
+                {tagRole === "template" && (effectiveView === "skills" || effectiveView === "mcp_config") ? (
+                  <section
+                    role="note"
+                    className="mt-4 rounded-xl border border-dashed border-surface-border bg-muted/20 px-4 py-3"
+                  >
+                    <p className="text-body font-medium">{t(($) => $.tag_tenant.bundle_title)}</p>
+                    <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.tag_tenant.bundle_hint)}</p>
+                  </section>
+                ) : null}
 
                 <div className="mt-6">
                   {canEdit && source && effectiveView !== "publish" && <PackageBindingsPanel agentId={agent.id} expanded={false} onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />}

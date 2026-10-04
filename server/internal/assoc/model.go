@@ -81,17 +81,23 @@ type Event struct {
 	EvidenceID  string
 	Body        string
 	OccurredAt  time.Time
-	SceneKey    string
-	PersonKey   string
-	TaskID      string
-	CreatedAt   time.Time
+	// SceneID is the Agent work scene (agent_scene.id) the event happened
+	// in (docs/agent-scene.md); "" for an event without a resolved scene.
+	SceneID   string
+	PersonKey string
+	TaskID    string
+	CreatedAt time.Time
 }
 
 type Query struct {
-	WorkspaceID    string
-	AgentID        string
-	Since          time.Time
-	Until          time.Time
+	WorkspaceID string
+	AgentID     string
+	Since       time.Time
+	Until       time.Time
+	// SceneID scopes the recall to one Agent work scene. The Host resolves
+	// it from the caller's conversation id; ConversationID only echoes that
+	// id back in the result.
+	SceneID        string
 	ConversationID string
 	PersonID       string
 	IssueID        string
@@ -100,7 +106,19 @@ type Query struct {
 	Limit          int
 }
 
+// SceneNode is a scene node of the graph: the Host-resolved Agent work
+// scene and, for display and DingTalk tool arguments, its conversation id
+// and kind as the directory records them.
+type SceneNode struct {
+	SceneID        string
+	ConversationID string
+	Kind           string
+}
+
+func (n SceneNode) valid() bool { return validSceneNodeID(n.SceneID) }
+
 type ConversationRef struct {
+	SceneID        string   `json:"scene_id,omitempty"`
 	ConversationID string   `json:"conversation_id"`
 	Kind           string   `json:"kind,omitempty"`
 	Rel            string   `json:"rel"`
@@ -114,11 +132,13 @@ type PersonRef struct {
 }
 
 type WaitingRef struct {
+	SceneID        string `json:"scene_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	PersonID       string `json:"person_id,omitempty"`
 }
 
 type OriginRef struct {
+	SceneID        string `json:"scene_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	Rel            string `json:"rel"`
 }
@@ -165,6 +185,7 @@ type Result struct {
 	ReadThis       string     `json:"read_this"`
 	Since          time.Time  `json:"since"`
 	Until          time.Time  `json:"until"`
+	SceneID        string     `json:"scene_id,omitempty"`
 	ConversationID string     `json:"conversation_id,omitempty"`
 	Q              string     `json:"q,omitempty"`
 	Items          []Item     `json:"items"`
@@ -172,7 +193,7 @@ type Result struct {
 	EventsNote     string     `json:"events_note,omitempty"`
 }
 
-// CloseSceneResult is how many graph links /reset-memory dropped for one cid.
+// CloseSceneResult is how many graph links /reset-memory dropped for one scene.
 type CloseSceneResult struct {
 	ClosedEdges    int
 	UnlinkedEvents int

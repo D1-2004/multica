@@ -190,6 +190,13 @@ func fcE2BTaskIsTerminal(status string) bool {
 }
 
 func (l *FCE2BLauncher) releaseTaskSandbox(ctx context.Context, conn *pgxpool.Conn, task db.AgentTaskQueue, rt db.AgentRuntime, sandboxID string) (fcE2BSandboxLifecycleAction, string, string, error) {
+	var stopPending bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_task_queue WHERE id=$1 AND status='cancelled' AND context->>'process_stop_pending'='true')`, task.ID).Scan(&stopPending); err != nil {
+		return "", "", "task", err
+	}
+	if stopPending {
+		return fcE2BSandboxRetained, "in_use", "task", nil
+	}
 	key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
 	var scopeID uuid.UUID
 	err := conn.QueryRow(ctx, `SELECT scope_id FROM employee_filesystem_sandbox
@@ -272,10 +279,31 @@ func dshScopeIsSingleUse(key dshhost.Key, task db.AgentTaskQueue, scopeID uuid.U
 }
 
 // releaseEphemeralSandbox covers sandboxes outside the employee filesystem.
-// A launch holds the scope lock from session lookup through renewal but
-// records the sandbox on its attempt only afterwards, so unfinished tasks on
-// the same scope count as users even before that record exists.
+// A chat or issue launch holds the scope lock from session lookup through
+// renewal but records the sandbox on its attempt only afterwards, so
+// unfinished tasks on the same scope count as users even before that record
+// exists. A scene launch records the sandbox id before it drops the scene
+// lock; release takes that scene lock first, because the chat or issue match
+// below does not cover tasks that only share the sandbox.
 func (l *FCE2BLauncher) releaseEphemeralSandbox(ctx context.Context, conn *pgxpool.Conn, task db.AgentTaskQueue, rt db.AgentRuntime, sandboxID string) (fcE2BSandboxLifecycleAction, string, string, error) {
+	var releases []func()
+	defer func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}()
+	if scene, ok, err := fcE2BRunningSceneScope(ctx, conn, rt.ID, sandboxID); err != nil {
+		return "", "", fcE2BScopeTypeScene, err
+	} else if ok {
+		release, locked, err := tryFCE2BAdvisoryLock(ctx, conn, fcE2BSandboxLockClass, fcE2BScopeLockKey(rt.ID, scene), "sandbox")
+		if err != nil {
+			return "", "", fcE2BScopeTypeScene, err
+		}
+		if !locked {
+			return fcE2BSandboxRetained, "scope_admitting", fcE2BScopeTypeScene, nil
+		}
+		releases = append(releases, release)
+	}
 	scope, scoped := fcE2BScopeForTask(task)
 	scopeName := "task"
 	if scoped {
@@ -287,7 +315,7 @@ func (l *FCE2BLauncher) releaseEphemeralSandbox(ctx context.Context, conn *pgxpo
 		if !locked {
 			return fcE2BSandboxRetained, "scope_admitting", scopeName, nil
 		}
-		defer release()
+		releases = append(releases, release)
 	}
 	var busy, cached bool
 	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_task_queue t
@@ -338,6 +366,27 @@ func (l *FCE2BLauncher) trimSandboxIdleLifetime(ctx context.Context, conn *pgxpo
 		}
 	}
 	return fcE2BSandboxIdleTrimmed, "idle_window", scope, nil
+}
+
+// fcE2BRunningSceneScope is the scene bucket whose running session points at
+// sandboxID. Chat and issue sessions are ignored; their own scope lock is
+// taken from the task.
+func fcE2BRunningSceneScope(ctx context.Context, conn *pgxpool.Conn, runtimeID pgtype.UUID, sandboxID string) (fcE2BTaskScope, bool, error) {
+	var typ string
+	var id pgtype.UUID
+	err := conn.QueryRow(ctx, `SELECT scope_type, scope_id FROM fc_e2b_sandbox_session
+WHERE runtime_id=$1 AND sandbox_id=$2 AND sandbox_backend='aliyun_fc' AND status='running'
+ORDER BY updated_at DESC LIMIT 1`, runtimeID, sandboxID).Scan(&typ, &id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fcE2BTaskScope{}, false, nil
+	}
+	if err != nil {
+		return fcE2BTaskScope{}, false, err
+	}
+	if typ != fcE2BScopeTypeScene || !id.Valid {
+		return fcE2BTaskScope{}, false, nil
+	}
+	return fcE2BTaskScope{typ: typ, id: id}, true, nil
 }
 
 // tryFCE2BAdvisoryLock takes a session lock only when it is free. Release

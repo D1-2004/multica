@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   useSetContextConfigPrompts,
@@ -9,9 +9,16 @@ import {
   type ContextPromptComponent,
 } from "@multica/core/context-capabilities";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
-import { cn } from "@multica/ui/lib/utils";
 import { ConfirmDialog } from "../agents/components/tabs/connectors-ui";
 import {
   PROMPT_COMPONENT_MAX,
@@ -20,7 +27,7 @@ import {
   usePromptProblemMessage,
 } from "../common/context-prompt-rules";
 import { useT } from "../i18n";
-import { ItemGroup, ToggleControl } from "./context-config-ui";
+import { ConfigList, ConfigRow, SlotHeading, ToggleControl } from "./context-config-ui";
 
 interface PromptRow {
   key: string;
@@ -38,34 +45,40 @@ function rowsOf(prompts: ContextPromptComponent[]): PromptRow[] {
   }));
 }
 
+/** What the prompt dialog shows: one component, its editor, or a new one. */
+type PromptDialogState = { kind: "view" | "edit"; key: string } | { kind: "new" } | null;
+
 /**
- * The scope's own prompt components: add, edit, delete and switch. Every
- * change saves the whole list at once (the server replaces it), so one write
- * runs at a time. Read-only without `canEdit`.
+ * 指令: the scope's own prompt components, the level's first capability
+ * slot. One line each with its switch; a row opens the full text, where it
+ * is edited or deleted; 添加 opens an empty editor. Every change saves the
+ * whole list at once (the server replaces it), so one write runs at a time.
+ * Read-only without `canEdit`.
  */
 export function ScopePrompts({
   agentId,
   scope,
   prompts,
   canEdit,
+  displayOnly = false,
   reportError,
 }: {
   agentId: string;
   scope: ContextConfigScopeInput;
   prompts: ContextPromptComponent[];
   canEdit: boolean;
+  /** Lists the components that apply, without their switches. */
+  displayOnly?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
   const save = useSetContextConfigPrompts(agentId);
   const rows = rowsOf(prompts);
-  // The row being edited, "new" while adding.
-  const [editing, setEditing] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<PromptDialogState>(null);
   const [deleting, setDeleting] = useState<PromptRow | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const idPrefix = `context-prompt-${scope.scopeType}-${scope.scopeKey}`;
-
-  if (!canEdit && rows.length === 0) return null;
+  const current = dialog && dialog.kind !== "new" ? (rows.find((row) => row.key === dialog.key) ?? null) : null;
 
   const write = async (next: PromptRow[], busy: string): Promise<boolean> => {
     setBusyKey(busy);
@@ -84,100 +97,116 @@ export function ScopePrompts({
   };
 
   const submitForm = async (name: string, text: string) => {
+    const editingKey = dialog?.kind === "edit" ? dialog.key : null;
     const next =
-      editing === "new"
+      dialog?.kind === "new"
         ? [...rows, { key: "new", name, text, enabled: true }]
-        : rows.map((row) => (row.key === editing ? { ...row, name, text } : row));
-    if (await write(next, editing ?? "new")) setEditing(null);
+        : rows.map((row) => (row.key === editingKey ? { ...row, name, text } : row));
+    if (await write(next, editingKey ?? "new")) setDialog(null);
   };
 
   const otherNames = (key: string | null) =>
     new Set(rows.filter((row) => row.key !== key).map((row) => row.name));
 
   return (
-    <>
-      <ItemGroup
+    <section className="space-y-2" aria-label={t(($) => $.context_config.prompts_title)}>
+      <SlotHeading
         label={t(($) => $.context_config.prompts_title)}
         action={
-          canEdit && editing === null && rows.length < PROMPT_COMPONENT_MAX ? (
-            <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setEditing("new")}>
+          canEdit && rows.length < PROMPT_COMPONENT_MAX ? (
+            <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setDialog({ kind: "new" })}>
               <Plus className="size-3.5" />
               {t(($) => $.context_config.prompt_add)}
             </Button>
           ) : null
         }
-        empty={editing === "new" ? null : t(($) => $.context_config.none)}
+      />
+      <ConfigList label={t(($) => $.context_config.prompts_title)} empty={t(($) => $.context_config.none)}>
+        {rows.map((row) => (
+          <ConfigRow
+            key={row.key}
+            name={row.name}
+            muted={!row.enabled}
+            openLabel={row.name}
+            onOpen={() => setDialog({ kind: "view", key: row.key })}
+            action={
+              displayOnly ? null : (
+                <ToggleControl
+                  busy={busyKey === row.key}
+                  checked={row.enabled}
+                  disabled={!canEdit || save.isPending}
+                  label={t(($) => $.context_config.toggle_aria, { name: row.name })}
+                  onToggle={(enabled) =>
+                    void write(
+                      rows.map((entry) => (entry.key === row.key ? { ...entry, enabled } : entry)),
+                      row.key,
+                    )
+                  }
+                />
+              )
+            }
+          />
+        ))}
+      </ConfigList>
+      <Dialog
+        open={dialog !== null && (dialog.kind === "new" || current !== null)}
+        onOpenChange={(open) => {
+          if (!open) setDialog(null);
+        }}
       >
-        {rows.map((row) =>
-          editing === row.key ? (
-            <li key={row.key} className="p-3">
+        <DialogContent className="sm:max-w-lg">
+          {dialog?.kind === "view" && current ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="break-words">{current.name}</DialogTitle>
+                <DialogDescription>
+                  {current.enabled
+                    ? t(($) => $.context_config.prompt_on)
+                    : t(($) => $.context_config.prompt_off)}
+                </DialogDescription>
+              </DialogHeader>
+              <p className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words text-body">{current.text}</p>
+              {canEdit ? (
+                <DialogFooter className="flex-row justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => {
+                      setDeleting(current);
+                      setDialog(null);
+                    }}
+                  >
+                    {t(($) => $.context_config.action_delete)}
+                  </Button>
+                  <Button onClick={() => setDialog({ kind: "edit", key: current.key })}>
+                    {t(($) => $.context_config.action_edit)}
+                  </Button>
+                </DialogFooter>
+              ) : null}
+            </>
+          ) : dialog?.kind === "new" || (dialog?.kind === "edit" && current) ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {dialog.kind === "new"
+                    ? t(($) => $.context_config.prompt_add)
+                    : t(($) => $.context_config.prompt_edit, { name: current?.name ?? "" })}
+                </DialogTitle>
+              </DialogHeader>
               <PromptForm
-                idPrefix={`${idPrefix}-${row.key}`}
-                initial={row}
-                otherNames={otherNames(row.key)}
+                // A new dialog starts from the component it edits.
+                key={dialog.kind === "new" ? "new" : dialog.key}
+                idPrefix={`${idPrefix}-${dialog.kind === "new" ? "new" : dialog.key}`}
+                initial={dialog.kind === "new" ? null : current}
+                otherNames={otherNames(dialog.kind === "new" ? null : dialog.key)}
                 pending={save.isPending}
-                onCancel={() => setEditing(null)}
+                onCancel={() => setDialog(null)}
                 onSubmit={(name, text) => void submitForm(name, text)}
               />
-            </li>
-          ) : (
-            <li key={row.key} className="flex items-start gap-2 p-3" aria-label={row.name}>
-              <div className={cn("min-w-0 flex-1", !row.enabled && "opacity-60")}>
-                <p className="truncate text-body font-medium">{row.name}</p>
-                <p className="line-clamp-2 whitespace-pre-wrap break-words text-caption text-muted-foreground">
-                  {row.text}
-                </p>
-              </div>
-              {canEdit ? (
-                <div className="flex shrink-0 items-center">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={save.isPending || editing !== null}
-                    aria-label={t(($) => $.context_config.prompt_edit, { name: row.name })}
-                    onClick={() => setEditing(row.key)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={save.isPending || editing !== null}
-                    aria-label={t(($) => $.context_config.prompt_delete, { name: row.name })}
-                    onClick={() => setDeleting(row)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              ) : null}
-              <ToggleControl
-                busy={busyKey === row.key}
-                checked={row.enabled}
-                disabled={!canEdit || save.isPending}
-                label={t(($) => $.context_config.toggle_aria, { name: row.name })}
-                onToggle={(enabled) =>
-                  void write(
-                    rows.map((entry) => (entry.key === row.key ? { ...entry, enabled } : entry)),
-                    row.key,
-                  )
-                }
-              />
-            </li>
-          ),
-        )}
-        {editing === "new" ? (
-          <li key="new" className="p-3">
-            <PromptForm
-              idPrefix={`${idPrefix}-new`}
-              initial={null}
-              otherNames={otherNames(null)}
-              pending={save.isPending}
-              onCancel={() => setEditing(null)}
-              onSubmit={(name, text) => void submitForm(name, text)}
-            />
-          </li>
-        ) : null}
-      </ItemGroup>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
       {canEdit ? (
         <ConfirmDialog
           open={deleting !== null}
@@ -200,7 +229,7 @@ export function ScopePrompts({
           }}
         />
       ) : null}
-    </>
+    </section>
   );
 }
 
@@ -254,16 +283,16 @@ function PromptForm({
       <Textarea
         id={`${idPrefix}-text`}
         value={text}
-        rows={5}
+        rows={6}
         onChange={(event) => setText(event.target.value)}
-        className="min-h-28 text-body"
+        className="min-h-32 text-body"
       />
       {touched && problem ? (
         <p role="alert" className="text-caption text-destructive">
           {problemMessage(problem)}
         </p>
       ) : null}
-      <div className="flex gap-2">
+      <div className="flex gap-2 pt-1">
         <Button type="button" variant="ghost" className="h-9 flex-1" disabled={pending} onClick={onCancel}>
           {t(($) => $.context_config.cancel)}
         </Button>

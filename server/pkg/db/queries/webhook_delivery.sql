@@ -71,7 +71,7 @@ RETURNING *;
 WITH candidate AS (
     SELECT id
     FROM webhook_delivery
-    WHERE status = 'queued'
+    WHERE status IN ('queued', 'queued_frozen')
       AND available_at <= now()
       AND (lease_expires_at IS NULL OR lease_expires_at <= now())
     ORDER BY available_at, created_at
@@ -94,7 +94,7 @@ SET available_at = $3,
     lease_expires_at = NULL
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING *;
 
 -- name: RetryClaimedWebhookDelivery :one
@@ -110,7 +110,7 @@ SET available_at = $3,
     last_attempt_at = now()
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING *;
 
 -- name: CompleteClaimedWebhookDelivery :one
@@ -124,7 +124,7 @@ SET status = $3,
     last_attempt_at = now()
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING *;
 
 -- name: UpdateWebhookDeliveryDispatched :one

@@ -26,8 +26,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/employeedirectory"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
@@ -45,7 +50,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/a2ui"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
+	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
@@ -96,6 +103,8 @@ type Config struct {
 	// pre-release and production (MULTICA_A2A_FORWARD_REGISTRATION_SECRET);
 	// both deployments share it and it must be at least 32 characters.
 	A2AForwardRegistrationSecret string
+	// ForwardPublicBaseURL is the externally visible configuration-page mount.
+	ForwardPublicBaseURL string
 	// GitHubPreWebhookURL and GitHubPreWebhookSecret enable a dedicated ingress
 	// that verifies the pre-release App's deliveries and forwards them unchanged.
 	// This deployment never processes their installation or PR state locally.
@@ -227,63 +236,80 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	Forwarding *forwarding.Gateway
 	// githubPreWebhookTransport is the fixed pre-release webhook hop; nil uses
 	// the bounded, non-redirecting default transport.
 	githubPreWebhookTransport http.RoundTripper
 
 	// a2aForwardTransport overrides the transport used to forward inbound A2A
 	// JSON-RPC to another environment; nil uses the default.
-	a2aForwardTransport      http.RoundTripper
-	WorkspaceMCPDispatcher   http.Handler
-	Models                   *modelregistry.Registry
-	Queries                  *db.Queries
-	Assoc                    *assoc.Service
-	DB                       dbExecutor
-	TxStarter                txStarter
-	Hub                      *realtime.Hub
-	DaemonHub                *daemonws.Hub
-	RunnerHub                *runnerws.Hub
-	RunnerRelay              realtime.Broadcaster
-	DaemonProfileRefresh     RuntimeProfileRefreshNotifier
-	DaemonWorkspaceRefresh   WorkspaceSetRefreshNotifier
-	Bus                      *events.Bus
-	TaskService              *service.TaskService
-	InboundCoordinator       *inboundcoord.Coordinator
-	CoordinatorCollectQuiet  func(agentID pgtype.UUID) time.Duration
-	UserDecisions            *userdecision.Service
+	a2aForwardTransport     http.RoundTripper
+	WorkspaceMCPDispatcher  http.Handler
+	Models                  *modelregistry.Registry
+	Queries                 *db.Queries
+	Assoc                   *assoc.Service
+	DB                      dbExecutor
+	TxStarter               txStarter
+	Hub                     *realtime.Hub
+	DaemonHub               *daemonws.Hub
+	RunnerHub               *runnerws.Hub
+	RunnerRelay             realtime.Broadcaster
+	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
+	Bus                     *events.Bus
+	TaskService             *service.TaskService
+	InboundCoordinator      *inboundcoord.Coordinator
+	CoordinatorCollectQuiet func(agentID pgtype.UUID) time.Duration
+	UserDecisions           *userdecision.Service
+	// A2UI is the parameterized card loop (confirm, choose, person, chart,
+	// note, approval). Nil only before the router wires it.
+	A2UI                     *a2ui.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
-	SceneMemoryStore         *scenememory.Store
-	SceneMemoryWorker        *scenememory.Worker
-	A2AService               *service.A2AService
-	A2AProtocol              http.Handler
-	A2APushWorker            *service.A2APushWorker
-	FCE2BLauncher            *service.FCE2BLauncher
-	ProvisionDSHStorage      func(context.Context, dshhost.Key) (dshhost.Host, error)
-	ASBLauncher              *service.ASBLauncher
-	EnterpriseIdentity       enterpriseIdentityService
-	FCE2BStable              *service.FCE2BStableService
-	IssueService             *service.IssueService
-	IssueCommentService      *service.IssueCommentService
-	AutopilotService         *service.AutopilotService
-	MessageAutomations       *service.MessageAutomationService
-	EventTriggers            *service.EventTriggerService
-	EmailService             *service.EmailService
-	UpdateStore              UpdateStore
-	ModelListStore           ModelListStore
-	LocalSkillListStore      LocalSkillListStore
-	LocalSkillImportStore    LocalSkillImportStore
-	FeatureFlags             *featureflag.Service
-	SemanticaMCPRelay        *SemanticaMCPRelay
-	InternalConnectorRedis   internalConnectorRedis
-	InternalConnectorClient  *http.Client
-	LivenessStore            LivenessStore
-	HeartbeatScheduler       HeartbeatScheduler
-	Storage                  storage.Storage
-	SiteHosting              StaticSiteHostingService
-	AgentDispatchHTTPClient  *http.Client
-	AgentDispatchKeys        *agentmessagerouter.DispatchKeyring
-	CFSigner                 *auth.CloudFrontSigner
-	Analytics                analytics.Client
+	// EventRouteConfig returns a single runtime snapshot's choice and version.
+	EventRouteConfig func(workspaceID, agentID, orgID string) (route, version string)
+	EventRouteReady  func(context.Context) (bool, error)
+	// EmployeeLoopReady checks whether this agent can admit new Employee work.
+	// Nil keeps the new mode unavailable while its consumer is not installed.
+	EmployeeLoopReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+	// EmployeeWatchdog records stall episodes and fences their notices at send.
+	EmployeeWatchdog                *service.EmployeeWatchdog
+	EmployeeSceneWorker             *EmployeeSceneWorker
+	EmployeeMemory                  *employeememory.Store
+	EmployeeRunNoticeArtifacts      func(context.Context, employeetask.Scope, string, string) ([]EmployeeTaskArtifactRef, error)
+	EventReceiptVerificationEnabled bool
+	TaskRunEventsEnabled            bool
+	SceneMemoryStore                *scenememory.Store
+	SceneMemoryWorker               *scenememory.Worker
+	A2AService                      *service.A2AService
+	A2AProtocol                     http.Handler
+	A2APushWorker                   *service.A2APushWorker
+	FCE2BLauncher                   *service.FCE2BLauncher
+	ProvisionDSHStorage             func(context.Context, dshhost.Key) (dshhost.Host, error)
+	ASBLauncher                     *service.ASBLauncher
+	EnterpriseIdentity              enterpriseIdentityService
+	FCE2BStable                     *service.FCE2BStableService
+	IssueService                    *service.IssueService
+	IssueCommentService             *service.IssueCommentService
+	AutopilotService                *service.AutopilotService
+	MessageAutomations              *service.MessageAutomationService
+	EventTriggers                   *service.EventTriggerService
+	EmailService                    *service.EmailService
+	UpdateStore                     UpdateStore
+	ModelListStore                  ModelListStore
+	LocalSkillListStore             LocalSkillListStore
+	LocalSkillImportStore           LocalSkillImportStore
+	FeatureFlags                    *featureflag.Service
+	SemanticaMCPRelay               *SemanticaMCPRelay
+	InternalConnectorRedis          internalConnectorRedis
+	InternalConnectorClient         *http.Client
+	LivenessStore                   LivenessStore
+	HeartbeatScheduler              HeartbeatScheduler
+	Storage                         storage.Storage
+	SiteHosting                     StaticSiteHostingService
+	AgentDispatchHTTPClient         *http.Client
+	AgentDispatchKeys               *agentmessagerouter.DispatchKeyring
+	CFSigner                        *auth.CloudFrontSigner
+	Analytics                       analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
@@ -306,6 +332,7 @@ type Handler struct {
 	WebhookIPRateLimiter           WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter   WebhookRateLimiter
 	WebhookDeliveryWorker          *WebhookDeliveryWorker
+	WebhookSourceReady             func(context.Context) error
 	TaskCompletionWorker           *agentmessagerouter.CompletionWorker
 	DingTalkResponses              *dingtalkresponse.Service
 	DingTalkResponsePolicySync     *agentmessagerouter.ResponsePolicySyncWorker
@@ -367,9 +394,35 @@ type Handler struct {
 	// replicas, handed over on shutdown. Nil without Redis.
 	DWSEvents *dwseventsource.Source
 	// DWSNativeEvents is the native subscription event source: the IM
-	// messages of execution identities with native subscription on, always
-	// on the production DWS gateway. Nil without Redis.
+	// messages of execution identities with native subscription on, plus
+	// user_card_action_triggered for the A2UI loop, always on the production
+	// DWS gateway. Nil without Redis.
 	DWSNativeEvents *dwseventsource.Source
+	// DWSNativeConversationTitle reads a group's title as the native
+	// identity sees it (native IM events carry none). Nil leaves native
+	// group scenes untitled.
+	DWSNativeConversationTitle func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error)
+	// DWSNativeStaffID looks up the staffId of the person the native
+	// identity sees as openDingTalkID in its own address book (names narrow
+	// the search; conversationID is the group of a group event). Nil leaves
+	// native senders without a staffId.
+	DWSNativeStaffID func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error)
+	// EmployeeDirectory reads the address book and group members as an
+	// execution identity, for EmployeeLoop directory facts (the agent's own
+	// supervisor/department/title and group member rosters). Nil leaves
+	// those facts unread.
+	EmployeeDirectory employeedirectory.Directory
+	// EmployeeMemoryObserveReady reports whether every live replica supports
+	// EmployeeMemoryObserveMarker: only then is the all-group-messages
+	// observation subscribed and proactive wakes admitted. Nil keeps both off.
+	EmployeeMemoryObserveReady func(context.Context) bool
+	// EmployeeSceneMessagesObserved runs in the transaction that stored new
+	// human group transcript rows (the scene digest marks the scene dirty).
+	// Nil does nothing.
+	EmployeeSceneMessagesObserved func(ctx context.Context, tx pgx.Tx, key employeeentry.Scope, humanRows int, lastHumanAt time.Time) error
+	// EmployeeSceneMessageWorker runs the proactive wake gate and the group
+	// transcript retention purge.
+	EmployeeSceneMessageWorker *EmployeeSceneMessageWorker
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.
@@ -646,6 +699,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		)
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	// Scene routines: runs carry their scene, the Host posts start and end
+	// notices (scene_routines.go).
+	h.AutopilotService.SceneRoutines = h
+	taskSvc.SceneRoutines = h
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

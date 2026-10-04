@@ -27,6 +27,9 @@ const (
 	// ("deap-dev"): digital employee details and their DWS auth codes, called
 	// as the employee's supervisor.
 	ServerDEAP Server = "deap"
+	// ServerDrive is DingTalk Drive (钉盘): a chat file message's fileId is
+	// downloaded through its download_file tool.
+	ServerDrive Server = "drive"
 )
 
 // serverIDs mirrors dingtalk-workspace-cli internal/syncdata/endpoints.go
@@ -37,6 +40,7 @@ var serverIDs = map[Server]string{
 	ServerIM:      "450eede6b54d83e030140e66ec77c98a2e89a0869ef4db481f8217a98a42f821",
 	ServerContact: "db4b26cb38ea6a8739ad55d1997fa1da608cd36b33a6cf0f77884f70c49382fe",
 	ServerDEAP:    "68e7e41374caa1336dc642bc3dd220de6f1e7077356dc0d4fc128f62d52d7d9b",
+	ServerDrive:   "536f3b329ee774322b14361c666d6e9471e5bbb281b91ded8ca033b3ce7189af",
 }
 
 // DingTalkUserAccessTokenURL is DingTalk's OAuth token endpoint, used when a

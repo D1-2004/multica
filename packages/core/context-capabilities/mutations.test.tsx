@@ -139,20 +139,22 @@ describe("context capability mutations", () => {
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1") });
   });
 
-  it("also refreshes the agent detail after a write in a 1:1 chat scene, which is the person's scope", async () => {
+  it("refreshes only a 1:1 chat scene after a write there: it is its own scope", async () => {
+    const dmSceneId = "8d0c2f3e-5b1a-4c7d-9e2f-1a2b3c4d5e6f";
     const setContextCapabilityBinding = vi.fn().mockResolvedValue(undefined);
     setApiInstance({ setContextCapabilityBinding } as unknown as ApiClient);
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    queryClient.setQueryData(contextConfigKeys.scene("agent-1", "cid-dm"), {
-      scene: { scopeKey: "cid-dm", scopeTitle: "Ada", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
+    queryClient.setQueryData(contextConfigKeys.scene("agent-1", dmSceneId), {
+      scene: { scopeKey: dmSceneId, scopeTitle: "Ada", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
       bindings: [],
       credentials: [],
-      scope: { type: "person", key: "staff-1", title: "Ada" },
+      scope: { type: "scene", key: dmSceneId, title: "Ada" },
       canConnect: true,
       rights: null,
       prompts: [],
       mcpConfig: null,
       mcpConfigRedacted: false,
+      sceneOAuthApps: [],
     } satisfies ContextConfigSceneDetail);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(() => useSetContextCapabilityBinding("agent-1"), {
@@ -162,17 +164,15 @@ describe("context capability mutations", () => {
     await act(async () => {
       await result.current.mutateAsync({
         scopeType: "scene",
-        scopeKey: "cid-dm",
+        scopeKey: dmSceneId,
         resourceType: "skill",
         resourceId: "s1",
         enabled: true,
       });
     });
 
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.scene("agent-1", "cid-dm") });
-    // Only the agent details: every other scene stays cached.
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.details("agent-1") });
-    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1") });
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.scene("agent-1", dmSceneId) });
   });
 
   it("offers a skill from a fresh read, keeps the connector offers and caches the saved catalog", async () => {

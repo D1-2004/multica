@@ -97,26 +97,53 @@ func (f *catalogFixture) takeAuthorizeURL(t *testing.T, rec *httptest.ResponseRe
 	if err != nil || parsed.Scheme != "https" {
 		t.Fatalf("authorize_url = %q", body.AuthorizeURL)
 	}
-	query := parsed.Query()
-	f.provider.mu.Lock()
-	f.provider.challenge = query.Get("code_challenge")
-	f.provider.redirectURI = query.Get("redirect_uri")
-	f.provider.mu.Unlock()
+	query, err := f.provider.noteAuthorize(body.AuthorizeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return query, rec.Result().Cookies()
 }
 
 // assertBindingCookie checks the browser binding cookie a start response
 // set for state: HttpOnly, SameSite=Lax, Secure on an https origin, scoped
-// to the callback path.
+// to the callback path. A DCR connect also sets the same binding on the
+// legacy callback path, because cookie path matching does not treat
+// /api/connectors/oauth/callback and /api/connector-oauth/callback as one.
 func assertBindingCookie(t *testing.T, cookies []*http.Cookie, state, path string) {
 	t.Helper()
-	if len(cookies) != 1 {
+	check := func(cookie *http.Cookie) {
+		t.Helper()
+		if cookie == nil || cookie.Name != connectorOAuthCookieName(hashConnectorOAuthState(state)) || cookie.Value == "" ||
+			!cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge != int(connectorOAuthStateTTL.Seconds()) {
+			t.Fatalf("binding cookie = %+v", cookie)
+		}
+	}
+	var match *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Path == path {
+			match = cookie
+			break
+		}
+	}
+	check(match)
+	if path != ConnectorOAuthCallbackPath {
+		if len(cookies) != 1 {
+			t.Fatalf("start cookies = %v", cookies)
+		}
+		return
+	}
+	if len(cookies) != 2 {
 		t.Fatalf("start cookies = %v", cookies)
 	}
-	cookie := cookies[0]
-	if cookie.Name != connectorOAuthCookieName(hashConnectorOAuthState(state)) || cookie.Value == "" || cookie.Path != path ||
-		!cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge != int(connectorOAuthStateTTL.Seconds()) {
-		t.Fatalf("binding cookie = %+v", cookie)
+	var legacy *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Path == connectorOAuthCallbackLegacyPath {
+			legacy = cookie
+		}
+	}
+	check(legacy)
+	if legacy.Value != match.Value || legacy.Name != match.Name {
+		t.Fatalf("legacy binding cookie = %+v, canonical = %+v", legacy, match)
 	}
 }
 
@@ -258,8 +285,13 @@ func TestCatalogAPIAdminGalleryGitHubConnectAndTools(t *testing.T) {
 	ctxcapExpectStatus(t, catalogAdmin(t, router, http.MethodPost, startPath, testUserID, nil), http.StatusOK, "start without a body")
 	query, cookies := f.takeAuthorizeURL(t, catalogAdmin(t, router, http.MethodPost, startPath, testUserID, map[string]string{}))
 	state := query.Get("state")
-	if query.Get("client_id") != "gh-client" || query.Get("redirect_uri") != catalogWebOrigin+"/api/github/authorize" || !isConnectorOAuthState(state) {
-		t.Fatalf("GitHub authorize query = %v", query)
+	f.provider.mu.Lock()
+	authorizeURL := f.provider.lastAuthorizeURL
+	f.provider.mu.Unlock()
+	parsedAuthorize, err := url.Parse(authorizeURL)
+	if err != nil || parsedAuthorize.Host != "github.com" || parsedAuthorize.Path != "/apps/multica-test-app/installations/new" ||
+		query.Get("client_id") != "" || !isConnectorOAuthState(state) {
+		t.Fatalf("GitHub authorize URL = %s", authorizeURL)
 	}
 	assertBindingCookie(t, cookies, state, "/api/github/authorize")
 
@@ -549,5 +581,121 @@ func TestCatalogAPIMobileConnectionStartCallbackAndDetail(t *testing.T) {
 		if c["oauth_available"] != want {
 			t.Fatalf("oauth_available without the GitHub App secret = %v", c)
 		}
+	}
+}
+
+func TestGitHubInstallCallbackWithoutCodeContinuesToUserAuthorization(t *testing.T) {
+	f := newCatalogFixture(t)
+	router := catalogAPIRouter(f.h)
+	c := f.create(t, f.gh)
+	startPath := "/api/workspaces/" + testWorkspaceID + "/internal-connectors/" + c.ID + "/oauth/start"
+	start := func() (string, []*http.Cookie) {
+		t.Helper()
+		query, cookies := f.takeAuthorizeURL(t, catalogAdmin(t, router, http.MethodPost, startPath, testUserID, map[string]string{}))
+		return query.Get("state"), cookies
+	}
+	stateConsumed := func(state string) bool {
+		t.Helper()
+		var consumed bool
+		if err := testPool.QueryRow(context.Background(), `SELECT consumed_at IS NOT NULL FROM connector_oauth_state WHERE state_hash = $1`, hashConnectorOAuthState(state)).Scan(&consumed); err != nil {
+			t.Fatal(err)
+		}
+		return consumed
+	}
+
+	// No installation id and no code is a finished provider error.
+	state, cookies := start()
+	rec := browserGet(router, "/api/github/authorize?state="+url.QueryEscape(state), cookies...)
+	if rec.Code != http.StatusFound || !strings.HasSuffix(rec.Header().Get("Location"), "connect_error="+connectOAuthErrProviderError) || !stateConsumed(state) {
+		t.Fatalf("empty install return: %d %q consumed=%v", rec.Code, rec.Header().Get("Location"), stateConsumed(state))
+	}
+
+	state, cookies = start()
+	rec = browserGet(router, "/api/github/authorize?installation_id=42&setup_action=install&state="+url.QueryEscape(state), cookies...)
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || err != nil || location.Path != "/login/oauth/authorize" || location.Query().Get("state") != state ||
+		location.Query().Get("client_id") != "gh-client" || location.Query().Get("redirect_uri") != catalogWebOrigin+"/api/github/authorize" ||
+		location.Query().Get("code_challenge_method") != "S256" || location.Query().Get("code_challenge") == "" {
+		t.Fatalf("user authorization hop: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.MaxAge < 0 {
+			t.Fatalf("binding cookie cleared before the user hop: %+v", cookie)
+		}
+	}
+	if _, exchanges, _, _ := f.provider.counts(); exchanges != 0 || stateConsumed(state) {
+		t.Fatalf("install return exchanged or consumed the state, exchanges=%d consumed=%v", exchanges, stateConsumed(state))
+	}
+	if _, err := f.provider.noteAuthorize(rec.Header().Get("Location")); err != nil {
+		t.Fatal(err)
+	}
+	rec = browserGet(router, "/api/github/authorize?code=good-code&state="+url.QueryEscape(state), cookies...)
+	wantRedirect := catalogAppOrigin + "/" + url.PathEscape(catalogWorkspaceSlug(t)) + "/internal-connectors?connected=" + f.gh.Slug
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != wantRedirect {
+		t.Fatalf("user hop callback: %d %q, want %q", rec.Code, rec.Header().Get("Location"), wantRedirect)
+	}
+	if set := rec.Result().Cookies(); len(set) != 1 || set[0].MaxAge >= 0 {
+		t.Fatalf("user hop callback cookies = %v", set)
+	}
+	f.provider.mu.Lock()
+	verifierSent := f.provider.verifierSent
+	f.provider.mu.Unlock()
+	if _, exchanges, _, _ := f.provider.counts(); exchanges != 1 || !verifierSent || !stateConsumed(state) {
+		t.Fatalf("user hop exchange exchanges=%d verifier=%v consumed=%v", exchanges, verifierSent, stateConsumed(state))
+	}
+	var ciphertext []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT credential_ciphertext FROM internal_connector WHERE id = $1`, c.ID).Scan(&ciphertext); err != nil || len(ciphertext) == 0 {
+		t.Fatalf("credential after the user hop: %v len=%d", err, len(ciphertext))
+	}
+}
+
+func TestGitHubUpdateWithoutCodeRefreshesWhenCredentialExists(t *testing.T) {
+	f := newCatalogFixture(t)
+	router := catalogAPIRouter(f.h)
+	c := f.create(t, f.gh)
+	startPath := "/api/workspaces/" + testWorkspaceID + "/internal-connectors/" + c.ID + "/oauth/start"
+	query, cookies := f.takeAuthorizeURL(t, catalogAdmin(t, router, http.MethodPost, startPath, testUserID, map[string]string{}))
+	state := query.Get("state")
+	rec := browserGet(router, "/api/github/authorize?code=good-code&installation_id=7&setup_action=install&state="+url.QueryEscape(state), cookies...)
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "connected="+f.gh.Slug) {
+		t.Fatalf("install code callback: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	f.provider.mu.Lock()
+	if f.provider.verifierSent {
+		t.Fatal("installation code was exchanged with PKCE")
+	}
+	f.provider.mu.Unlock()
+	var ciphertext []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT credential_ciphertext FROM internal_connector WHERE id = $1`, c.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.h.openWorkspaceConnectorSecret(testWorkspaceID, c.ID, ciphertext)
+	if err != nil || stored.Bearer == "" {
+		t.Fatalf("stored credential = %+v %v", stored, err)
+	}
+	before := stored.Bearer
+
+	query, cookies = f.takeAuthorizeURL(t, catalogAdmin(t, router, http.MethodPost, startPath, testUserID, map[string]string{}))
+	state = query.Get("state")
+	rec = browserGet(router, "/api/github/authorize?installation_id=7&setup_action=update&state="+url.QueryEscape(state), cookies...)
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "connected="+f.gh.Slug) {
+		t.Fatalf("update callback: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if set := rec.Result().Cookies(); len(set) != 1 || set[0].MaxAge >= 0 {
+		t.Fatalf("update callback cookies = %v", set)
+	}
+	var consumed bool
+	if err := testPool.QueryRow(context.Background(), `SELECT consumed_at IS NOT NULL FROM connector_oauth_state WHERE state_hash = $1`, hashConnectorOAuthState(state)).Scan(&consumed); err != nil || !consumed {
+		t.Fatalf("update state consumed=%v err=%v", consumed, err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT credential_ciphertext FROM internal_connector WHERE id = $1`, c.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = f.h.openWorkspaceConnectorSecret(testWorkspaceID, c.ID, ciphertext)
+	if err != nil || stored.Bearer != before {
+		t.Fatalf("credential changed on update: %q -> %q %v", before, stored.Bearer, err)
+	}
+	if _, exchanges, _, _ := f.provider.counts(); exchanges != 1 {
+		t.Fatalf("update exchanged a code, exchanges=%d", exchanges)
 	}
 }

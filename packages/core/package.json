@@ -127,6 +127,7 @@
     "./dingtalk": "./dingtalk/index.ts",
     "./dingtalk/queries": "./dingtalk/queries.ts",
     "./context-capabilities": "./context-capabilities/index.ts",
+    "./tag": "./tag/index.ts",
     "./internal-connectors": "./internal-connectors/index.ts",
     "./dingtalk-account-bindings": "./dingtalk-account-bindings/index.ts",
     "./dingtalk-account-bindings/queries": "./dingtalk-account-bindings/queries.ts",

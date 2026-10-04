@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,10 +39,14 @@ var attachmentUploadCmd = &cobra.Command{
 	Long: `Upload a local file as a durable artifact of the current task.
 
 For a chat task, the server binds the file to the assistant reply when the task
-completes. For an Issue task, the file is attached directly to that Issue so it
-remains available after the runtime workspace disappears. The command also
-returns a markdown snippet you may paste into a chat or Issue comment: files
-use !file[name](url) (a card), images use ![name](url) (inline).
+completes. For an Issue task, the file is attached directly to that Issue. An
+Employee Direct task stores the file against its own Run without creating an
+Issue or Chat. Direct files keep the task's private access policy and are returned
+only after upload and metadata commit; a local path alone is not an artifact.
+
+The command returns the durable attachment id and an authenticated markdown URL.
+Files use !file[name](url) (a card), images use ![name](url) (inline). A Direct URL
+requires authorized access; it is not a native external-channel file receipt.
 
 The task id is read from MULTICA_TASK_ID (set by the daemon inside a task);
 override it with --task when needed.`,
@@ -134,15 +139,12 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(60*time.Second))
 	defer cancel()
 
-	// Fetch attachment metadata (includes signed download_url).
+	// Metadata supplies the filename; download by ID through the configured API
+	// so a sandbox relay remains the route even when metadata names the public URL.
+	attachmentPath := "/api/attachments/" + url.PathEscape(args[0])
 	var att map[string]any
-	if err := client.GetJSON(ctx, "/api/attachments/"+args[0], &att); err != nil {
+	if err := client.GetJSON(ctx, attachmentPath, &att); err != nil {
 		return fmt.Errorf("get attachment: %w", err)
-	}
-
-	downloadURL := strVal(att, "download_url")
-	if downloadURL == "" {
-		return fmt.Errorf("attachment has no download URL")
 	}
 
 	filename := filepath.Base(strVal(att, "filename"))
@@ -150,8 +152,8 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 		filename = args[0]
 	}
 
-	// Download the file content.
-	data, err := client.DownloadFile(ctx, downloadURL)
+	// The server applies the existing attachment ACL and may redirect to signed storage.
+	data, err := client.DownloadFile(ctx, attachmentPath+"/download")
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
 	}

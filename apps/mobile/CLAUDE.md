@@ -1,6 +1,6 @@
 # Mobile App Rules (apps/mobile/)
 
-For cross-app sharing rules, see the root `CLAUDE.md` *Sharing Principles* section. This file documents the locked tech-stack baseline and the few mobile-specific rules — so AI doesn't suggest outdated alternatives.
+Read the root `CLAUDE.md` and `docs/development-delivery.md` for shared engineering and delivery rules. This file adds mobile-specific parity, interaction and runtime requirements; its pre-flight process supplies the acceptance and environment facts for mobile work rather than replacing the shared delivery contract.
 
 ## What mobile may import from `packages/`
 

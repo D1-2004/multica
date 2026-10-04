@@ -47,7 +47,7 @@ func (q *Queries) GetAgentDispatchEndpointForDelivery(ctx context.Context, arg G
 }
 
 const getDWSNativeAccountOwner = `-- name: GetDWSNativeAccountOwner :one
-SELECT sub.agent_id, sub.workspace_id, sub.self_open_dingtalk_id
+SELECT sub.agent_id, sub.workspace_id, sub.self_open_dingtalk_id, sub.enabled_at
 FROM agent_dws_native_subscription sub
 JOIN agent_dingtalk_identity identity
   ON identity.agent_id = sub.agent_id
@@ -68,9 +68,10 @@ type GetDWSNativeAccountOwnerParams struct {
 }
 
 type GetDWSNativeAccountOwnerRow struct {
-	AgentID            pgtype.UUID `json:"agent_id"`
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	SelfOpenDingtalkID string      `json:"self_open_dingtalk_id"`
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	SelfOpenDingtalkID string             `json:"self_open_dingtalk_id"`
+	EnabledAt          pgtype.Timestamptz `json:"enabled_at"`
 }
 
 // The agent whose native subscription owns a DingTalk account: its row names
@@ -80,7 +81,7 @@ type GetDWSNativeAccountOwnerRow struct {
 func (q *Queries) GetDWSNativeAccountOwner(ctx context.Context, arg GetDWSNativeAccountOwnerParams) (GetDWSNativeAccountOwnerRow, error) {
 	row := q.db.QueryRow(ctx, getDWSNativeAccountOwner, arg.OrgID, arg.DwsUid)
 	var i GetDWSNativeAccountOwnerRow
-	err := row.Scan(&i.AgentID, &i.WorkspaceID, &i.SelfOpenDingtalkID)
+	err := row.Scan(&i.AgentID, &i.WorkspaceID, &i.SelfOpenDingtalkID, &i.EnabledAt)
 	return i, err
 }
 

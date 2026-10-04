@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "status": "candidate_pending_canonical_integration",
+  "targetScenario": "cron-office",
+  "specRefs": [
+    "spec-collaboration"
+  ],
+  "p0Mapping": {
+    "target": "G15",
+    "policy": "修订既有组合，不新增第21条P0；只纳入真实执行的case"
+  },
+  "cases": [
+    {
+      "id": "office-cron-once-short-due",
+      "title": "三分钟后只提醒一次",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "一次性请求可低于周期15分钟间隔；创建任务在到点前结束，等待期间不持有沙箱。",
+        "按原消息时间+180秒持久化；结果仅回原单聊一次，trigger.kind=once且无重复cron规则，不替换为待办、不发开始通知。"
+      ],
+      "method": [
+        "在无其他写入者的测试单聊发送“3分钟后提醒我喝水，只提醒一次，在这里回复”。",
+        "读创建资源确认kind=once及准确run_at；核原创建queue/Run在计划时间前终结，等待期无sleep或持续运行的新沙箱。",
+        "跨过目标时间及冻结lateness窗口，独立回读原单聊和账本；关联一次新occurrence/Task/Run/结果outbox与一条真实结果，ACK单独计数。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    },
+    {
+      "id": "office-cron-once-source-context",
+      "title": "五分钟后继续原报告语境",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "原任务/沙箱结束后仍保留请求人、原场域、原消息时间和上游报告材料。",
+        "到点遵循原报告的限定输出要求；不重新问“提醒什么”、编造内容或向别的会话发。"
+      ],
+      "method": [
+        "先在同一测试单聊形成带明确结论和格式约束的可验证小报告，例如三条待处理事项。",
+        "发送“5分钟后提醒我处理刚才报告中的第二项，只写事项名称和截止时间，不要重新统计”。记录原来源refs，不把预期答案再塞进未来提示。",
+        "原创建Run结束后回读source快照；到点核新Run实际packet包含原报告/引用和约束，独立比对单聊真实结果、目标和一次效果。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    },
+    {
+      "id": "office-cron-once-cancel-pending",
+      "title": "取消尚未到期的提醒",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "取消在受理前阻止未来执行；重复取消及迟到创建重放不能复活。"
+      ],
+      "method": [
+        "建3分钟后的一次性提醒；确认资源后在到点前说取消刚才那个提醒，并再查询一次。",
+        "跨过原时间及完整观察窗口，核取消/归档tombstone、scheduler扫描与零新执行/结果；受控回放原创建请求后仍无新资源或执行。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    },
+    {
+      "id": "office-cron-once-reschedule-pending",
+      "title": "改期后旧时间不提醒",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "待触发任务从3分钟改为5分钟后只按新时间执行，原上下文与目标不变。",
+        "编辑不破坏原创建幂等身份，原请求重放不会多建。"
+      ],
+      "method": [
+        "在测试单聊创建3分钟后提醒；用明确绝对时间改为原请求时间+300秒，避免“再过5分钟”时间歧义。",
+        "原计划时间回读旧slot零受理；新时间回读一次结果，新Run仍使用原source。",
+        "受控重放原创建请求，核同一资源已改期状态未重置、无第二次安排。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    },
+    {
+      "id": "office-cron-once-subminute-owner",
+      "title": "一分钟内等待保持单一交付归属",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "45秒延迟可被处理，不误判为周期频率过短。",
+        "采用持久调度或原Run有界等待均只能有一个发送owner，不同时注册timer又sleep发送。"
+      ],
+      "method": [
+        "发送“45秒后在这里提醒我，只提醒一次”，固定原occurredAt和实际执行策略。",
+        "核平台once与运行轨迹：持久路径提前释放Run；短等待路径总等待<60秒、Run托管且取消有效，不遗留后台进程。",
+        "独立回读一次结果；记录实际扫描/FC启动排队延迟，按事前冻结的短延迟SLO签收，不承诺无环境条件的精确秒送达。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    },
+    {
+      "id": "office-cron-once-admission-load",
+      "title": "同刻到期排队与资源上限",
+      "roles": [
+        "发起者：获准测试真人",
+        "执行者：测试数字员工",
+        "独立验证者：仅可读测试场域、任务与轨迹"
+      ],
+      "verifies": [
+        "等待期的资源占用不随定时延迟增长；到期突发按既有容量限制排队，不重复创建沙箱/执行。",
+        "负载不能让普通交互或其他scheduler job无限饥饿；没有排队容量实证不能签负载通过。"
+      ],
+      "method": [
+        "仅在专用本地/候选隔离环境，准备多个获准场域并固定Agent/Runtime并发上限；先验证低负载基线。",
+        "阶梯设置5、20个同刻到期once，观测DB scan/锁等待/队列深度、活跃sandbox与claim并发、后台其他job和一个普通交互进度。",
+        "核planned/admitted/start/delivered各段延迟、每slot唯一ledger及真实输出；容量不足保留queued并恢复，不能通过超额sandbox绕上限。",
+        "失败最小化后由发布负责人决定准入/批量预算，不对共享预发直接灌压。"
+      ],
+      "sources": [
+        "docs/context-capabilities.md",
+        "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+      ],
+      "origin": "defined",
+      "sourceCases": []
+    }
+  ],
+  "executionContract": {
+    "phase": "首波轻量真实IM；负载项单独隔离",
+    "environment": "发布负责人固定source/release、全部live reader、测试员工/Runtime、场域与窗口；无真实账号写入定义",
+    "timing": "发布负责人已确认低负载3/5分钟首波事前门：以source occurredAt计算run_at，due→admission≤45秒（默认30秒tick+余量），due→原场域消息≤120秒，两项分开，不是业务SLA。实际cadence/冷启动不符合时保存证据由负责人调整下一attempt的manifest，不事后放宽本次结果；45秒case另定预算。不得提前发。",
+    "evidence": [
+      "IM完整分页独立回读与messageId计数",
+      "创建资源/occurrence/Task/Run/queue/outbox的关联",
+      "实际工具调用和新Run work packet的LF证据",
+      "source→planned→admitted→worker_started→provider_accepted→IM时间线",
+      "保存源任务受理/终结时间、due、admission/claim、最终DWS投递，并关联实际live版本；不用新工具调用起点替换source occurredAt"
+    ],
+    "driver": "当前checkout没有统一真实IM runner；由发布/验收接入既有runner。此文件只定义，不自动发消息。",
+    "subMinute": "允许单一持久once或原Run内有界短等待，不要求使用沙箱；若用短等待必须<60s且只有一个交付owner，不留下未托管后台进程。",
+    "negativeObservation": "取消/旧时点静默需要完整窗口、scheduler/admission结算、零occurrence/queue/outbox新增联合证明，不能只凭未看到消息。",
+    "recovery": "跨发布保留检查点；只复验受影响步骤；所有case清理登记真实resource id，不清除原历史来掩盖失败。"
+  },
+  "executionPlan": {
+    "office-cron-once-short-due": {
+      "phase": "first_wave",
+      "delaySeconds": 180,
+      "status": "not_run"
+    },
+    "office-cron-once-source-context": {
+      "phase": "first_wave",
+      "delaySeconds": 300,
+      "status": "not_run"
+    },
+    "office-cron-once-cancel-pending": {
+      "phase": "first_wave",
+      "delaySeconds": 180,
+      "status": "not_run"
+    },
+    "office-cron-once-reschedule-pending": {
+      "phase": "first_wave",
+      "delaySeconds": 300,
+      "status": "not_run"
+    },
+    "office-cron-once-subminute-owner": {
+      "phase": "first_wave",
+      "delaySeconds": 45,
+      "status": "not_run"
+    },
+    "office-cron-once-admission-load": {
+      "phase": "isolated_second_wave",
+      "delaySeconds": null,
+      "status": "not_run"
+    }
+  }
+}

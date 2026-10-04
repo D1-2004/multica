@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_learning_consumption_scope_idx ON employee_learning_consumption(workspace_id,agent_id,tenant_org_id,scene_id,created_at);

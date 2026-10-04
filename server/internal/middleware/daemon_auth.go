@@ -50,6 +50,12 @@ func DaemonAuthPathFromContext(ctx context.Context) string {
 	return p
 }
 
+// WithDaemonAuthPath restores only the credential kind already authenticated
+// during a daemon WebSocket upgrade. The caller must never use frame input.
+func WithDaemonAuthPath(ctx context.Context, path string) context.Context {
+	return context.WithValue(ctx, ctxKeyDaemonAuthPath, path)
+}
+
 // WithDaemonContext returns a new context with the daemon workspace ID and daemon ID set.
 // This is used by tests to simulate daemon token authentication.
 func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) context.Context {

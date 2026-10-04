@@ -3,6 +3,8 @@ package protocol
 import "encoding/json"
 
 const (
+	// DaemonCapabilityEmployeeDirectV1 consumes issue-free EmployeeTask prompts.
+	DaemonCapabilityEmployeeDirectV1 = "employee-direct-v1"
 	// DaemonCapabilityDSHNativePromptV1 preserves typed native input and binding identity.
 	DaemonCapabilityDSHNativePromptV1   = "dsh-native-prompt-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"

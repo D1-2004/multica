@@ -977,8 +977,19 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			name: "prepare employee artifact cleanup",
+			run:  func() error { return h.MarkWorkspaceEmployeeArtifactsDeleting(ctx, tx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete leaf data",
 			run:  func() error { return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete evaluation reports",
+			run: func() error {
+				_, err := tx.Exec(ctx, `DELETE FROM eval_report WHERE workspace_id=$1`, requester.WorkspaceID)
+				return err
+			},
 		},
 		{
 			name: "delete Agent source previews",
@@ -1053,18 +1064,69 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			// Context capability tables have no FKs; sweep them explicitly.
+			// Context and employee task tables have no FKs; sweep children before roots.
 			name: "delete context capabilities",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM employee_event_consumption WHERE workspace_id=$1`,
+					`DELETE FROM employee_human_response WHERE question_id IN (SELECT id FROM employee_human_question WHERE workspace_id=$1)`,
+					`DELETE FROM a2ui_interaction WHERE id IN (SELECT id FROM employee_human_question WHERE workspace_id=$1)`,
+					`DELETE FROM employee_human_question WHERE workspace_id=$1`,
+					`DELETE FROM employee_host_notice WHERE workspace_id=$1`,
+					`DELETE FROM employee_progress_report WHERE workspace_id=$1`,
+					`DELETE FROM employee_first_feedback WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_follow_up WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_plan WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_participation WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_job WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_message WHERE workspace_id=$1`,
+					`DELETE FROM scene_event_receipt WHERE workspace_id=$1`,
+					`DELETE FROM employee_learning_consumption WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_verified_distill WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_verification WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_verification_attempt WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_verification_spec WHERE workspace_id=$1`,
+					`DELETE FROM employee_learning WHERE workspace_id=$1`,
+					`DELETE FROM employee_memory_state WHERE workspace_id=$1`,
+					`DELETE FROM employee_agent_profile_fact WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_member_roster WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_digest_run WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_digest_state WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_ledger WHERE workspace_id=$1`,
+					`DELETE FROM employee_message_resource WHERE workspace_id=$1`,
+					`DELETE FROM employee_run_notice WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_wait WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_link WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_ready_intent WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_input WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_invitation_reminder WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_invitation_reminder_policy WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_invitation WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_collection WHERE workspace_id=$1`,
+					`DELETE FROM employee_routine_decision WHERE workspace_id=$1`,
+					`DELETE FROM employee_routine_occurrence WHERE workspace_id=$1`,
+					`DELETE FROM employee_webhook_occurrence WHERE workspace_id=$1`,
+					`DELETE FROM employee_watchdog_notice WHERE workspace_id=$1`,
+					`DELETE FROM employee_watchdog_episode WHERE workspace_id=$1`,
+					`DELETE FROM employee_watchdog_cursor WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_run WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_entry WHERE workspace_id=$1`,
+					`DELETE FROM employee_task WHERE workspace_id=$1`,
 					`DELETE FROM context_config_link WHERE workspace_id=$1`,
 					`DELETE FROM context_config_grant WHERE workspace_id=$1`,
 					`DELETE FROM context_connector_credential WHERE workspace_id=$1`,
+					`DELETE FROM context_connector_app WHERE workspace_id=$1`,
 					`DELETE FROM context_capability_binding WHERE workspace_id=$1`,
 					`DELETE FROM agent_scene_config WHERE workspace_id=$1`,
+					`DELETE FROM agent_scene_memory WHERE workspace_id=$1`,
+					`DELETE FROM agent_scene WHERE workspace_id=$1`,
 					`DELETE FROM context_scope_mcp_config WHERE workspace_id=$1`,
 					`DELETE FROM context_prompt_component WHERE workspace_id=$1`,
+					`DELETE FROM context_scope_routine WHERE workspace_id=$1`,
 					`DELETE FROM agent_tenant WHERE workspace_id=$1`,
+					`DELETE FROM tag_config_revision WHERE workspace_id=$1`,
+					`DELETE FROM tag_tenant WHERE workspace_id=$1`,
+					`DELETE FROM workspace_tag WHERE workspace_id=$1`,
 				} {
 					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
 						return err
@@ -1074,11 +1136,14 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			// Official app OAuth tables (pending states, DCR client
-			// registrations) have no FKs; sweep them explicitly.
+			// Connector app rows and official OAuth state have no foreign
+			// keys. Bindings and instances go before the application row.
 			name: "delete connector OAuth state",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM connector_auth_binding WHERE workspace_id=$1`,
+					`DELETE FROM connector_auth_instance WHERE workspace_id=$1`,
+					`DELETE FROM connector_app WHERE workspace_id=$1`,
 					`DELETE FROM connector_oauth_state WHERE workspace_id=$1`,
 					`DELETE FROM connector_oauth_client WHERE workspace_id=$1`,
 				} {

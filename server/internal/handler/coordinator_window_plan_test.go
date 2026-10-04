@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ type coordinatorPlanFixture struct {
 	agent   db.Agent
 	dc      agentDispatchContext
 	command DispatchCommand
+	scene   db.AgentScene
 	job     db.InboundCoordinatorJob
 	baseKey string
 }
@@ -46,6 +48,10 @@ func newCoordinatorPlanFixture(t *testing.T, texts ...string) coordinatorPlanFix
 		baseKey: uuid.NewString(),
 	}
 	f.command = DispatchCommand{SchemaVersion: "2.0", AgentID: agentID, DispatchEndpointID: uuidToString(namespace), Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"}, Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{Conversation: DispatchConversation{OpenConversationID: "cid-plan-" + uuid.NewString(), Type: "group"}, Sender: DispatchSender{DisplayName: "甲", UID: "uid-a"}}}}
+	// The dispatch records the agent's org; its scene lives there.
+	f.command.ExternalIdentity = AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "plan-fixture", OrgID: "org-plan"}}
+	f.scene = registerTestScene(t, agentID, "org-plan", scene.KindGroup, f.command.Event.Data.Conversation.OpenConversationID)
+	f.command.AgentScene = testSceneRef(f.scene)
 	for i, text := range texts {
 		name := "甲"
 		uid := "uid-a"
@@ -65,6 +71,9 @@ func newCoordinatorPlanFixture(t *testing.T, texts ...string) coordinatorPlanFix
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		for _, table := range []string{"employee_task_entry", "employee_task_run", "employee_task"} {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE agent_id=$1`, agent.ID)
+		}
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbound_coordinator_job WHERE id=$1`, f.job.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM assoc_edge WHERE agent_id=$1`, agent.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM assoc_event WHERE agent_id=$1`, agent.ID)
@@ -152,7 +161,7 @@ func (f coordinatorPlanFixture) existingIssue(t *testing.T) string {
 	if err := f.h.Assoc.AssociateIssueConversation(context.Background(), assoc.AssociateInput{
 		WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent.ID), IssueID: id,
 		IssueTitle: "确认线上开会时间及参会安排", Purpose: "确认线上开会时间及参会安排",
-		ConversationID: f.command.Event.Data.Conversation.OpenConversationID,
+		Scene: testSceneNode(f.scene),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +391,7 @@ func TestCoordinatorWindowPlanRecoversCommittedEffectWithoutCheckpoint(t *testin
 	if count != 1 {
 		t.Fatalf("crash recovery duplicated %d tasks", count)
 	}
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, SceneID: f.command.AgentScene.SceneID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if err != nil || active != 1 {
 		t.Fatalf("recovered work must repair scene binding for recall and capacity: active=%d err=%v", active, err)
 	}
@@ -412,13 +421,13 @@ func TestCoordinatorWindowPlanContinuationAlsoConsumesSceneCapacity(t *testing.T
 	if err := f.h.Assoc.AssociateIssueConversation(context.Background(), assoc.AssociateInput{
 		WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent.ID), IssueID: other,
 		IssueTitle: "已有工作正在查询另一份资料", Purpose: "查询另一份资料供用户审阅", RunID: busyTask,
-		ConversationID: f.command.Event.Data.Conversation.OpenConversationID,
+		Scene: testSceneNode(f.scene),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	f.plan(t, "", old)
 	first := f.dispatch(t)
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, SceneID: f.command.AgentScene.SceneID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if first.Code != http.StatusConflict || err != nil || active > 2 {
 		t.Fatalf("new work plus an idle-Issue continuation need two execution slots: status=%d active=%d err=%v body=%s", first.Code, active, err, first.Body.String())
 	}
@@ -826,5 +835,29 @@ func TestCoordinatorJobFinishSchemaComesOnlyFromTheJob(t *testing.T) {
 	encoded, _ := json.Marshal(req.DispatchCommand())
 	if record := coordinatorJobFinishSchema(encoded); record != nil {
 		t.Fatalf("a wire field became a trusted group: %s", encoded)
+	}
+}
+
+func TestCoordinatorWindowPlanPersistsActualRequesterInTask(t *testing.T) {
+	f := newCoordinatorPlanFixture(t, "为甲整理预算", "为乙改会议")
+	old := f.existingIssue(t)
+	f.plan(t, "", old)
+	response := f.dispatch(t)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("dispatch: %d %s", response.Code, response.Body.String())
+	}
+	_, saved := f.stored(t)
+	var requester, actor string
+	if err := testPool.QueryRow(context.Background(), `SELECT requester_ref FROM employee_task WHERE workspace_id=$1 AND agent_id=$2 AND issue_id=$3::uuid`, f.dc.WorkspaceID, f.agent.ID, saved.IssueResults[0].IssueID).Scan(&requester); err != nil {
+		t.Fatal(err)
+	}
+	if requester != "dingtalk:uid:uid-a" {
+		t.Fatalf("requester replaced by operator: %s", requester)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT e.actor_ref FROM employee_task_entry e JOIN employee_task t ON t.id=e.task_id WHERE t.workspace_id=$1 AND t.agent_id=$2 AND t.issue_id=$3::uuid AND e.kind='input'`, f.dc.WorkspaceID, f.agent.ID, old).Scan(&actor); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "dingtalk:uid:uid-2" {
+		t.Fatalf("continuation actor replaced by operator: %s", actor)
 	}
 }

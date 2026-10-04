@@ -173,10 +173,36 @@ describe("context capability mobile responses", () => {
         scope_key: "cid1",
         scope_title: "Team",
       }),
-    ).toEqual({ agentId, workspaceId: "", scopeType: null, scopeKey: "cid1", scopeTitle: "Team", orgId: "" });
+    ).toEqual({ agentId, workspaceId: "", scopeType: null, scopeKey: "cid1", scopeTitle: "Team", orgId: "", extraSceneId: "" });
     expect(
       parseWithFallback({ scope_type: "scene" }, ContextConfigRedeemSchema, EMPTY_CONTEXT_CONFIG_REDEEM, opts),
     ).toEqual(EMPTY_CONTEXT_CONFIG_REDEEM);
+  });
+
+  it("reads the 1:1 chat a person link was minted in", () => {
+    const dm = "22222222-2222-4222-8222-222222222222";
+    expect(
+      ContextConfigRedeemSchema.parse({
+        agent_id: agentId,
+        scope_type: "person",
+        scope_key: "odt:DpJnOpenSender",
+        scope_title: "冬翔",
+        extra_scene_id: dm,
+      }),
+    ).toMatchObject({ scopeType: "person", scopeKey: "odt:DpJnOpenSender", extraSceneId: dm });
+    // A malformed extra scene from a drifting backend is no scene.
+    expect(
+      ContextConfigRedeemSchema.parse({ agent_id: agentId, scope_type: "person", scope_key: "103262", extra_scene_id: null }),
+    ).toMatchObject({ extraSceneId: "" });
+    // The link is spent by now: a non-string extra scene keeps the redeem.
+    expect(
+      parseWithFallback(
+        { agent_id: agentId, scope_type: "person", scope_key: "103262", extra_scene_id: 7 },
+        ContextConfigRedeemSchema,
+        EMPTY_CONTEXT_CONFIG_REDEEM,
+        opts,
+      ),
+    ).toMatchObject({ agentId, scopeType: "person", scopeKey: "103262", extraSceneId: "" });
   });
 
   it("returns null for a binding echo of an unknown resource type", () => {

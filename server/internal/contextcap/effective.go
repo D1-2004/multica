@@ -369,13 +369,13 @@ func MergeMCPConfig(base json.RawMessage, e EffectiveContext) (json.RawMessage, 
 
 // LayerSelection names the scope layers of one effective context under
 // OrgID (a tenant of the agent, see AgentTenants): the org layer when Org is
-// set (OrgID must then be non-empty), the group scene SceneKey and the
-// person PersonKey when non-empty. The caller decides that OrgID is a
+// set (OrgID must then be non-empty), the scene SceneID (an agent_scene id)
+// and the person PersonKey when non-empty. The caller decides that OrgID is a
 // tenant; LoadLayers and LayerCredentials do not check it.
 type LayerSelection struct {
 	OrgID     string
 	Org       bool
-	SceneKey  string
+	SceneID   string
 	PersonKey string
 }
 
@@ -391,8 +391,8 @@ func LoadLayers(ctx context.Context, db DBTX, workspaceID, agentID string, sel L
 	if sel.Org {
 		wanted = append(wanted, want{ScopeOrg, sel.OrgID})
 	}
-	if sel.SceneKey != "" {
-		wanted = append(wanted, want{ScopeScene, sel.SceneKey})
+	if sel.SceneID != "" {
+		wanted = append(wanted, want{ScopeScene, sel.SceneID})
 	}
 	if sel.PersonKey != "" {
 		wanted = append(wanted, want{ScopePerson, sel.PersonKey})
@@ -431,7 +431,7 @@ func LayerCredentials(ctx context.Context, db DBTX, workspaceID, agentID string,
 	if sel.Org {
 		orgKey = sel.OrgID
 	}
-	if orgKey == "" && sel.SceneKey == "" && sel.PersonKey == "" {
+	if orgKey == "" && sel.SceneID == "" && sel.PersonKey == "" {
 		return []Credential{}, nil
 	}
 	rows, err := db.Query(ctx, `SELECT workspace_id::text, agent_id::text, connector_id::text, scope_type, org_id, scope_key, ciphertext, hint, updated_at
@@ -441,7 +441,7 @@ func LayerCredentials(ctx context.Context, db DBTX, workspaceID, agentID string,
 		    OR (scope_type = 'scene' AND $5::text <> '' AND scope_key = $5::text)
 		    OR (scope_type = 'person' AND $6::text <> '' AND scope_key = $6::text))
 		ORDER BY connector_id, CASE scope_type WHEN 'person' THEN 0 WHEN 'scene' THEN 1 ELSE 2 END`,
-		workspaceID, agentID, sel.OrgID, orgKey, sel.SceneKey, sel.PersonKey)
+		workspaceID, agentID, sel.OrgID, orgKey, sel.SceneID, sel.PersonKey)
 	if err != nil {
 		return nil, err
 	}

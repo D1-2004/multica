@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Loader2, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Loader2, Lock, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   useSetContextConfigMcpConfig,
@@ -9,10 +9,11 @@ import {
 } from "@multica/core/context-capabilities";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { cn } from "@multica/ui/lib/utils";
-import { ConfirmDialog } from "../agents/components/tabs/connectors-ui";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { ConfirmDialog, StatusPill } from "../agents/components/tabs/connectors-ui";
+import { ConnectorLogo } from "../common/connector-logo";
 import { useT } from "../i18n";
-import { ItemGroup, ToggleControl } from "./context-config-ui";
+import { ConfigList, ConfigRow, SlotHeading, ToggleControl } from "./context-config-ui";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
   mcpServerProblem,
@@ -22,11 +23,24 @@ import {
   type ScopeMcpServer,
 } from "./scope-mcp";
 
+/** What the MCP dialog shows: an existing server (by name) or a new one. */
+type McpDialogState = { kind: "edit"; name: string } | { kind: "new" } | null;
+
+/** The host of a server URL, for its one-line row. */
+function mcpHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 /**
- * The scope's own MCP servers, remote URL servers only: add, edit, delete
- * and switch. Every change saves the whole document. A document the page
- * cannot save back (withheld, or holding a local server an admin added) is
- * listed read-only.
+ * MCP 服务器: the scope's own remote servers, a section like 连接器和插件:
+ * one line each, 配置 opens its settings (address, headers, on/off,
+ * delete) and 添加 opens an empty one. Remote URL servers only; every
+ * change saves the whole document. A document the page cannot save back
+ * (withheld, or holding a local server an admin added) is listed read-only.
  */
 export function ScopeMcpServers({
   agentId,
@@ -48,11 +62,11 @@ export function ScopeMcpServers({
   const stored = readScopeMcpDocument(redacted ? null : mcpConfig);
   const servers = stored.servers;
   const editable = canEdit && !redacted && stored.editable;
-  // The server being edited (by name), "" while adding.
-  const [editing, setEditing] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<McpDialogState>(null);
   const [deleting, setDeleting] = useState<ScopeMcpServer | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
   const idPrefix = `context-mcp-${scope.scopeType}-${scope.scopeKey}`;
+  const current = dialog?.kind === "edit" ? (servers.find((server) => server.name === dialog.name) ?? null) : null;
 
   if (!canEdit && !redacted && servers.length === 0) return null;
 
@@ -72,15 +86,15 @@ export function ScopeMcpServers({
   };
 
   const submitForm = async (server: ScopeMcpServer) => {
-    const next =
-      editing === "" ? [...servers, server] : servers.map((entry) => (entry.name === editing ? server : entry));
-    if (await write(next, server.name)) setEditing(null);
+    const editing = dialog?.kind === "edit" ? dialog.name : null;
+    const next = editing === null ? [...servers, server] : servers.map((entry) => (entry.name === editing ? server : entry));
+    if (await write(next, server.name)) setDialog(null);
   };
 
   const otherNames = (name: string | null) =>
     new Set(servers.filter((server) => server.name !== name).map((server) => server.name));
 
-  // Why a manager cannot change the list here.
+  // Why the list cannot be changed here.
   const note = redacted
     ? t(($) => $.context_config.mcp_redacted)
     : canEdit && !stored.editable
@@ -88,94 +102,113 @@ export function ScopeMcpServers({
       : null;
 
   return (
-    <div className="space-y-1.5">
-      <ItemGroup
+    <section className="space-y-2" aria-label={t(($) => $.context_config.mcp_title)}>
+      <SlotHeading
         label={t(($) => $.context_config.mcp_title)}
         action={
-          editable && editing === null ? (
-            <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setEditing("")}>
+          editable ? (
+            <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setDialog({ kind: "new" })}>
               <Plus className="size-3.5" />
               {t(($) => $.context_config.mcp_add)}
             </Button>
           ) : null
         }
-        empty={note || editing === "" ? null : t(($) => $.context_config.none)}
-      >
-        {servers.map((server) =>
-          editing === server.name ? (
-            <li key={server.name} className="p-3">
-              <McpServerForm
-                idPrefix={`${idPrefix}-${server.name}`}
-                initial={server}
-                otherNames={otherNames(server.name)}
-                pending={save.isPending}
-                onCancel={() => setEditing(null)}
-                onSubmit={(next) => void submitForm(next)}
-              />
-            </li>
-          ) : (
-            <li key={server.name} className="flex items-start gap-2 p-3" aria-label={server.name}>
-              <div className={cn("min-w-0 flex-1", !server.enabled && "opacity-60")}>
-                <p className="truncate text-body font-medium">{server.name}</p>
-                {server.url ? (
-                  <p className="truncate font-mono text-caption text-muted-foreground">{server.url}</p>
-                ) : null}
-              </div>
-              {editable ? (
-                <div className="flex shrink-0 items-center">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={save.isPending || editing !== null}
-                    aria-label={t(($) => $.context_config.mcp_edit, { name: server.name })}
-                    onClick={() => setEditing(server.name)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={save.isPending || editing !== null}
-                    aria-label={t(($) => $.context_config.mcp_delete, { name: server.name })}
-                    onClick={() => setDeleting(server)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              ) : null}
-              <ToggleControl
-                busy={busyName === server.name}
-                checked={server.enabled}
-                disabled={!editable || save.isPending}
-                label={t(($) => $.context_config.toggle_aria, { name: server.name })}
-                onToggle={(enabled) =>
-                  void write(
-                    servers.map((entry) => (entry.name === server.name ? { ...entry, enabled } : entry)),
-                    server.name,
-                  )
-                }
-              />
-            </li>
-          ),
-        )}
-        {editing === "" ? (
-          <li key="new" className="p-3">
-            <McpServerForm
-              idPrefix={`${idPrefix}-new`}
-              initial={null}
-              otherNames={otherNames(null)}
-              pending={save.isPending}
-              onCancel={() => setEditing(null)}
-              onSubmit={(next) => void submitForm(next)}
-            />
-          </li>
-        ) : null}
-      </ItemGroup>
+      />
+      <ConfigList label={t(($) => $.context_config.mcp_title)} empty={note ? null : t(($) => $.context_config.none)}>
+        {servers.map((server) => (
+          <ConfigRow
+            key={server.name}
+            icon={<ConnectorLogo slug="" />}
+            name={server.name}
+            muted={!server.enabled}
+            status={
+              !server.enabled ? (
+                <StatusPill tone="muted">{t(($) => $.context_config.mcp_off)}</StatusPill>
+              ) : server.url ? (
+                <span className="max-w-28 truncate text-caption text-muted-foreground">{mcpHost(server.url)}</span>
+              ) : null
+            }
+            action={
+              editable ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={t(($) => $.context_config.mcp_edit, { name: server.name })}
+                  disabled={busyName === server.name}
+                  onClick={() => setDialog({ kind: "edit", name: server.name })}
+                >
+                  {t(($) => $.context_config.app_configure)}
+                </Button>
+              ) : null
+            }
+          />
+        ))}
+      </ConfigList>
       {note ? (
         <p className="flex items-center gap-1.5 text-caption text-muted-foreground">
           <Lock className="size-3.5 shrink-0" />
           {note}
         </p>
+      ) : null}
+      {editable ? (
+        <Dialog
+          open={dialog !== null && (dialog.kind === "new" || current !== null)}
+          onOpenChange={(open) => {
+            if (!open) setDialog(null);
+          }}
+        >
+          <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+            <DialogHeader className="border-b p-4 pr-12 text-left">
+              <DialogTitle className="truncate">
+                {dialog?.kind === "edit" && current ? current.name : t(($) => $.context_config.mcp_add)}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+              {current ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-body">{t(($) => $.context_config.mcp_enabled)}</span>
+                  <ToggleControl
+                    busy={busyName === current.name}
+                    checked={current.enabled}
+                    disabled={save.isPending}
+                    label={t(($) => $.context_config.toggle_aria, { name: current.name })}
+                    onToggle={(enabled) =>
+                      void write(
+                        servers.map((entry) => (entry.name === current.name ? { ...entry, enabled } : entry)),
+                        current.name,
+                      )
+                    }
+                  />
+                </div>
+              ) : null}
+              {dialog ? (
+                <McpServerForm
+                  // A new dialog starts from the server it edits.
+                  key={dialog.kind === "edit" ? dialog.name : "new"}
+                  idPrefix={`${idPrefix}-${dialog.kind === "edit" ? dialog.name : "new"}`}
+                  initial={current}
+                  otherNames={otherNames(current?.name ?? null)}
+                  pending={save.isPending}
+                  onCancel={() => setDialog(null)}
+                  onSubmit={(next) => void submitForm(next)}
+                />
+              ) : null}
+              {current ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    setDeleting(current);
+                    setDialog(null);
+                  }}
+                >
+                  {t(($) => $.context_config.mcp_delete, { name: current.name })}
+                </Button>
+              ) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
       ) : null}
       {editable ? (
         <ConfirmDialog
@@ -199,7 +232,7 @@ export function ScopeMcpServers({
           }}
         />
       ) : null}
-    </div>
+    </section>
   );
 }
 

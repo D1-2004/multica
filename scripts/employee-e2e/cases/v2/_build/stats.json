@@ -1,0 +1,61 @@
+{
+ "total": 88,
+ "by_cat": {
+  "G": 19,
+  "M": 17,
+  "C": 19,
+  "P": 17,
+  "T": 16
+ },
+ "buckets": {
+  "G": {
+   "ready_partial": 11,
+   "blocked:platform": 1,
+   "ready": 7
+  },
+  "ALL": {
+   "ready_partial": 20,
+   "blocked:platform": 1,
+   "ready": 51,
+   "blocked:harness": 10,
+   "blocked:release": 4,
+   "blocked:ops": 2
+  },
+  "M": {
+   "ready": 8,
+   "blocked:harness": 9
+  },
+  "C": {
+   "ready": 17,
+   "ready_partial": 2
+  },
+  "P": {
+   "ready": 10,
+   "ready_partial": 5,
+   "blocked:release": 1,
+   "blocked:harness": 1
+  },
+  "T": {
+   "ready": 9,
+   "ready_partial": 2,
+   "blocked:ops": 2,
+   "blocked:release": 3
+  }
+ },
+ "r0": [
+  "G-19",
+  "M-14",
+  "M-17",
+  "C-01",
+  "C-02",
+  "C-03",
+  "C-10",
+  "P-07",
+  "T-01",
+  "T-02",
+  "T-03",
+  "T-04",
+  "T-14",
+  "T-16"
+ ]
+}

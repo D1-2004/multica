@@ -2,8 +2,8 @@
 name: inspect-langfuse-trace
 description: >
   用业务 id 在 Langfuse 里找到并读懂一次交互：Coordinator 短循环回合、Scene Memory 刷新、Agent 任务（含沙箱模型调用）。
-  用户给了 cid/openConversationId、钉钉 uid、Multica user id、workspace_id、agent_id、issue_id/task_id、coord_trace_id/job id、
-  chat session id、evidence_id、scene_key，或说「Langfuse 上怎么查」「这次调用的 trace」「token 用量」时必须用。
+  用户要求在 Langfuse 定位交互且提供业务/trace id，或要查询一次模型调用的输入输出/用量时使用。
+  仅提到 workspace/agent/cid 或查看开发工作 session，不自动触发；无精确id的文本搜索走 inspect-langfuse。
   走 scripts/langfuse_lookup.py（Langfuse 公开 API），不要凭 UI 截图猜。
 metadata:
   compatibility: Reads LANGFUSE credentials from the environment or ~/.grok/langfuse.env (never in the repo). Unsets HTTP proxy. Python 3.9+, stdlib only.
@@ -12,6 +12,12 @@ metadata:
 ---
 
 # 用 id 查 Langfuse trace
+
+## 精确定位与结束条件
+
+选一个查询入口，不因同时有trace与业务id重复加载另一套LF技能。已有精确trace/job优先详情；只有归属关系仍未知时才用key/related，只有缺定位线索时才搜索。复用已有原始证据并记录其版本/范围；不把证据缺口自动展开成镜像修复、部署、全日扫描或新真实测试。按用户问题给结论和未证明项，截止时停止扩充。
+
+这是观测入口，加载它不意味着业务操作授权。Employee的 `employee_loop/employee_model`、`agent_task/llm.call.N`、`employee_scene_digest` 分别审查；只有Coordinator使用下面的Coordinator专用语义。`scene_key/cid`旧查询键仅用于历史trace定位，不能用于注册或猜内部scene。
 
 预发和正式各自往同一个 Langfuse 项目投递，按 `environment`（`pre` / `production`）区分。
 key 优先从环境变量读，缺失时自动读取 `~/.grok/langfuse.env`；不要复制凭证到命令、聊天或仓库。脚本自动移除代理，只直连：

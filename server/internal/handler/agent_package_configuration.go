@@ -290,7 +290,7 @@ func optionalPackageBool(value *bool) pgtype.Bool {
 // stay in their existing destination workflows and require explicit deferral.
 func (definition packageConfiguration) importConfiguration(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
 	c := definition.Configuration
-	params := db.UpdateAgentParams{ID: agent.ID, DispatchAlwaysNewIssue: optionalPackageBool(c.DispatchAlwaysNewIssue)}
+	params := db.UpdateAgentParams{ID: agent.ID, DispatchAlwaysNewIssue: optionalPackageBool(c.DispatchAlwaysNewIssue), SandboxConnectionReuse: optionalPackageBool(c.SandboxConnectionReuse)}
 	if c.DispatchPromptOverrides != nil {
 		params.DispatchPromptOverrides, _ = json.Marshal(c.DispatchPromptOverrides)
 	}

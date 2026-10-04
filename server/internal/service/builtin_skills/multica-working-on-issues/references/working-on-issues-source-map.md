@@ -1,5 +1,22 @@
 # working-on-issues source map
 
+Durable run progress: `server/cmd/multica/cmd_issue_run_events.go`
+(`runIssueRunEvents`), `server/internal/handler/task_run_events.go`
+(`persistTaskMessageBatch`, `ListTaskRunEventsByUser`, `listTaskRunEvents`),
+`server/pkg/db/queries/task_message.sql` (`ListTaskRunEvents`), and
+`docs/task-run-events.md`. Metadata is stored on the existing transcript rows;
+the read view omits diagnostic bodies and tool arguments/results.
+
+Task cancellation and steer: `docs/task-steer.md`;
+human API: `server/internal/handler/task_steer.go` (`SteerIssue`) and
+`server/cmd/server/router.go` (`POST /api/issues/{id}/steer`);
+`server/internal/service/task_steer.go` (`createSteeredExternalFollowUp`,
+`AcknowledgeTaskProcessStopped`); `server/internal/handler/daemon.go`
+(`CancelTask`, `AckTaskCancelled`); `server/pkg/db/queries/agent.sql`
+(both claim queries); `server/pkg/db/queries/task_steer.sql`
+(`CancelAgentTaskForSteer`); `server/internal/service/fc_e2b_task_stop.go`
+(`stopAbortedTaskProcesses`). Logical cancellation is not process-exit evidence.
+
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
 after the latest `main` merge; the prior skill cited pre-merge lines that have

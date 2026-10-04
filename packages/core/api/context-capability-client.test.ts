@@ -6,6 +6,8 @@ afterEach(() => vi.unstubAllGlobals());
 const base = "https://pre.example.test";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const connectorId = "22222222-2222-4222-8222-222222222222";
+// A scene's scope key is its scene_id.
+const sceneId = "66666666-6666-4666-8666-666666666666";
 
 function stubFetch(body: unknown, status = 200) {
   const fetch = vi.fn().mockResolvedValue(
@@ -26,7 +28,7 @@ describe("context capability mobile client", () => {
       agent_id: agentId,
       workspace_id: "ws-1",
       scope_type: "scene",
-      scope_key: "cid1",
+      scope_key: sceneId,
       scope_title: "Team",
     });
     const result = await new ApiClient(base).redeemContextConfigLink("tok");
@@ -39,9 +41,10 @@ describe("context capability mobile client", () => {
       agentId,
       workspaceId: "ws-1",
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       scopeTitle: "Team",
       orgId: "",
+      extraSceneId: "",
     });
   });
 
@@ -50,16 +53,19 @@ describe("context capability mobile client", () => {
     expect(await new ApiClient(base).getContextConfigAgent(agentId)).toBeNull();
   });
 
-  it("encodes scene keys in the scene path", async () => {
+  it("reads a scene by its scene_id, encoded in the path", async () => {
     const fetch = stubFetch({
-      scene: { scope_key: "cid+/=", scope_title: "Team", source: "agent_link", expires_at: "" },
+      scene: { scope_key: sceneId, scope_title: "Team", source: "agent_link", expires_at: "" },
       bindings: [],
       credentials: [],
     });
-    await new ApiClient(base).getContextConfigScene(agentId, "cid+/=");
-    expect(requestOf(fetch).url).toBe(
-      `${base}/api/context-capabilities/agents/${agentId}/scenes/cid%2B%2F%3D`,
-    );
+    const scene = await new ApiClient(base).getContextConfigScene(agentId, sceneId);
+    expect(requestOf(fetch).url).toBe(`${base}/api/context-capabilities/agents/${agentId}/scenes/${sceneId}`);
+    expect(scene?.scene.scopeKey).toBe(sceneId);
+
+    const odd = stubFetch({ scene: { scope_key: "a+/=" } });
+    await new ApiClient(base).getContextConfigScene(agentId, "a+/=");
+    expect(requestOf(odd).url).toBe(`${base}/api/context-capabilities/agents/${agentId}/scenes/a%2B%2F%3D`);
   });
 
   it("sends snake_case binding writes and falls back to the request on a malformed echo", async () => {
@@ -93,7 +99,7 @@ describe("context capability mobile client", () => {
     stubFetch({ credential: { connector_id: connectorId, hint: "••••cret", updated_at: "t", bearer: "super-secret" } });
     const result = await new ApiClient(base).setContextConnectorCredential(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
       bearer: "super-secret",
     });
@@ -123,7 +129,7 @@ describe("context capability mobile client", () => {
     const fetch = stubFetch({ authorize_url: "https://mcp.notion.com/authorize" });
     await new ApiClient(base).startContextConnectorConnection(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
       returnTo: "/dingtalk/configure?agent=a",
     });
@@ -151,11 +157,75 @@ describe("context capability mobile client", () => {
     ).toBe("");
   });
 
+  it("lists GitHub App installations for the scope without a workspace header", async () => {
+    const fetch = stubFetch({
+      connected: true,
+      installations: [
+        {
+          id: 2,
+          account_login: "acme",
+          account_type: "Organization",
+          repository_selection: "selected",
+          settings_url: "https://github.com/organizations/acme/settings/installations/2",
+        },
+      ],
+    });
+    const result = await new ApiClient(base).listContextGitHubInstallations(
+      agentId,
+      { scopeType: "scene", scopeKey: sceneId, orgId: "org-9" },
+      connectorId,
+    );
+    const { url, init } = requestOf(fetch);
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe(`/api/context-capabilities/agents/${agentId}/github-installations`);
+    expect(parsed.searchParams.get("scope_type")).toBe("scene");
+    expect(parsed.searchParams.get("scope_key")).toBe(sceneId);
+    expect(parsed.searchParams.get("org_id")).toBe("org-9");
+    expect(parsed.searchParams.get("connector_id")).toBe(connectorId);
+    expect(init.headers["X-Workspace-Slug"]).toBe("");
+    expect(result.installations).toEqual([
+      {
+        id: 2,
+        accountLogin: "acme",
+        accountType: "Organization",
+        repositorySelection: "selected",
+        settingsUrl: "https://github.com/organizations/acme/settings/installations/2",
+        repositories: [],
+        repositoryCount: 0,
+        repositoriesTruncated: false,
+        missingPermissions: [],
+      },
+    ]);
+    expect(result.totalCount).toBe(0);
+    expect(result.filteredCount).toBe(0);
+  });
+
+  it("drops a non-https GitHub installation settings URL", async () => {
+    stubFetch({
+      connected: true,
+      installations: [
+        {
+          id: 1,
+          account_login: "octocat",
+          account_type: "User",
+          repository_selection: "all",
+          settings_url: "javascript:alert(1)",
+        },
+      ],
+    });
+    const result = await new ApiClient(base).listContextGitHubInstallations(
+      agentId,
+      { scopeType: "person", scopeKey: "staff-1" },
+      connectorId,
+    );
+    expect(result.installations[0]?.settingsUrl).toBe("");
+  });
+
   it("deletes credentials with the scope in the query string", async () => {
     const fetch = stubFetch(null, 204);
     await new ApiClient(base).deleteContextConnectorCredential(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
     });
     const { url, init } = requestOf(fetch);
@@ -164,17 +234,17 @@ describe("context capability mobile client", () => {
     expect(parsed.pathname).toBe(`/api/context-capabilities/agents/${agentId}/credentials`);
     expect(Object.fromEntries(parsed.searchParams)).toEqual({
       scope_type: "scene",
-      scope_key: "cid1",
+      scope_key: sceneId,
       connector_id: connectorId,
     });
   });
 
   it("sends only the ids the JSAPI picker returned", async () => {
-    const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "" } });
+    const fetch = stubFetch({ scene: { scope_key: sceneId, scope_title: "Team", source: "jsapi", expires_at: "" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1" });
     expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({ chat_id: "chat-1" });
     expect(scene).toEqual({
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       scopeTitle: "Team",
       source: "jsapi",
       expiresAt: "",
@@ -185,7 +255,7 @@ describe("context capability mobile client", () => {
   });
 
   it("resolves a picked group in the page's tenant through the query", async () => {
-    const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "", org_id: "ding2" } });
+    const fetch = stubFetch({ scene: { scope_key: sceneId, scope_title: "Team", source: "jsapi", expires_at: "", org_id: "ding2" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1", orgId: "ding2" });
     const { url, init } = requestOf(fetch);
     expect(new URL(url).searchParams.get("org_id")).toBe("ding2");
@@ -200,6 +270,84 @@ describe("context capability mobile client", () => {
       "https://app.example/dingtalk/configure?agent=a",
     );
     expect(config?.corpId).toBe("ding1");
+  });
+});
+
+describe("official apps on the configure page", () => {
+  it("adds an app at a level without a workspace header", async () => {
+    const fetch = stubFetch({ connector_id: connectorId, default_on: false });
+    const result = await new ApiClient(base).addContextConfigApp(agentId, {
+      slug: "notion",
+      scopeType: "scene",
+      scopeKey: sceneId,
+      orgId: "dingB",
+    });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/notion`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ scope_type: "scene", scope_key: sceneId, org_id: "dingB" });
+    expect(init.headers["X-Workspace-Slug"]).toBe("");
+    expect(result).toEqual({ connectorId, defaultOn: false });
+  });
+
+  it("returns null for a malformed add echo", async () => {
+    stubFetch({ default_on: "yes" });
+    expect(
+      await new ApiClient(base).addContextConfigApp(agentId, { slug: "notion", scopeType: "scene", scopeKey: sceneId }),
+    ).toBeNull();
+  });
+
+  it("reads a scene's OAuth application without secrets and saves only the values given", async () => {
+    const scope = { scopeType: "scene" as const, scopeKey: sceneId, orgId: "ding-org" };
+    const wire = {
+      slug: "slack",
+      name: "Slack",
+      fields: [{ key: "client_id", optional: false, file: false }, { key: "client_secret", optional: false, file: false }, { optional: true }],
+      docs_url: "https://api.slack.com/apps",
+      callback_url: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
+      saved: true,
+      client_id: "cid",
+      client_secret_set: true,
+      workspace_ready: false,
+      ready: true,
+      can_edit: false,
+    };
+    let fetch = stubFetch(wire);
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope);
+    expect(requestOf(fetch).url).toBe(
+      `${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app?scope_type=scene&scope_key=${sceneId}&org_id=ding-org`,
+    );
+    expect(app?.fields.map((field) => field.key)).toEqual(["client_id", "client_secret"]);
+    expect(app?.callbackUrl).toBe("https://fde-workbench.dingtalk.com/api/connectors/oauth/callback");
+    expect([app?.saved, app?.ready, app?.workspaceReady, app?.canEdit]).toEqual([true, true, false, false]);
+
+    fetch = stubFetch(wire);
+    await new ApiClient(base).setContextConfigOAuthApp(agentId, "slack", scope, { clientId: "cid", clientSecret: "" });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app`);
+    expect(init.method).toBe("PUT");
+    // An empty secret is left out, so the stored one stays.
+    expect(JSON.parse(String(init.body))).toEqual({ scope_type: "scene", scope_key: sceneId, org_id: "ding-org", client_id: "cid" });
+  });
+
+  it("removes a scene's OAuth application by its scope", async () => {
+    const fetch = stubFetch(null, 204);
+    await new ApiClient(base).deleteContextConfigOAuthApp(agentId, "slack", { scopeType: "scene", scopeKey: sceneId });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app?scope_type=scene&scope_key=${sceneId}`);
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("reads a malformed OAuth application as null and an unsafe docs URL as none", async () => {
+    const scope = { scopeType: "scene" as const, scopeKey: sceneId };
+    stubFetch({ name: "no slug" });
+    expect(await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope)).toBeNull();
+    stubFetch({ slug: "slack", docs_url: "javascript:alert(1)", callback_url: "http://evil.example/cb", can_edit: "yes" });
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope);
+    expect(app?.docsUrl).toBe("");
+    expect(app?.callbackUrl).toBe("");
+    // Missing or malformed flags read as false.
+    expect([app?.saved, app?.ready, app?.workspaceReady, app?.canEdit]).toEqual([false, false, false, false]);
   });
 });
 

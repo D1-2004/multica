@@ -85,7 +85,10 @@ type Router struct {
 // SceneAssociator writes the inbound conversation onto the Issue graph so a
 // later recall by openConversationId can find the matter without the model.
 type SceneAssociator interface {
-	AssociateIssueConversation(ctx context.Context, in assoc.AssociateInput) error
+	// AssociateChannelConversation links an Issue to the agent's work scene
+	// of a channel conversation; the implementation resolves the scene
+	// (docs/agent-scene.md) from the conversation id and chat type.
+	AssociateChannelConversation(ctx context.Context, in assoc.AssociateInput, conversationID, chatType string) error
 }
 
 // Config tunes the Router. Zero values default.
@@ -1665,18 +1668,16 @@ func (r *Router) associateIssueConversation(ctx context.Context, inst ResolvedIn
 	if cid == "" {
 		return
 	}
-	if err := r.associator.AssociateIssueConversation(ctx, assoc.AssociateInput{
-		WorkspaceID:    uuidString(inst.WorkspaceID),
-		AgentID:        uuidString(inst.AgentID),
-		IssueID:        uuidString(issue.ID),
-		IssueTitle:     issue.Title,
-		Purpose:        issue.Title,
-		RunID:          uuidString(runID),
-		ConversationID: cid,
-		EvidenceID:     strings.TrimSpace(msg.MessageID),
-		PersonID:       strings.TrimSpace(msg.Source.SenderID),
-		Kind:           string(msg.Source.ChatType),
-	}); err != nil {
+	if err := r.associator.AssociateChannelConversation(ctx, assoc.AssociateInput{
+		WorkspaceID: uuidString(inst.WorkspaceID),
+		AgentID:     uuidString(inst.AgentID),
+		IssueID:     uuidString(issue.ID),
+		IssueTitle:  issue.Title,
+		Purpose:     issue.Title,
+		RunID:       uuidString(runID),
+		EvidenceID:  strings.TrimSpace(msg.MessageID),
+		PersonID:    strings.TrimSpace(msg.Source.SenderID),
+	}, cid, string(msg.Source.ChatType)); err != nil {
 		r.logger.Error("channel engine: associate issue conversation failed",
 			"event", "channel_issue_scene_associate_failed",
 			"issue_id", uuidString(issue.ID),

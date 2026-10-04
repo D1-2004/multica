@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -92,7 +95,49 @@ func (c *appRuntimeConfig) validateCurrent() error {
 			return fmt.Errorf("Diamond enterprise identity clients: %w", err)
 		}
 	}
+	if _, err := decodeEmployeeWatchdog(c.current().Runtime.EmployeeWatchdog); err != nil {
+		return fmt.Errorf("Diamond %w", err)
+	}
+	if _, err := handler.DecodeEmployeeVision(c.current().Runtime.EmployeeVision); err != nil {
+		return fmt.Errorf("Diamond %w", err)
+	}
 	return nil
+}
+
+// employeeVision is the live runtime.employee_vision; a snapshot that fails
+// to decode never becomes current (validateCurrent rejects it).
+func (c *appRuntimeConfig) employeeVision() handler.EmployeeVisionConfig {
+	cfg, err := handler.DecodeEmployeeVision(c.current().Runtime.EmployeeVision)
+	if err != nil {
+		return handler.DefaultEmployeeVisionConfig()
+	}
+	return cfg
+}
+
+// employeeWatchdog is the live runtime.employee_watchdog; a snapshot that
+// fails to decode never becomes current (validateCurrent rejects it).
+func (c *appRuntimeConfig) employeeWatchdog() service.EmployeeWatchdogConfig {
+	cfg, err := decodeEmployeeWatchdog(c.current().Runtime.EmployeeWatchdog)
+	if err != nil {
+		return service.DefaultEmployeeWatchdogConfig()
+	}
+	return cfg
+}
+
+func decodeEmployeeWatchdog(raw json.RawMessage) (service.EmployeeWatchdogConfig, error) {
+	cfg := service.DefaultEmployeeWatchdogConfig()
+	if len(strings.TrimSpace(string(raw))) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return cfg, nil
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return service.EmployeeWatchdogConfig{}, fmt.Errorf("runtime.employee_watchdog: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return service.EmployeeWatchdogConfig{}, fmt.Errorf("runtime.employee_watchdog: %w", err)
+	}
+	return cfg, nil
 }
 
 func (c *appRuntimeConfig) validateSnapshot(raw runtimeconfig.Config) error {
@@ -117,6 +162,48 @@ func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 		return runtimeconfig.Snapshot{}
 	}
 	return c.remote.Current()
+}
+
+// The deployment override is immutable for a process. It lets pre-release
+// select canaries without adding a key to a Diamond document shared with
+// an older production binary.
+func newEventRouteConfigProvider(c *appRuntimeConfig, raw string) (func(string, string, string) (string, string), error) {
+	if strings.TrimSpace(raw) == "" {
+		return c.eventRouteConfig, nil
+	}
+	if len(raw) > 65536 {
+		return nil, fmt.Errorf("event router override too large")
+	}
+	var rollout runtimeconfig.EventSceneRouterConfig
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rollout); err != nil {
+		return nil, fmt.Errorf("invalid event router override: %w", err)
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("event router override has trailing JSON")
+	}
+	if err := rollout.Validate(); err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256([]byte(raw))
+	return func(ws, agent, org string) (string, string) {
+		_, version := c.eventRouteConfig(ws, agent, org)
+		route := "legacy"
+		if rollout.Allows(ws, agent, org) {
+			route = "unified"
+		}
+		return route, fmt.Sprintf("%s:env:%x", version, digest)
+	}, nil
+}
+
+func (c *appRuntimeConfig) eventRouteConfig(workspaceID, agentID, orgID string) (string, string) {
+	snapshot := c.snapshot()
+	route := "legacy"
+	if rollout := snapshot.Config.Runtime.EventSceneRouter; rollout != nil && rollout.Allows(workspaceID, agentID, orgID) {
+		route = "unified"
+	}
+	return route, fmt.Sprintf("%s:%d", snapshot.SHA256, snapshot.Generation)
 }
 
 // coordinatorDecisionConfig reads, from one runtime configuration snapshot,
@@ -207,7 +294,21 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		TimeoutSeconds:                    raw.Runtime.FCE2B.TimeoutSeconds,
 		SandboxReadyTimeout:               raw.Runtime.FCE2B.SandboxReadyTimeout.Duration,
 		SDKRollout:                        fcE2BSDKRolloutOf(raw.Runtime),
+		ConnectionReuse:                   connectionReuseOf(raw.Runtime.FCE2B),
 	}
+}
+
+// connectionReuseOf copies runtime.fc_e2b.connection_reuse into the launcher
+// config. Nil uses the default cap. Target slices are copied so the launcher
+// does not share the snapshot's lists.
+func connectionReuseOf(cfg runtimeconfig.FCE2BConfig) runtimeconfig.FCE2BConnectionReuse {
+	if cfg.ConnectionReuse == nil {
+		return runtimeconfig.FCE2BConnectionReuse{}
+	}
+	out := *cfg.ConnectionReuse
+	out.WorkspaceIDs = append([]string(nil), cfg.ConnectionReuse.WorkspaceIDs...)
+	out.AgentIDs = append([]string(nil), cfg.ConnectionReuse.AgentIDs...)
+	return out
 }
 
 func (c *appRuntimeConfig) asb() service.ASBConfig {

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_scene_digest_state_scope_idx;

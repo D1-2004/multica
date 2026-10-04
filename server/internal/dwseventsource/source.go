@@ -49,6 +49,12 @@ type Consumer struct {
 	// line (dwsclient.EventLine). It runs on whichever replica holds the
 	// stream; an error leaves the event unacknowledged, so it comes again.
 	Handle func(ctx context.Context, identity dwsclient.Identity, line []byte) error
+	// Optional marks a key DingTalk may refuse for an account. It joins an
+	// identity's stream only after a probe subscription of it succeeded for
+	// that account (cached optionalAllowedTTL across replicas); a refusal
+	// (cached optionalRefusedTTL) never enters the stream, so a refused
+	// optional key cannot fail the subscriptions the identity already has.
+	Optional bool
 }
 
 // Config wires a Source.
@@ -71,6 +77,9 @@ type Config struct {
 	// LogFrames logs the type and topic of every frame a stream reads
 	// (diagnostics for a gateway whose events do not arrive).
 	LogFrames bool
+	// Probe subscribes an optional key once for identity; nil subscribes it
+	// through Sessions (tests replace it).
+	Probe func(ctx context.Context, identity dwsclient.Identity, eventKey string) error
 }
 
 // Source owns this replica's share of the event streams.
@@ -206,6 +215,7 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 		return nil, nil
 	}
 	wanted := map[string]*subscription{}
+	probes := 0
 	for _, consumer := range s.cfg.Consumers {
 		ids, err := consumer.Identities(ctx)
 		if err != nil {
@@ -213,6 +223,9 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 		}
 		for _, id := range ids {
 			if id.AgentID == "" || id.UID == "" || id.OrgID == "" {
+				continue
+			}
+			if consumer.Optional && !s.optionalAllowed(ctx, id, consumer.EventKey, &probes) {
 				continue
 			}
 			key := targetKey(id)
@@ -243,6 +256,74 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 	s.current = current
 	s.mu.Unlock()
 	return out, nil
+}
+
+const (
+	optionalAllowed        = "allowed"
+	optionalRefused        = "refused"
+	optionalAllowedTTL     = 24 * time.Hour
+	optionalRefusedTTL     = time.Hour
+	optionalProbeTimeout   = 10 * time.Second
+	optionalProbesPerSweep = 2
+)
+
+func (s *Source) optionalKey(id dwsclient.Identity, eventKey string) string {
+	return s.prefix + "optional:" + targetKey(id) + ":" + eventKey
+}
+
+// optionalAllowed reports whether an optional key may join identity's
+// stream. The cached outcome of the account's probe decides; without one, at
+// most optionalProbesPerSweep bounded probes run per sweep, one replica at a
+// time per account and key. Anything uncertain (Redis trouble, a probe
+// running elsewhere, the sweep's probe budget spent) leaves the key out.
+func (s *Source) optionalAllowed(ctx context.Context, id dwsclient.Identity, eventKey string, probes *int) bool {
+	key := s.optionalKey(id, eventKey)
+	value, err := s.cfg.Redis.Get(ctx, key).Result()
+	if err == nil {
+		return value == optionalAllowed
+	}
+	if !errors.Is(err, redis.Nil) || *probes >= optionalProbesPerSweep {
+		return false
+	}
+	won, err := s.cfg.Redis.SetNX(ctx, key+":probe", "1", 2*optionalProbeTimeout).Result()
+	if err != nil || !won {
+		return false
+	}
+	*probes++
+	probeCtx, cancel := context.WithTimeout(ctx, optionalProbeTimeout)
+	err = s.probe(probeCtx, id, eventKey)
+	cancel()
+	value, ttl := optionalAllowed, optionalAllowedTTL
+	attrs := []any{"event", "dws_event_optional_probe", "key", targetKey(id), "agent_id", id.AgentID, "event_key", eventKey}
+	if err != nil {
+		value, ttl = optionalRefused, optionalRefusedTTL
+		reason := err.Error()
+		if secret := s.cfg.Sessions.CLI.ClientSecret; secret != "" {
+			reason = strings.ReplaceAll(reason, secret, "[redacted]")
+		}
+		attrs = append(attrs, "outcome", optionalRefused, "error", reason)
+	} else {
+		attrs = append(attrs, "outcome", optionalAllowed)
+	}
+	if setErr := s.cfg.Redis.Set(context.WithoutCancel(ctx), key, value, ttl).Err(); setErr != nil {
+		attrs = append(attrs, "cache_error", setErr.Error())
+	}
+	slog.Info("DWS optional event probed", attrs...)
+	return err == nil
+}
+
+// probe subscribes eventKey for identity once. DWS dedupes a subscription on
+// its spec, so the stream's own reconcile later adopts the same one.
+func (s *Source) probe(ctx context.Context, id dwsclient.Identity, eventKey string) error {
+	if s.cfg.Probe != nil {
+		return s.cfg.Probe(ctx, id, eventKey)
+	}
+	client, err := s.cfg.Sessions.Client(ctx, id, s.cfg.Mint)
+	if err != nil {
+		return err
+	}
+	_, err = client.Events.Subscribe(ctx, dws.SubscriptionSpec{EventKey: eventKey})
+	return err
 }
 
 func contains(list []string, v string) bool {

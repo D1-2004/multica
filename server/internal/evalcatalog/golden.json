@@ -1,0 +1,1200 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "conversation",
+      "title": "基础对话",
+      "level": 1,
+      "cases": [
+        {
+          "id": "G01",
+          "title": "单聊在场回应",
+          "module": "前台对话",
+          "definition": "在单聊中询问员工是否在场，得到一次正常回复，不创建后台工作。",
+          "setup": [
+            "专用测试员工已绑定可收发消息的身份，前台模型与必要副本门禁就绪。",
+            "登记一个由 scene.Resolve 注册的测试单聊、唯一消息标记及开始前 Task/Run 数量。"
+          ],
+          "actors": [
+            "请求者：测试真人账户小甲。",
+            "执行者：测试员工。",
+            "观察者：该测试范围的业务与日志读取者。"
+          ],
+          "grants": [
+            "小甲可向该员工单聊发送测试消息。",
+            "员工仅使用该单聊的当前回复权限。",
+            "观察者仅读取该员工、场域及对应任务与轨迹。"
+          ],
+          "steps": [
+            "小甲发送带唯一标记的在场询问。",
+            "读取前台 job 终态、实际模型调用和单聊收到的消息。",
+            "观察至该 job 终态且相关发送意图全部结算，核对 Task/Run 增量。"
+          ],
+          "verify": [
+            "同一测试单聊收到一条相关在场回复。",
+            "前台终态为 reply，Task 和 Run 增量均为 0。",
+            "没有由本条询问创建的派发、续接或停止效果。"
+          ],
+          "evidence": [
+            "请求者独立读取的消息及发送时间。",
+            "前台 job 与模型请求记录。",
+            "测试开始前后 Task/Run 计数及工具效果。"
+          ],
+          "tools": [
+            "DWS 收发与定向读回",
+            "业务只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "结束测试单聊窗口；保留对应标记及脱敏证据。",
+            "删除自己创建的临时配置项；保留员工原有配置。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCases": [
+            "progressive-presence"
+          ]
+        },
+        {
+          "id": "G02",
+          "title": "缺信息时澄清",
+          "module": "前台对话",
+          "definition": "请求向已授权测试对象发消息但不提供正文，员工询问正文且不执行发送。",
+          "setup": [
+            "测试收件人小乙已明确登记，身份解析与允许联系范围可读取。",
+            "本轮无同目标待发送任务；登记初始 Task/Run 和外发记录。"
+          ],
+          "actors": [
+            "请求者：小甲。",
+            "潜在收件人：授权测试账户小乙。",
+            "执行者：测试员工。",
+            "观察者：本次测试范围的读取者。"
+          ],
+          "grants": [
+            "小甲可向员工提出测试请求；小乙仅作为该测试的候选收件人。",
+            "补齐正文前不授予员工实际发送内容的权限。",
+            "观察者可读取任务效果与小乙的对应测试会话。"
+          ],
+          "steps": [
+            "小甲请求给小乙发消息，当前消息和上下文都不包含待发正文。",
+            "读取员工回复、前台终态与工具效果。",
+            "在 job 和发送意图结算后由小乙独立读取测试会话。"
+          ],
+          "verify": [
+            "回复明确询问待发送内容。",
+            "Task/Run 增量为 0，无新外发发送意图或续接效果。",
+            "小乙未收到由该请求产生的消息；此结论由发送账本和独立读回共同确认。"
+          ],
+          "evidence": [
+            "完整当前消息与冻结上下文。",
+            "实际澄清回复。",
+            "前台 job、Task/Run 和外发账本。",
+            "收件人独立会话读回。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "结束本轮并关闭未实际发送的测试请求。",
+            "清理测试专用联系人解析夹具。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCases": [
+            "progressive-missing-payload"
+          ]
+        },
+        {
+          "id": "G03",
+          "title": "群聊参与资格",
+          "module": "群聊参与",
+          "definition": "在同一测试群分别验证发给别人、未指向员工和明确 @ 员工的消息资格。",
+          "setup": [
+            "登记专用测试群的当前 scene_id、员工可信接收身份与群参与配置。",
+            "使用能够实际 @ 人的测试真人账户；将主动参与关闭，排除开放岗位求助等已配置资格。",
+            "每个子场景使用独立消息窗口；无旧事项或待答问题影响资格判断。"
+          ],
+          "actors": [
+            "发言者：小甲。",
+            "另一成员：小乙。",
+            "执行者：群中的测试员工。",
+            "观察者：测试群与前台事件读取者。"
+          ],
+          "grants": [
+            "小甲和小乙仅参与专用群测试。",
+            "员工仅处理该群中满足当前配置资格的消息。",
+            "观察者可读取真实 @ 元数据、前台事件与群消息。"
+          ],
+          "steps": [
+            "小甲真实 @ 小乙询问在场，等候该窗口结算。",
+            "小甲发送没有接收对象的普通群问候，等候该窗口结算。",
+            "小甲真实 @ 测试员工询问在场，等候该窗口结算。",
+            "比较三条消息的可信接收元数据、前台处理结果与实际消息。"
+          ],
+          "verify": [
+            "真实 @ 别人的消息不被员工回应或派工。",
+            "未指向员工且不具其他参与资格的问候保持静默。",
+            "真实 @ 员工的消息得到相关回复，Task/Run 增量为 0。",
+            "静默子场景具有已完成的事件/job 或 admission 处置证据，所有相关投递意图已结算。"
+          ],
+          "evidence": [
+            "入站 receipt 与真实 @ 接收对象元数据。",
+            "对应前台处置终态和零工具副作用。",
+            "测试群独立消息回读。"
+          ],
+          "tools": [
+            "DWS 群消息与真实 @",
+            "场域配置只读 API",
+            "业务只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "恢复群参与配置并移除自己创建的测试提示项。",
+            "保留三条子场景各自的标记映射。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "server/internal/service/inboundcoord/proactive_relevance_test.go"
+          ],
+          "sourceCases": [
+            "proactive-proactive-other-mention",
+            "proactive-proactive-bare-greeting",
+            "proactive-proactive-mixed-recipients"
+          ]
+        },
+        {
+          "id": "G04",
+          "title": "历史指代与单项更正",
+          "module": "近期对话",
+          "definition": "保留冲突历史，用最近明确陈述解释后者，并仅修改指定对象的当前值。",
+          "setup": [
+            "同一测试单聊由同一请求者连续发言；近期历史可读取且没有被清空。",
+            "使用合成人物小甲、小乙；旧值为小甲红色、小乙紫色，新值为小甲蓝色、小乙绿色。",
+            "登记每条消息来源、顺序和当前 job 的历史截止时间。"
+          ],
+          "actors": [
+            "请求者：测试账户。",
+            "执行者：测试员工。",
+            "观察者：该单聊的来源与模型输入读取者。"
+          ],
+          "grants": [
+            "请求者只提出临时对话事实及查询，不授权长期记忆写入。",
+            "员工仅读取当前 scene、tenant、requester 的获准近期历史。"
+          ],
+          "steps": [
+            "先形成小甲红色、小乙紫色的旧历史。",
+            "明确重设为小甲蓝色、小乙绿色。",
+            "询问刚才后者的颜色；随后只将小乙改为黄色。",
+            "再次询问两人的当前颜色并核实际历史注入。"
+          ],
+          "verify": [
+            "后者指代小乙，第一次答案为绿色。",
+            "单项更正后小甲仍蓝色、小乙为黄色。",
+            "模型输入包含相关新旧 user/assistant 顺序且使用同一测试历史。",
+            "本例没有 Task/Run 或 memory_capture 副作用。"
+          ],
+          "evidence": [
+            "每条消息和实际回复独立读回。",
+            "冻结近期对话与对应模型请求。",
+            "前台终态和零任务/记忆效果。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "结束临时事实窗口；不重置其他人的历史或记忆。",
+            "保存脱敏顺序与标准答案。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-history"
+          ]
+        },
+        {
+          "id": "G05",
+          "title": "只输出 JSON",
+          "module": "输出格式",
+          "definition": "使用已知合成事实回答，并将整个可见回复限制为一个合法 JSON 对象。",
+          "setup": [
+            "独立测试单聊已确认小甲蓝色、小乙黄色；本轮已知事实来源明确。",
+            "要求对象结构为 personA 和 personB 两个字符串字段；登记该格式要求。"
+          ],
+          "actors": [
+            "请求者：测试账户。",
+            "执行者：测试员工。",
+            "观察者：原始可见消息读取者。"
+          ],
+          "grants": [
+            "仅授权当前单聊回答合成事实；没有任务或长期记忆写入请求。"
+          ],
+          "steps": [
+            "询问两人的颜色，并明确整个回复只包含指定 JSON 对象。",
+            "下载或读取原始消息文本，直接执行 JSON 解析。",
+            "核对字段、内容、前台终态与 Task/Run 增量。"
+          ],
+          "verify": [
+            "原始完整文本可直接解析为一个 JSON 对象。",
+            "字段精确为 personA=蓝色、personB=黄色。",
+            "没有 Markdown 围栏、前缀、后缀或第二条补充回复。",
+            "零 Task/Run 和额外记忆写入。"
+          ],
+          "evidence": [
+            "原始消息文本与 JSON 解析结果。",
+            "合成事实来源。",
+            "前台 job、模型请求及零副作用。"
+          ],
+          "tools": [
+            "DWS 定向读回",
+            "JSON 解析器",
+            "业务只读 API",
+            "Langfuse"
+          ],
+          "cleanup": [
+            "结束格式测试窗口并清理临时合成事实配置。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-history"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "delivery",
+      "title": "任务交付",
+      "level": 2,
+      "cases": [
+        {
+          "id": "G06",
+          "title": "真实 Python 计算",
+          "module": "后台执行",
+          "definition": "实际运行 Python 计算 1 至 5 的平方，用户收到工具执行得出的结果。",
+          "setup": [
+            "专用候选 Runtime 可执行 Python，并可读取完整执行 transcript。",
+            "任务要求计算平方数组与合计；标准答案为 [1,4,9,16,25]，合计 55。",
+            "登记唯一来源标记、初始 Task/Run 数与候选 Runtime 来源。"
+          ],
+          "actors": [
+            "请求者：小甲。",
+            "执行者：测试员工及专用 Runtime。",
+            "观察者：任务、执行与原会话读取者。"
+          ],
+          "grants": [
+            "小甲授权该独立计算及向原单聊交付结果。",
+            "Runtime 仅访问本次任务工作目录与必要 Python 工具。"
+          ],
+          "steps": [
+            "请求实际执行 Python 计算平方数组与合计。",
+            "跟踪受理、队列领取、Run 执行和终态。",
+            "独立读取执行工具结果及请求者收到的最终消息。"
+          ],
+          "verify": [
+            "存在实际 Python 工具调用和输出，数组及合计与标准答案一致。",
+            "独立 Task 创建一个必要 Run，Issue 为可选承载且本例不创建 Issue。",
+            "原单聊收到正确结果，终态通知最多一次。"
+          ],
+          "evidence": [
+            "Task/Run/queue 与源 receipt 关联。",
+            "真实执行 transcript 及 Python 输出。",
+            "用户独立消息回读与通知回执。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Runtime transcript/进程检查",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "任务终态后清理自己的运行工作目录和临时产物。",
+            "保留脱敏任务关联、工具结果和通知证据。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md"
+          ],
+          "sourceCases": [
+            "employee-base-task"
+          ]
+        },
+        {
+          "id": "G07",
+          "title": "运行中查询进度",
+          "module": "进度读取",
+          "definition": "查询仍在执行的任务时使用 read_task 的实时事实，不创建新的执行。",
+          "setup": [
+            "单聊中只有一个可识别的测试计算 Task。",
+            "Python 先输出开始标记，再等待 12 秒后计算合计 55；已确认开始标记及 queue running。",
+            "记录查询前的 Task/Run 数、精确执行目标与已观测工具输出。"
+          ],
+          "actors": [
+            "请求者：原任务的小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：实时任务与执行读取者。"
+          ],
+          "grants": [
+            "小甲可读取自己在当前 scene 的测试 Task。",
+            "该进度询问不授予续接、纠正或停止权限。"
+          ],
+          "steps": [
+            "在实际等待阶段询问原计算任务进度。",
+            "读取该轮 read_task 返回、实际前台回答与当前队列状态。",
+            "等原任务正常完成，再核查询轮的效果与执行数量。"
+          ],
+          "verify": [
+            "进度依据同一 Task 的实时 Run 状态及执行报告。",
+            "没有仅凭快照声称计算已完成或编造百分比/ETA。",
+            "查询轮零新增 Task/Run，原计算最终得到 55。"
+          ],
+          "evidence": [
+            "查询时 read_task 的实时结果及 read_ref。",
+            "已出现的开始标记与真实等待 transcript。",
+            "进度回复、Task/Run 增量及最终输出。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Runtime transcript",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "等原测试执行结算后清理工作目录。",
+            "保留查询时间与 running 事实对应关系。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-task"
+          ]
+        },
+        {
+          "id": "G08",
+          "title": "成功后同 Task 续接",
+          "module": "任务续接",
+          "definition": "已成功计算平方的任务接受新的同工作续接，保留 Task 并创建一个新的 Run。",
+          "setup": [
+            "原测试 Task 已成功产生 [1,4,9,16,25]，无 active Run。",
+            "请求者、tenant 与当前 scene 与原 Task 一致；原 Task 可由本轮 read_task 读取。",
+            "登记原 Task、Run、goal_revision 与交付策略。"
+          ],
+          "actors": [
+            "请求者：原任务的小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：Task 账本与执行读取者。"
+          ],
+          "grants": [
+            "小甲明确授权在原任务上将已有平方数组求合计。",
+            "continue_task 仅使用本轮可信 task_ref/read_ref，并在提交时重验当前权限与版本。"
+          ],
+          "steps": [
+            "明确继续原计算，把已有平方数组求合计。",
+            "读取 continue_task 回执、Task 账本与新 queue/Run。",
+            "实际执行并回读合计；之后发送一次普通致谢。"
+          ],
+          "verify": [
+            "Task ID 保持不变，goal_revision 符合成功续接合同。",
+            "仅增加一个必要 Run，与原任务关联且实际结果为 55。",
+            "续接不创建新 Issue。",
+            "致谢没有新执行或控制效果。"
+          ],
+          "evidence": [
+            "read_task 与 continue_task 的输入、回执及 journal。",
+            "Task/Run/queue 账本与真实输出。",
+            "用户收到的结果和致谢轮终态。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Runtime transcript",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "待两个 Run 和相关发送意图终态后清理测试工作目录。",
+            "保存原 Task 与两次 Run 的脱敏对应关系。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-task"
+          ]
+        },
+        {
+          "id": "G09",
+          "title": "仅文件交付与内容回读",
+          "module": "文件交付",
+          "definition": "以原生文件消息交付精确 CSV 内容，并由接收者下载验证，不追加文字总结。",
+          "setup": [
+            "测试员工的原生 DWS 身份与文件权限就绪，候选 Runtime 可写入文件。",
+            "生成唯一文件名，标准内容为 name,qty 换行 apple,5 换行。",
+            "请求明确仅交付文件，不追加完成总结；记录该 Run 的原生发送来源。"
+          ],
+          "actors": [
+            "请求者兼接收者：小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：回执与文件读取者。"
+          ],
+          "grants": [
+            "授权员工写入本任务文件并向当前单聊发送原生文件。",
+            "小甲可下载该原生文件；观察者仅读取该 Task 的产物与回执。"
+          ],
+          "steps": [
+            "请求创建并仅发送指定内容的 CSV。",
+            "按实际消息 ID 读取原会话中的文件消息，确认消息自身 resources 为 file。",
+            "接收者下载字节并计算 SHA-256；按已声明规则仅规范 UTF-8 BOM 与换行后比对内容。",
+            "观察到 Run 终态、所有通知意图结算且超过已配置重试窗口。"
+          ],
+          "verify": [
+            "实际原生消息和该 Run 的服务端回执指向同一目标与文件。",
+            "下载内容精确匹配标准 CSV，记录原始字节 hash。",
+            "当前 Run 的通知记录显示文件送达后的抑制决定。",
+            "完整通知观察窗内没有追加文字总结。"
+          ],
+          "evidence": [
+            "原生消息自身文件 resource 与提供方消息 ID。",
+            "接收者下载内容、原字节 hash 和规范化规则。",
+            "该 Run 的送达回执、通知决定与结算状态。"
+          ],
+          "tools": [
+            "DWS 原生文件发送与下载",
+            "业务只读 API",
+            "文件内容及 hash 校验",
+            "Runtime transcript",
+            "SLS"
+          ],
+          "cleanup": [
+            "按测试文件生命周期删除自己创建的临时对象及工作目录。",
+            "保留脱敏原始 hash、标准内容与回执关联。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCases": [
+            "employee-base-file"
+          ]
+        },
+        {
+          "id": "G10",
+          "title": "运行中纠正及退出后后继",
+          "module": "任务纠正",
+          "definition": "将运行中的清单改为最新要求，旧进程退出后才允许后继执行。",
+          "setup": [
+            "群场域只存在一个本请求者可控制的测试 Task。",
+            "原任务 Python 等待 60 秒后交付苹果 3、香蕉 2；已确认进入实际等待。",
+            "新要求为苹果 5、删除香蕉，且不重复原等待；可读取真实进程退出证明。"
+          ],
+          "actors": [
+            "请求者：原任务的小甲，使用真实 @ 员工。",
+            "执行者：测试员工及候选 Runtime。",
+            "观察者：原执行、停止屏障和后继领取读取者。"
+          ],
+          "grants": [
+            "小甲仅授权纠正自己当前群场域的原 Task。",
+            "Host 使用本轮读取得到的目标、版本与当前权限提交 steer；不授权其他任务。"
+          ],
+          "steps": [
+            "真实 @ 员工，明确修改原清单并取消原等待。",
+            "读取旧 Run 取消、停止屏障与新 Run/queue 建立事实。",
+            "记录 FC 两次进程扫描或认证 Daemon 退出确认时间，再记录后继 claim 时间。",
+            "等候新结果及所有通知结算，并观察超过旧任务原定交付时刻。"
+          ],
+          "verify": [
+            "同一个 Task，旧 Run 被取消且只建立一个后继。",
+            "后继 claim 严格晚于实际进程退出证明，不以 cancelled 或超时替代退出。",
+            "原群只收到苹果 5、无香蕉的最新清单，不重新等待 60 秒。",
+            "旧结果通知有 steered 抑制事实且观察窗内不补发。"
+          ],
+          "evidence": [
+            "read_task/steer_task journal 与目标版本。",
+            "旧 Run、退出屏障、进程扫描/认证 ACK 与后继 claim 时间。",
+            "最新结果、旧通知抑制与原定完成时间后的读回。"
+          ],
+          "tools": [
+            "DWS 群消息",
+            "业务只读 API",
+            "Runtime 进程检查",
+            "Langfuse",
+            "跨副本 SLS"
+          ],
+          "cleanup": [
+            "确认原进程与后继均结算后删除临时工作目录。",
+            "恢复自己添加的测试运行配置。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-steer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "state-source",
+      "title": "状态与来源",
+      "level": 3,
+      "cases": [
+        {
+          "id": "G11",
+          "title": "明确停止与真实退出",
+          "module": "任务停止",
+          "definition": "停止正在执行的精确任务，先报告 stopping，取得实际退出证明后才报告 stopped。",
+          "setup": [
+            "单聊中有一个正在实际 Python 等待 30 秒的测试 Task，并已记录 running 与开始标记。",
+            "原任务会在等待后写出唯一完成标记；可核精确 Run/queue、停止屏障与进程证明。"
+          ],
+          "actors": [
+            "请求者：原任务小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：控制与进程读取者。"
+          ],
+          "grants": [
+            "小甲明确授权停止当前 scene/requester 的该 Task。",
+            "stop_task 必须先 read_task，提交时核来源、当前版本、Run/queue 与权限。"
+          ],
+          "steps": [
+            "先发送否定停止要求并核无控制效果。",
+            "随后明确停止原任务，读取停止意图与初次答复。",
+            "等待 FC 两次扫描或认证 Daemon 确认进程退出后，再查询状态。",
+            "持续观察超过原定完成时间，并核通知意图全部结算。"
+          ],
+          "verify": [
+            "否定要求没有 stop、steer、dispatch 副作用。",
+            "停止意图始终绑定原 Run/queue，初期为 stopping 且尚无 exit proof。",
+            "实际退出后状态为 stopped，process_exit_confirmed=true。",
+            "没有后继执行或原完成标记补发；取消终态事件唯一。"
+          ],
+          "evidence": [
+            "停止 journal、Task/Run/queue 与版本关联。",
+            "真实进程退出证明及状态变更时间。",
+            "延后消息回读、旧通知抑制和终态事件计数。"
+          ],
+          "tools": [
+            "DWS",
+            "业务只读 API",
+            "Runtime 进程检查",
+            "Langfuse",
+            "跨副本 SLS"
+          ],
+          "cleanup": [
+            "确认全部任务进程停止后清理测试工作目录。",
+            "保留退出与延后观察证据。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-stop"
+          ]
+        },
+        {
+          "id": "G12",
+          "title": "记忆纠正与定向遗忘",
+          "module": "请求者私有记忆",
+          "definition": "在当前场域和请求者私有 namespace 中明确记住、纠正并忘记一个随机测试事实。",
+          "setup": [
+            "使用由 scene.Resolve 注册的当前 DM scene_id，同一窗口只有一个已知 requester。",
+            "生成独有记忆 key，初值为随机码 A，更正值为不同随机码 B；代码仅写入测试夹具。",
+            "可读取 Employee 记忆记录、source receipt、supersedes 与 forgotten 墓碑，不重置整个场域。"
+          ],
+          "actors": [
+            "记忆 owner：小甲。",
+            "执行者：测试员工。",
+            "观察者：该测试私有 namespace 的授权读取者。"
+          ],
+          "grants": [
+            "小甲明确授权保存自己的外层原文，限定当前 scene/requester-private。",
+            "纠正及 forget 仅作用于本测试 key 和精确 record_id。",
+            "观察者不可读取其他请求者或场域的私有记录。"
+          ],
+          "steps": [
+            "小甲在当前外层文本明确要求记住随机码 A，之后独立提问且问题不带答案。",
+            "同 key 明确纠正为 B，再独立询问。",
+            "明确忘记该测试记录，再询问同 key。",
+            "在授权测试入口重投原 capture 来源，读取记录状态与新模型输入。"
+          ],
+          "verify": [
+            "第一次回答 A，更正后回答 B；旧记录成为 superseded。",
+            "保存内容源于原外层文本，receipt 时间和 requester/scene 绑定正确。",
+            "forget 精确标记测试记录 forgotten，并保留 replay tombstone；之后回答不知道且不复述旧码。",
+            "旧来源重投不使记忆或对应历史证据复活。",
+            "全程零后台 Task；每个前台唤醒的真实模型请求不超过三次。"
+          ],
+          "evidence": [
+            "实际 capture/lookup/forget journal 与来源绑定。",
+            "新模型输入中实际记忆及撤回证据省略状态。",
+            "当前 Employee 记忆记录、supersedes、墓碑及独立回答。"
+          ],
+          "tools": [
+            "DWS",
+            "当前 Employee 记忆只读 API",
+            "业务 Task/Run API",
+            "Langfuse",
+            "SLS",
+            "授权来源重投夹具"
+          ],
+          "cleanup": [
+            "精确忘记剩余测试记录并保留必要墓碑；不执行场域全量 reset。",
+            "清理随机夹具文件并保留脱敏状态链。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-memory-capture.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-memory"
+          ]
+        },
+        {
+          "id": "G13",
+          "title": "两个场域的私有隔离",
+          "module": "场域与权限",
+          "definition": "同一员工、租户和请求者在两个独立场域保存不同测试事实，读取和效果不跨场域。",
+          "setup": [
+            "建立同一员工与租户下的专用 DM 与测试群，由 scene.Resolve 分别生成两个不同 scene_id。",
+            "同一请求者在两场域对同一个测试 key 分别写入随机码 A 与 B。",
+            "群窗口只有明确请求者，但群私有内容只在该 scene/requester 下按需 lookup。"
+          ],
+          "actors": [
+            "请求者兼 owner：小甲。",
+            "群内其他测试成员：小乙。",
+            "执行者：同一个测试员工。",
+            "观察者：两个测试 scene 的限定读取者。"
+          ],
+          "grants": [
+            "小甲只授权各场域自己的 requester-private 写入与查询，不授权跨场域共享。",
+            "小乙只作为群参与者，不获得小甲私有 namespace 读取权限。",
+            "观察者分别验证 scene.Ref、当前 principal 和获准查询范围。"
+          ],
+          "steps": [
+            "在 DM 保存 A，在群保存 B；两条来源分别绑定当前 scene.Ref。",
+            "在 DM 和群分别明确询问测试 key，题目不含答案。",
+            "群内小乙询问相同 key，再发送无记忆查询的普通消息。",
+            "检查两场域 lookup、群 brief 与实际回答。"
+          ],
+          "verify": [
+            "小甲 DM 回答 A、群回答 B，不串值。",
+            "小乙查询不能读取小甲的 private 记录。",
+            "group 普通新快照不自动注入 requester-private brief；明确查询仅查本 scene/requester。",
+            "不存在跨场域 Task/控制效果或未授权共享，scene_id 不以人身份或聊天标题替代。"
+          ],
+          "evidence": [
+            "两个 scene.Ref 与 receipt/principal 绑定。",
+            "两场域私有 lookup 和实际模型输入。",
+            "各账户独立消息回读与零未授权效果。"
+          ],
+          "tools": [
+            "DWS 单聊与群聊",
+            "scene 目录只读 API",
+            "当前 Employee 记忆只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "由各 owner 对两个 scene 分别定向忘记自己的测试 key。",
+            "清理自己创建的群配置；不修改其他场域或成员记忆。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-memory-capture.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-memory",
+            "employee-mem-03"
+          ]
+        },
+        {
+          "id": "G14",
+          "title": "真实 Cron 到点与暂停",
+          "module": "场域例行任务",
+          "definition": "专用定时配置在真实时点产生一次执行，暂停跨过时点无执行，恢复后下一时点执行。",
+          "setup": [
+            "专用测试 scene 可创建、暂停和删除 routine；采用 Asia/Shanghai 每分钟调度。",
+            "登记新建 routine、指令版本、首次合法到点和唯一输出标记。",
+            "配置受理主体、Runtime 与通知 owner 可核验；不使用模拟时钟替代真实到点。"
+          ],
+          "actors": [
+            "配置 owner：小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：routine/occurrence/Task 与原场域读取者。"
+          ],
+          "grants": [
+            "小甲只管理自己创建的测试 routine。",
+            "routine 明确授予在指定场域执行标记任务及通知的权限。",
+            "观察者仅查测试 routine 与其发生链。"
+          ],
+          "steps": [
+            "创建每分钟 routine，观察一个真实 scheduled occurrence 和输出。",
+            "暂停并跨过完整的下一合法时点，读取 scheduler 扫描和 occurrence/Task 记录。",
+            "恢复并观察下一合法时点。",
+            "等三阶段各自相关通知结算并比较发生数量。"
+          ],
+          "verify": [
+            "首次真实到点产生唯一 occurrence 与一次输出。",
+            "暂停越点阶段有实际扫描证据且零新 Task/Run。",
+            "恢复后的下一合法时点执行一次，不补发暂停期未获准工作。",
+            "每次工作包、scene、配置 revision 与通知 owner 正确。"
+          ],
+          "evidence": [
+            "真实服务器时间与 scheduler 扫描。",
+            "routine revision、occurrence、source 与 Task/Run 关联。",
+            "实际工具输出、通知回执与原场域读回。"
+          ],
+          "tools": [
+            "routine 管理 API",
+            "业务只读 API",
+            "DWS",
+            "Runtime transcript",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "暂停并删除自己创建的测试 routine。",
+            "确认没有该 routine 尚未结算的执行或通知。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-cron-01",
+            "employee-cron-03"
+          ]
+        },
+        {
+          "id": "G15",
+          "title": "Webhook 签名与同源去重",
+          "module": "Webhook 事件",
+          "definition": "合法签名事件执行一次，同源重投复用事实，错签或同源内容冲突不新增效果。",
+          "setup": [
+            "专用隔离测试 endpoint、当前签名配置和 provider event 身份规则就绪；secret 由安全 provider 提供。",
+            "固定原始事件字节、event ID、合法目标及唯一输出标记；另外准备变更内容与错签夹具。",
+            "登记 webhook 绑定的可信 tenant/scene、执行权限与初始 Task/Run 计数。"
+          ],
+          "actors": [
+            "事件发送者：获准测试 provider。",
+            "endpoint owner：小甲。",
+            "执行者：测试员工及 Runtime。",
+            "观察者：delivery/receipt/Task 读取者。"
+          ],
+          "grants": [
+            "owner 只授权专用 endpoint 触发约定标记任务。",
+            "payload 不能自行授予场域、主体或其他 Task 权限。",
+            "观察者有读取该 endpoint 的来源及效果权限。"
+          ],
+          "steps": [
+            "提交合法签名原始字节，跟踪实际执行及结果。",
+            "以同一 provider event ID 和同一内容技术重投。",
+            "同 ID 变更内容再提交，并另送错签事件。",
+            "观察对应 delivery 处置、job/Task/Run 及通知完全结算。"
+          ],
+          "verify": [
+            "合法事件的原始字节验签后建立可信来源链并执行一次。",
+            "同 ID 同内容返回原事实，零新 Task/Run 或外发。",
+            "同 ID 不同内容为 conflict，错签被拒绝，均零业务副作用。",
+            "目标来自 endpoint 可信绑定；未获准 payload 无权限扩大。"
+          ],
+          "evidence": [
+            "验签结果和原字节指纹，不导出签名 secret。",
+            "provider event、webhook delivery、receipt 与 Task/Run 关联。",
+            "冲突/拒绝处置和实际输出、发送账本。"
+          ],
+          "tools": [
+            "隔离 Webhook HTTP 客户端",
+            "安全签名 provider",
+            "业务只读 API",
+            "DWS",
+            "SLS",
+            "Langfuse"
+          ],
+          "cleanup": [
+            "禁用并删除自己创建的测试 endpoint，撤销测试签名配置。",
+            "等待测试 delivery 结算，清理原字节夹具。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-hook-01",
+            "employee-hook-02",
+            "employee-hook-03"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "collaboration-recovery",
+      "title": "协作与恢复",
+      "level": 4,
+      "cases": [
+        {
+          "id": "G16",
+          "title": "三人乱序收集",
+          "module": "跨场域收集",
+          "definition": "收集三名获准参与者的数字答复，准确汇总并仅向发起场域交付一次。",
+          "setup": [
+            "登记发起场域和三个可联系测试对象，各对象身份桥与目标场域可由可信目录解析。",
+            "对象一、二、三分别答 7、11、13；标准合计 31。",
+            "每个 invite 的目标、来源、权限、送达状态和有效期可读取。"
+          ],
+          "actors": [
+            "发起者：小甲。",
+            "参与者：小乙、小丙、小丁三个授权测试对象。",
+            "执行者：测试员工。",
+            "观察者：collection/invite/input 与相关消息限定读取者。"
+          ],
+          "grants": [
+            "小甲明确授权向这三个测试对象提问并在原场域汇总。",
+            "每个参与者只提供自己的答复，不获得其他人的答案或发起场域私有历史。",
+            "汇总只授予发起场域，不授予全员群发。"
+          ],
+          "steps": [
+            "发起收集并确认三条 invite 实际送达。",
+            "小丙先答 11、小乙后答 7；小甲查询进度。",
+            "小丁最后答 13。",
+            "等 collection ready、后续推进和发送意图结算，并由各参与者独立回读。"
+          ],
+          "verify": [
+            "中途状态精确为 2/3。",
+            "三条 input 分别绑定正确 invite 与可信来源，合计为 31。",
+            "仅原发起场域收到一次完整汇总。",
+            "参与者会话不包含其他人的答案、总表或 origin 私有历史。"
+          ],
+          "evidence": [
+            "invite 原生发送回执与各对象答复 receipt。",
+            "collection/input/wait/Task/wake/action 关联。",
+            "发起者和参与者独立回读与汇总次数。"
+          ],
+          "tools": [
+            "DWS 多身份收发与引用",
+            "可信身份/scene 目录 API",
+            "collection 只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "关闭测试 collection，撤销测试 invite。",
+            "清理自己新建的测试场域及配置，保留脱敏 input 归属证据。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-col-01"
+          ]
+        },
+        {
+          "id": "G17",
+          "title": "同人两 Task 输入归属",
+          "module": "协作输入",
+          "definition": "同一参与者按不同邀请引用乱序回答两个任务，输入只进入对应任务；无引用歧义时澄清。",
+          "setup": [
+            "为同一参与者建立两个 collection Task，分别问测试数一和测试数二。",
+            "两条 invite 各自实际送达且引用可核验；标准答复分别为 7 和 11。",
+            "两个 Task 同时等待该人输入，登记开始状态。"
+          ],
+          "actors": [
+            "发起者：小甲。",
+            "共同参与者：小乙。",
+            "执行者：测试员工。",
+            "观察者：两个测试 Task 的归属读取者。"
+          ],
+          "grants": [
+            "小乙仅获得自己两条 invite 的问题与答复权限。",
+            "员工只能按可信 invitation/reference 绑定输入，显示名或最近 Task 不授予归属。"
+          ],
+          "steps": [
+            "小乙先引用第二条 invite 答 11，再引用第一条答 7。",
+            "读取各 input、Task 推进及实际结果。",
+            "以新的两个等待项构造一次不带引用且有歧义的答复，读取处置。"
+          ],
+          "verify": [
+            "第二 Task 只获得 11，第一 Task 只获得 7。",
+            "输入引用、participant 与 receipt 一致，两个 Task 不串数据。",
+            "无引用且多个可匹配邀请时澄清，不任意推进任何 Task。",
+            "参与者不能读取别人的答案或完整 origin 任务。"
+          ],
+          "evidence": [
+            "真实引用消息与 invitation 送达绑定。",
+            "input/task/wake/action 的精确归属。",
+            "歧义处置及零误推进效果。"
+          ],
+          "tools": [
+            "DWS 引用消息",
+            "collection/Task 只读 API",
+            "Langfuse",
+            "SLS"
+          ],
+          "cleanup": [
+            "关闭两组测试 collection 与未完成 invite。",
+            "清理自己创建的参与者测试场域。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-col-02"
+          ]
+        },
+        {
+          "id": "G18",
+          "title": "等待对象提醒而不新建 Run",
+          "module": "等待与提醒",
+          "definition": "收集进度为 2/3 时，仅向获准未答对象提醒一次，答复后停止提醒且不启动新执行。",
+          "setup": [
+            "专用 collection 已有两名对象答复，只等待第三名。",
+            "提醒授权与测试 scope 阈值明确；只调整专用配置并记录原值。",
+            "可读取 waiting 状态、episode/action、实际扫描时点与 reminder 发送结果。"
+          ],
+          "actors": [
+            "发起者：小甲。",
+            "已答参与者：小乙、小丙。",
+            "待答参与者：小丁。",
+            "执行者：测试员工与既有恢复/提醒入口。",
+            "观察者：测试提醒与任务读取者。"
+          ],
+          "grants": [
+            "发起者明确允许向未答且 invite 有效的小丁发一次提醒。",
+            "不授权提醒已答对象、其他成员或创建新的 Run。"
+          ],
+          "steps": [
+            "读取 waiting_inputs=2/3 与有效未答邀请。",
+            "等专用提醒到点，并由三个对象独立读回。",
+            "小丁按 invite 答复。",
+            "继续观察至少一个完整的后续提醒扫描周期，核 episode/action 和发送意图。"
+          ],
+          "verify": [
+            "等待进度为 2/3，不伪称后台执行百分比。",
+            "只有小丁收到一次提醒，其他对象没有提醒。",
+            "小丁答复后后续扫描不再催促。",
+            "提醒与答复处理期间没有新增执行 Run；允许的汇总效果与本例提醒区分记录。"
+          ],
+          "evidence": [
+            "等待事实和有效 invite 授权。",
+            "episode/action、实际扫描与 reminder receipt。",
+            "对象独立读回及前后 Run 数量。"
+          ],
+          "tools": [
+            "DWS",
+            "collection/Task/episode 只读 API",
+            "专用 scope 配置工具",
+            "SLS",
+            "Langfuse"
+          ],
+          "cleanup": [
+            "恢复测试提醒阈值，关闭 collection 与剩余 invite。",
+            "确认没有未结算提醒意图。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-wd-04"
+          ]
+        },
+        {
+          "id": "G19",
+          "title": "Host verified 经验在新任务复用",
+          "module": "经验验证与复用",
+          "definition": "由可信 Host 规格验证一个实际计算任务，再在同作用域的新 Task 中召回并实际使用该经验。",
+          "setup": [
+            "专用环境的 verification 规格、checker 版本、可信证据来源和生产提炼入口就绪。",
+            "Task A 真实计算 1 至 10 平方合计并生成 result.json，内容为 {\"sum\":385}；请求者明确规格，Host 使用 execution_output 的 file/expected 合同检查该 Run 产物，不使用 Command checker。",
+            "新 Task B 求 1 至 20 平方合计并生成新的 result.json，内容为 {\"sum\":2870}；不同 Task，使用相同获准 scene/requester-private scope。"
+          ],
+          "actors": [
+            "原数据与经验 owner：小甲。",
+            "执行者：测试员工及 Runtime。",
+            "验证者：可信 Host checker。",
+            "观察者：verification/learning/manifest 与两个执行结果读取者。"
+          ],
+          "grants": [
+            "小甲授权测试计算和在当前 private namespace 保存经验证的有限适用经验。",
+            "checker 只能按登记规格写验证结果；模型不能自授 trust/confidence 或 verified 身份。",
+            "不授权经验共享晋级或跨 scene/requester 读取。"
+          ],
+          "steps": [
+            "执行 Task A，下载该 Run 的 result.json；Host 按可信规格、精确 Task/Run/queue/goal revision 与产物 SHA-256 检查 sum=385。",
+            "等待 passing verification、持久提炼意图及对应 verified learning 结算。",
+            "用不包含 Task A 答案的新请求创建 Task B，要求使用已有获准计算经验完成 1 至 20。",
+            "读取 Task B 的实际 ContextUsed、学习引用、verification/evidence 链和工具执行结果。",
+            "加入自报成功但输出或目标不匹配的验证反例。"
+          ],
+          "verify": [
+            "Task A 实际产物的 sum 为 385；passing proof 绑定正确 Task/Run/queue/goal revision、规格版本与产物 SHA-256。",
+            "同证据仅一条合法 verified learning，假成功和错误目标不晋级。",
+            "Task B 为新 Task；从该 Run 的实际产物独立回读 sum=2870。",
+            "Task B 的工作包/manifest 与实际模型请求包含该 verified learning 的有效引用，执行行为实际使用其流程。",
+            "全链保持原允许 private scope，无额外共享授权或私有数据外泄。"
+          ],
+          "evidence": [
+            "可信 execution_output file/expected 规格、checker 版本、验证结果与精确 Run 产物字节/SHA-256。",
+            "持久提炼意图、verified learning 与来源关联。",
+            "Task B ContextUsed/manifest、模型请求、工具步骤和最终结果。",
+            "负向验证结果及零错误晋级。"
+          ],
+          "tools": [
+            "业务 Task/verification/learning 只读 API",
+            "可信 Host verifier",
+            "Runtime transcript",
+            "Langfuse",
+            "SLS",
+            "DWS"
+          ],
+          "cleanup": [
+            "owner 定向撤回本测试经验及其测试数据。",
+            "关闭测试规格与提炼配置，清理产物且保留必要撤回墓碑。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "server/internal/employeeverification/check.go"
+          ],
+          "sourceCases": [
+            "employee-mem-01",
+            "employee-mem-02"
+          ]
+        },
+        {
+          "id": "G20",
+          "title": "隔离实例恢复与唯一执行",
+          "module": "持久恢复",
+          "definition": "在专用隔离实例丢失通知、技术重投并重启消费者，恢复原 Task/Run/queue 且仅执行一次。",
+          "setup": [
+            "专用工作空间、隔离 PostgreSQL、专用 Redis 和测试 Runtime/消费者；明确资源 owner 与恢复入口。",
+            "故障注入只能命中本 fixture；不连接、不重启或 flush 共享预发及其他人的实例。",
+            "准备同一冻结来源和幂等身份，实际执行命令输出唯一标记并计算合计 55。",
+            "记录正常 poll 周期、缓存 TTL、恢复重试上限与完整观察截止；为每个子场景重建独立 fixture。"
+          ],
+          "actors": [
+            "请求者：小甲。",
+            "执行者：专用测试员工及 Runtime。",
+            "故障注入者：这些隔离资源的 owner。",
+            "观察者：专用数据库、缓存、领取与执行读取者。"
+          ],
+          "grants": [
+            "资源 owner 明确授予隔离实例丢通知、缓存清除/到期、消费者重启权限。",
+            "同源重投只能重放原身份和原冻结内容，不创建新的自然语言来源。",
+            "观察者与执行器只访问本次专用资源。"
+          ],
+          "steps": [
+            "让实际 claim 建立空队列缓存，再在 PG 提交 Direct Run 和 queue，故意丢弃提交后的唤醒通知。",
+            "子场景一以同一来源重投两次，检查复用与旧缓存失效。",
+            "子场景二删除本 fixture 缓存键；子场景三核实际 TTL 后推进本 fixture 该键到期；分别让正常 poll 恢复。",
+            "在各子场景中重建消费者或连接池，用两个独立消费者并发领取原 queue。",
+            "跟踪真实工具执行、终态事实及原会话通知；观察至少两个正常 poll，并跨过缓存到期和全部配置重试窗口。"
+          ],
+          "verify": [
+            "通知丢失且有效空缓存仍存在时暂不可领取；到期后依正常 poll 恢复，不将 TTL 当作即时延迟承诺。",
+            "所有同源重投或重启均找回同一个 Task/Run/queue；不存在新 Issue、Autopilot 或 ChatSession。",
+            "两消费者仅一次成功领取，只有一条 run_started 账本。",
+            "实际合计为 55、执行及终态事实唯一，用户收到结果最多一次。",
+            "三种恢复子场景分别保留事实和完整观察窗口，恢复不依赖 Redis 保存任务。"
+          ],
+          "evidence": [
+            "PG 提交事实、冻结来源和 tool journal。",
+            "专用缓存键状态、实际 TTL、故障注入与消费者重启日志。",
+            "双消费者领取结果、run_started 和执行 transcript。",
+            "唯一终态事件、通知账本与独立消息回读。"
+          ],
+          "tools": [
+            "隔离工作树及本地栈工具",
+            "专用 PG/Redis fixture",
+            "受控提交后通知故障注入",
+            "业务只读 API",
+            "Runtime transcript",
+            "SLS",
+            "Langfuse",
+            "DWS"
+          ],
+          "cleanup": [
+            "停止并删除自己创建的消费者、Runtime、缓存键及专用实例。",
+            "确认无遗留执行进程或发送意图；按 owner 授权清理测试库，不触碰共享实例。",
+            "保留脱敏唯一性计数与恢复时间线。"
+          ],
+          "sources": [
+            "server/internal/evalcatalog/suites.json",
+            "docs/employee-loop.md",
+            "server/internal/service/direct_task_recovery_test.go",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCases": [
+            "employee-base-task",
+            "employee-roll-01"
+          ]
+        }
+      ]
+    }
+  ]
+}

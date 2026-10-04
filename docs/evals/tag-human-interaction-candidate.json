@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "title": "人工确认与后续推进候选评测",
+  "description": "按在线评测贡献规范编写的待集成定义；非真实验收结论，不增加第21条P0。",
+  "requirements": [
+    {
+      "id": "spec-human-question-continuation",
+      "title": "人工确认与后续推进",
+      "summary": "需要确认时先问人，选项和文字都能推进对应事项。",
+      "requirements": [
+        "可以点选或直接打字；保留附加约束，歧义追问。",
+        "答复准确关联原事项与场域，重投不重复执行，旧问题不恢复停止的事项。",
+        "本轮结束不等于目标完成；无需让沙箱等待人。"
+      ],
+      "scenarioRefs": [
+        "human-clarification",
+        "round-result-followup"
+      ],
+      "sources": [
+        "docs/employee-human-interaction.md"
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "id": "human-interaction",
+      "title": "确认与接续",
+      "description": "问清缺少的信息，再继续对应工作。"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "human-clarification",
+      "categoryRef": "human-interaction",
+      "title": "直接回应确认问题",
+      "description": "按钮是快捷输入，也可用自然语言补充要求。",
+      "cases": [
+        {
+          "id": "human-front-question-no-task",
+          "title": "前台问句不创建后台任务",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "询问落盘、卡片投递意图唯一；未选择前没有Task/Run。"
+          ],
+          "method": [
+            "让员工询问两类可选资料，原场域读回真实卡片。",
+            "检查receipt→question→response_action与Task/Run计数；本地fake验证不能替代真实卡片。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-text-preserves-constraints",
+          "title": "不点按钮，直接补充要求",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "文字匹配对应问题，完整原话与简短/不外发约束进入新执行包。"
+          ],
+          "method": [
+            "已送达问句后普通DWS发“办公流程，简短一点，先不要发给别人”。",
+            "读回IM、对应question/response/job及下一Run完整模型输入，确保非只保存选项ID。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-multiple-question-ambiguity",
+          "title": "两件事同时等待时不猜最近一件",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "短答目标不明应追问；明确提到某件时只推进该事项。"
+          ],
+          "method": [
+            "同请求者同场域用两次独立当前输入分别建立两件待确认事项，记录两个question ID；先发同时匹配两题的短答，再明确原事项。",
+            "结合真实模型语义judge核q_ref、Task/Run和实际效果，不能只看模型说收到。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-actor-and-option-fence",
+          "title": "其他人和非法选项不能抢答",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "无权人/非法值不消耗合法答复机会；同名选择标识不成为人员授权。"
+          ],
+          "method": [
+            "隔离客户端以其他账号提交、再由请求者合法提交；fault fixture提交未展示ID。",
+            "核身份、租户/scene/question绑定、问题状态与唯一效果；故障模拟单列。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-answer-race-once",
+          "title": "点击和文字重复时只推进一次",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "首个合法答案生成唯一消费job和执行意图；迟到旧卡不覆盖已接受的新输入。"
+          ],
+          "method": [
+            "隔离PG并发模拟点击/文字及网络重投；真实合法受理卡仅在客户端仍支持再次提交时观察，否则UI禁用不代替服务端幂等。",
+            "联合检查source/event、response、job、native effect journal、Task/Run及消息计数。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        }
+      ]
+    },
+    {
+      "id": "round-result-followup",
+      "categoryRef": "human-interaction",
+      "title": "任务这一轮结束后确认",
+      "description": "保存已有结果，让人决定需要确认的事项或可选下一步。",
+      "cases": [
+        {
+          "id": "round-clarification-waits-goal",
+          "title": "一轮结束，原事项等待确认",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "Run终态不宣称目标完成；只开放该问题的human_input wait；答后同Task新Run。"
+          ],
+          "method": [
+            "真实Pi按结果契约返回澄清，独立回读summary和A2UI；人用文字答复。",
+            "核V2 goal、exact wait、两个不同Run/进程、实际输入和已有副作用未重做。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-amend-updates-goal",
+          "title": "文字改变原要求",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "目标版本先更新，再按完整新要求执行；旧卡不能覆盖新目标。"
+          ],
+          "method": [
+            "待确认时说“先别发，给我看简短版”；之后重投原卡回调。",
+            "核amendment原话、goal revision、fresh Run与对外发送零效果；跨旧完成时间观察。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-optional-followup-new-goal",
+          "title": "完成后的下一步可以不选择",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "原工作完成；不选不额外运行；选后新事项关联旧结果。"
+          ],
+          "method": [
+            "真实Pi完成后给可选清单/摘要；先不选，随后明确选择。",
+            "检查原goal终态、零自动Run、新Task builds_on、完整既有结果复用与实际交付。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-stale-question-suppressed",
+          "title": "停止后不再发送旧问题",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "发送前目标/版本变化抑制排队卡；迟到答复不复活工作。"
+          ],
+          "method": [
+            "已结束Run确有必需human_input wait时，由原真人source-bound停止事项，再在真实客户端提交旧卡；暂停发送的故障模拟另列。",
+            "验证BeforeSend、stop/goal事实、response_action及无新Run；实际客户端路径另验。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-unknown-card-send-no-resubmit",
+          "title": "发卡结果未知不重复发",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "ACK不是人已收到；未知提交不盲重发；早答案不被晚发送回执覆盖。"
+          ],
+          "method": [
+            "隔离provider故障注入提交后断线及early callback；实际IM independently读回。",
+            "核response_action、question/answer与provider真实回执，缺消息ID时不算delivered。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        }
+      ]
+    }
+  ]
+}

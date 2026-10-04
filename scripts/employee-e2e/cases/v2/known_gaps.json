@@ -1,0 +1,27 @@
+{
+  "schema": "el2e.known_gaps.v1",
+  "note": "Generated from cases/v2/*.json known_gap fields by `e2e.py v2 sync-gaps`. A gap that passes must be removed from its case in the same change.",
+  "gaps": {
+    "G-01": "group_all_delivery：前两句不投递（DS-07 同类）",
+    "G-02": "group_all_delivery（DS-17：第二位 @ 本身可处理）",
+    "G-03": "group_all_delivery（N3）",
+    "G-04": "group_all_delivery：沉默半空检（DS-10）",
+    "G-05": "group_all_delivery：前文不投递",
+    "G-06": "group_all_delivery：不重复半空检（DS-11）",
+    "G-07": "no proactive participation（DS-09）",
+    "G-10": "group_all_delivery：前情不投递",
+    "G-14": "group_all_delivery + event_trigger",
+    "G-15": "seg2：跨 24h 的群约定召回（memory-design）",
+    "G-16": "group_all_delivery：没 @ 的追问",
+    "G-18": "group_all_delivery：看不到真人抢答",
+    "C-15": "跨 24h 起草内容召回",
+    "C-16": "MEM-02：G2/G3 未交付",
+    "P-02": "group_all_delivery：旁听才知道的人事变动",
+    "P-06": "third_party_at：群回复只 @ 发信人",
+    "P-08": "person_memory：按人跨场域偏好（memory-design 待定）",
+    "P-15": "cross_scene_self（G4）",
+    "P-17": "cross_scene_self：本人授权的去向转达",
+    "T-05": "G5 builds_on 未上预发",
+    "T-13": "P3 follow_up_steps 未上预发"
+  }
+}

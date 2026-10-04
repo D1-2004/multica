@@ -192,7 +192,10 @@ func TestBuildNativeDispatchCommandSkips(t *testing.T) {
 		{"no message id", dws.EventIMAt, func(m *dwsevents.MessageEvent) { m.MessageID = "" }, "missing_message_reference"},
 		{"no conversation", dws.EventIMAllSingleChats, func(m *dwsevents.MessageEvent) { m.ConversationID = "" }, "missing_message_reference"},
 		{"single chat without sender", dws.EventIMAllSingleChats, func(m *dwsevents.MessageEvent) { m.SenderOpenDingTalkID = "" }, "missing_sender"},
-		{"unsubscribed key", dws.EventIMAllGroups, func(*dwsevents.MessageEvent) {}, "unsupported_event_key"},
+		// receive_group_all builds only the Host's proactive wakes; a key
+		// nothing subscribes is still skipped.
+		{"unsubscribed key", dws.EventIMGroup, func(*dwsevents.MessageEvent) {}, "unsupported_event_key"},
+		{"proactive group line without sender", dws.EventIMAllGroups, func(m *dwsevents.MessageEvent) { m.SenderOpenDingTalkID = "" }, "missing_sender"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := nativeUnitMessage()
@@ -378,6 +381,7 @@ type fakeNativeDispatchStore struct {
 	fakeEligibilityStore
 	ownerAgent    string // "" = the Router owns the account
 	selfOpenID    string
+	enabledAt     time.Time
 	ownMessages   map[string]bool
 	recentReplies map[string]bool // conversation + "\x00" + trimmed text
 	learned       []string
@@ -388,7 +392,10 @@ func (f *fakeNativeDispatchStore) GetDWSNativeAccountOwner(_ context.Context, p 
 	if f.ownerAgent == "" || p.DwsUid != nativeUnitUID || p.OrgID != nativeUnitOrg {
 		return db.GetDWSNativeAccountOwnerRow{}, pgx.ErrNoRows
 	}
-	return db.GetDWSNativeAccountOwnerRow{AgentID: parseUUID(f.ownerAgent), WorkspaceID: parseUUID(nativeTestWorkspace), SelfOpenDingtalkID: f.selfOpenID}, nil
+	return db.GetDWSNativeAccountOwnerRow{
+		AgentID: parseUUID(f.ownerAgent), WorkspaceID: parseUUID(nativeTestWorkspace), SelfOpenDingtalkID: f.selfOpenID,
+		EnabledAt: pgtype.Timestamptz{Time: f.enabledAt, Valid: !f.enabledAt.IsZero()},
+	}, nil
 }
 
 func (f *fakeNativeDispatchStore) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
@@ -430,7 +437,14 @@ func acceptNativeUnit(t *testing.T, store *fakeNativeDispatchStore, m *dwsevents
 
 func acceptNativeUnitKey(t *testing.T, store *fakeNativeDispatchStore, m *dwsevents.MessageEvent, key string) {
 	t.Helper()
+	acceptNativeUnitAt(t, store, m, key, time.UnixMilli(nativeUnitMessage().EventTime).Add(time.Minute))
+}
+
+func acceptNativeUnitAt(t *testing.T, store *fakeNativeDispatchStore, m *dwsevents.MessageEvent, key string, now time.Time) {
+	t.Helper()
 	nativeDispatchLoops = newNativeLoopBreaker(nativeLoopLimit, nativeLoopWindow)
+	nativeClock = func() time.Time { return now }
+	t.Cleanup(func() { nativeClock = time.Now })
 	h := &Handler{dwsNativeDispatch: store}
 	identity := dwsclient.Identity{AgentID: nativeUnitAgent, UID: nativeUnitUID, OrgID: nativeUnitOrg}
 	if err := h.acceptNativeMessage(context.Background(), identity, dwsevents.Event{ID: "ev-1", Key: key}, m); err != nil {
@@ -553,6 +567,40 @@ func TestAcceptNativeMessageSelfLoopGuards(t *testing.T) {
 	})
 }
 
+// A backlog DWS replays once a stream connects is acknowledged unanswered:
+// messages sent before this agent subscribed the account, and messages older
+// than nativeMessageMaxAge. A short outage's late messages are still answered.
+func TestAcceptNativeMessageSkipsReplayedBacklog(t *testing.T) {
+	sent := time.UnixMilli(nativeUnitMessage().EventTime)
+	for _, tt := range []struct {
+		name       string
+		subscribed time.Time
+		now        time.Time
+		eventTime  int64 // 0 keeps the message's own
+		reaches    bool
+	}{
+		{name: "fresh message", subscribed: sent.Add(-time.Hour), now: sent.Add(time.Minute), reaches: true},
+		{name: "late after a short outage", subscribed: sent.Add(-time.Hour), now: sent.Add(9 * time.Minute), reaches: true},
+		{name: "replayed backlog", subscribed: sent.Add(-time.Hour), now: sent.Add(21 * time.Minute)},
+		{name: "sent before the subscription", subscribed: sent.Add(2 * time.Minute), now: sent.Add(3 * time.Minute)},
+		{name: "subscribed just after sending (clock skew)", subscribed: sent.Add(20 * time.Second), now: sent.Add(time.Minute), reaches: true},
+		{name: "no send time is never stale", eventTime: -1, now: sent.Add(time.Hour), reaches: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := nativeUnitStore()
+			store.enabledAt = tt.subscribed
+			m := nativeUnitMessage()
+			if tt.eventTime < 0 {
+				m.EventTime, m.Timestamp = 0, 0
+			}
+			acceptNativeUnitAt(t, store, m, dws.EventIMAllSingleChats, tt.now)
+			if (store.endpointReads > 0) != tt.reaches {
+				t.Fatalf("endpoint reads = %d, want dispatch attempted %v", store.endpointReads, tt.reaches)
+			}
+		})
+	}
+}
+
 // More than six distinct native dispatches in a minute for one conversation
 // is treated as a loop; redeliveries and other conversations do not count.
 func TestNativeLoopBreaker(t *testing.T) {
@@ -583,6 +631,7 @@ func TestNativeLoopBreaker(t *testing.T) {
 	for i := 0; i <= nativeLoopLimit; i++ {
 		m := nativeUnitMessage()
 		m.MessageID = fmt.Sprintf("loop-%d", i)
+		m.EventTime = time.Now().UnixMilli()
 		if err := h.acceptNativeMessage(context.Background(), identity, dwsevents.Event{ID: m.MessageID, Key: dws.EventIMAt}, m); err != nil {
 			t.Fatal(err)
 		}

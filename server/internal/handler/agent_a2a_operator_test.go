@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 )
 
@@ -226,7 +227,7 @@ func signedAgentA2AForwardRegistration(t *testing.T, secret string, body map[str
 	request := httptest.NewRequest(http.MethodPost, agentA2AForwardRegistrationPath, bytes.NewReader(raw))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(agentA2AForwardTimestampHeader, timestamp)
-	request.Header.Set(agentA2AForwardSignatureHeader, signAgentA2AForwardRegistration([]byte(secret), timestamp, raw))
+	request.Header.Set(agentA2AForwardSignatureHeader, forwarding.SignRegistration([]byte(secret), timestamp, raw))
 	return request
 }
 
@@ -550,7 +551,7 @@ func TestAgentA2AForwardRegistrantRegistersAndWithdraws(t *testing.T) {
 	registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		timestamp := r.Header.Get(agentA2AForwardTimestampHeader)
-		expected := signAgentA2AForwardRegistration([]byte(agentA2AForwardTestSecret), timestamp, body)
+		expected := forwarding.SignRegistration([]byte(agentA2AForwardTestSecret), timestamp, body)
 		var request agentA2AForwardRegistrationRequest
 		_ = json.Unmarshal(body, &request)
 		mu.Lock()

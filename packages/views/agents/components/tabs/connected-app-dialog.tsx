@@ -26,6 +26,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { AtlassianDomainNote } from "../../../common/atlassian-domain-note";
 import { ConnectorLogo, connectorBrandName } from "../../../common/connector-logo";
 import { useResetOnBackForwardRestore } from "../../../common/connector-credential";
 import { useT } from "../../../i18n";
@@ -355,6 +356,14 @@ function SharedAccountSection({
 
   return (
     <DialogSection id={`app-shared-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_shared)}>
+      {app.slug === "atlassian" ? (
+        <AtlassianDomainNote
+          body={t(($) => $.tab_body.connected_apps.atlassian_domain)}
+          copyLabel={t(($) => $.tab_body.connected_apps.domain_copy)}
+          copiedLabel={t(($) => $.tab_body.connected_apps.domain_copied)}
+          docsLabel={t(($) => $.tab_body.connected_apps.atlassian_docs)}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <span className={shared.connected ? "text-body" : "text-body text-muted-foreground"}>{status}</span>
         {fromEnvironment ? (
@@ -409,6 +418,9 @@ function SharedAccountSection({
         </p>
       ) : null}
       {app.installUrl ? <InstallLink url={app.installUrl} /> : null}
+      {app.slug === "github" && app.installUrl ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.internal_mcp.catalog.install_note)}</p>
+      ) : null}
       {patOpen ? (
         <TokenForm
           inputId={`connector-pat-${connectorId}`}
@@ -507,7 +519,7 @@ function ScopedSection({
           {app.scenes.length > 0 ? (
             <UsageList
               title={t(($) => $.tab_body.connected_apps.scenes_title)}
-              items={app.scenes.map((scene) => ({ key: scene.sceneKey, node: <SceneUsageRow scene={scene} /> }))}
+              items={app.scenes.map((scene) => ({ key: scene.sceneId, node: <SceneUsageRow scene={scene} /> }))}
             />
           ) : null}
           {app.persons.length > 0 ? (

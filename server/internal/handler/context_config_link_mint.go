@@ -5,25 +5,29 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Configuration links are minted in one place for both issuers: the
-// executor's create_context_config_link tool (a running task) and the
-// Coordinator's capability answer (an inbound turn, before any task exists).
-// Scope rules, lifetimes, single use and the audit line stay the same.
+// Configuration links are minted in one place for every issuer: the
+// executor's create_context_config_link and scene_connect_link tools (a
+// running task) and the Coordinator's capability answer (an inbound turn,
+// before any task exists). Scope rules, lifetimes and the audit line stay the
+// same.
 
 // Issuer labels in the "configuration link issued" audit line.
 const (
 	contextConfigLinkIssuerTaskTool    = "task_tool"
 	contextConfigLinkIssuerCoordinator = "coordinator"
+	contextConfigLinkIssuerEmployee    = "employee"
 )
 
 // contextConfigLinkPagePath is the configure page a link opens; the bearer
@@ -32,7 +36,7 @@ const contextConfigLinkPagePath = inboundcoord.ConfigLinkPagePath
 
 // redactContextConfigLinks removes configuration link URLs (plain or
 // percent-encoded) from text that is stored beyond the delivery path: a link
-// is a bearer token (a personal one hands over that person's scope), so the
+// is a bearer token (it hands over its conversation's configuration), so the
 // Coordinator transcript, which managers and allow-listed members can read
 // and the Coordinator rereads as history, keeps only a placeholder. The
 // DingTalk reply keeps the link, and so do the executor task's own messages:
@@ -47,20 +51,50 @@ type contextConfigLinkMint struct {
 	WorkspaceID string
 	AgentID     string
 	Scope       contextcap.Scope
-	// RequestedScope is "", scene or person; "" picks scene in a group and
-	// person in a positively 1:1 chat.
-	RequestedScope string
 	// Origin is the app origin without a trailing slash.
 	Origin string
 	// SourceTaskID is the minting task; the Coordinator has none.
-	SourceTaskID string
-	Issuer       string
-	CoordTraceID string
+	SourceTaskID  string
+	Issuer        string
+	CoordTraceID  string
+	EmployeeJobID string
+	// Tab is the configure page tab the link opens ("" for the default).
+	Tab string
+	// HostAppended: the Host itself appends the link to the reply (the
+	// Coordinator's and the Employee foreground's capability answers) and
+	// keeps it out of every stored transcript. Only such a link of a 1:1
+	// chat carries the chat's person: an executor's tool result lands in its
+	// task messages, which members who may read the run can see.
+	HostAppended bool
+}
+
+// contextConfigLinkTabs are the configure page tabs a link may open
+// (CONTEXT_CONFIG_TABS in packages/views/dingtalk/context-config-page.tsx).
+var contextConfigLinkTabs = []string{"scope", "routines"}
+
+// contextConfigLinkTab checks a requested tab: "" or one of
+// contextConfigLinkTabs. "public" (the removed 公开能力 tab) still opens the
+// default tab, so a run that listed the tools before the change does not fail.
+func contextConfigLinkTab(tab string) (string, error) {
+	tab = strings.TrimSpace(tab)
+	if tab == "public" {
+		return "", nil
+	}
+	if tab == "" || slices.Contains(contextConfigLinkTabs, tab) {
+		return tab, nil
+	}
+	return "", &multicaMCPToolCallError{message: "tab must be one of " + strings.Join(contextConfigLinkTabs, ", ")}
 }
 
 // contextConfigLinkOrigin returns the app origin configuration pages are
 // served from.
 func (h *Handler) contextConfigLinkOrigin() (string, error) {
+	if base := h.currentConfig().ForwardPublicBaseURL; base != "" {
+		if _, _, err := forwarding.ParsePublicBase(base); err != nil {
+			return "", err
+		}
+		return base, nil
+	}
 	origin := strings.TrimRight(firstNonEmpty(h.currentConfig().AppURL, h.currentConfig().FrontendOrigin), "/")
 	if origin == "" {
 		return "", &multicaMCPToolCallError{message: "the app URL is not configured, so no configuration link can be issued"}
@@ -68,56 +102,49 @@ func (h *Handler) contextConfigLinkOrigin() (string, error) {
 	return origin, nil
 }
 
-// mintContextConfigLink stores a configuration link for the scene or trigger
-// person of a dispatch scope and returns its page URL. The scope must come
-// from the server-written dispatch context, never from a model or a prompt.
+// mintContextConfigLink stores a configuration link for the conversation
+// scene of a dispatch scope and returns its page URL. The link is keyed by
+// the scene_id the dispatch resolved from the conversation's
+// openConversationId (docs/agent-scene.md §1, §5). A 1:1 chat's link that
+// the Host appends itself (in.HostAppended) also carries the chat's person
+// (the scope's trigger person, keyed by contextcap.TriggerPersonKey: the
+// staffId, else the openDingTalkId) and opens their own level (个人能力) for
+// the first DingTalk account that opens it within LinkTTLPerson: only the
+// person reads the chat it is posted in. A group's link never carries a
+// person, nor does a link an executor's tool returns. The scope must come from the server-written dispatch
+// context, never from a model or a prompt, and its scene has already passed
+// the use-time fence (taskContextScope).
 func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLinkMint) (multicaMCPContextConfigLinkResult, error) {
 	scope := in.Scope
-	// A personal link is single use but readable by everyone in the chat it
-	// is posted to, so it is only issued into a conversation that is
-	// positively 1:1 (the dispatcher's DM allow-list). Empty or unknown
-	// conversation types are treated as shared.
-	direct := contextcap.IsDirectConversationType(scope.ConversationType)
-	scopeType := in.RequestedScope
-	if scopeType == "" {
-		scopeType = contextcap.ScopeScene
-		if direct {
-			scopeType = contextcap.ScopePerson
-		}
+	if !scope.HasScene() {
+		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run did not come from a DingTalk group or 1:1 chat of this agent, so there is no conversation to configure."}
+	}
+	summary, err := contextcap.GetScene(ctx, h.DB, in.WorkspaceID, in.AgentID, scope.OrgID, scope.SceneID)
+	if errors.Is(err, contextcap.ErrNotFound) || errors.Is(err, contextcap.ErrInvalidInput) {
+		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This conversation is no longer one of this agent's scenes, so there is nothing to configure."}
+	}
+	if err != nil {
+		return multicaMCPContextConfigLinkResult{}, err
 	}
 	link := contextcap.Link{
 		WorkspaceID:  in.WorkspaceID,
 		AgentID:      in.AgentID,
-		ScopeType:    scopeType,
+		ScopeType:    contextcap.ScopeScene,
 		OrgID:        scope.OrgID,
+		ScopeKey:     scope.SceneID,
+		ScopeTitle:   firstNonEmpty(scope.SceneTitle, agentSceneTitle(summary)),
 		SourceTaskID: in.SourceTaskID,
 	}
-	switch scopeType {
-	case contextcap.ScopeScene:
-		if !scope.HasScene() {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run did not come from a DingTalk group chat, so there is no group to configure. In a 1:1 chat with the user, use scope=person."}
-		}
-		link.ScopeKey = scope.SceneKey
-		link.ScopeTitle = scope.SceneTitle
-		if link.ScopeTitle == "" {
-			if title, found, err := h.contextCapGroupSceneTitle(ctx, link.WorkspaceID, in.AgentID, scope.OrgID, scope.SceneKey); err == nil && found {
-				link.ScopeTitle = title
-			}
-		}
-	case contextcap.ScopePerson:
-		if !direct {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "Personal configuration links are only issued in a 1:1 chat, because everyone in a shared conversation could open them. Ask the user to message you privately (私聊) and request the personal link there."}
-		}
-		if !scope.HasPerson() {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run has no single identifiable DingTalk sender, so no personal configuration link can be issued. Ask the user to message you privately (私聊)."}
-		}
-		link.ScopeKey = scope.PersonKey
-		link.ScopeTitle = scope.PersonName
-		// A 1:1 chat is a scene too: redeeming this link also grants the
-		// person that DM scene (configuration only this round).
-		link.ExtraSceneKey = scope.DirectSceneKey
-	default:
-		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: `scope must be "scene" or "person"`}
+	includesPerson := in.HostAppended && summary.Kind == contextcap.SceneKindDM && scope.HasPerson() &&
+		(contextcap.IsDirectConversationType(scope.ConversationType) || scope.ConversationType == contextcap.SceneKindDM)
+	personHash := ""
+	if includesPerson {
+		// The chat's link as a person link with the chat as its extra
+		// scene: redeeming grants the chat and, for its first account, the
+		// person (RedeemContextConfigLink).
+		link.ScopeType, link.ScopeKey, link.ExtraSceneID = contextcap.ScopePerson, scope.PersonKey, scope.SceneID
+		link.ScopeTitle = firstNonEmpty(scope.PersonName, link.ScopeTitle)
+		personHash = personKeyHash(scope.PersonKey)
 	}
 
 	token, err := contextcap.NewLinkToken()
@@ -125,19 +152,28 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	link.TokenHash = contextcap.HashLinkToken(token)
-	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTL(scopeType))
+	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTL(link.ScopeType))
 	if err != nil {
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	pageURL := in.Origin + contextConfigLinkPagePath + url.QueryEscape(token)
+	if in.Tab != "" {
+		// After the token, so link redaction (the path prefix + token)
+		// still matches.
+		pageURL += "&tab=" + url.QueryEscape(in.Tab)
+	}
 	slog.InfoContext(ctx, "context capabilities: configuration link issued",
-		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", scopeType,
-		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID)
+		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", link.ScopeType,
+		"scene_id", scope.SceneID, "scene_kind", summary.Kind, "includes_person", includesPerson,
+		"person_key_hash", personHash,
+		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID, "employee_job_id", in.EmployeeJobID)
 	return multicaMCPContextConfigLinkResult{
-		URL:         pageURL,
-		DingTalkURL: "dingtalk://dingtalkclient/page/link?url=" + url.QueryEscape(pageURL) + "&pc_slide=true",
-		Scope:       scopeType,
-		ExpiresAt:   stored.ExpiresAt.UTC().Format(time.RFC3339),
+		URL:            pageURL,
+		DingTalkURL:    inboundcoord.ConfigLinkDeepLink(pageURL),
+		Scope:          contextcap.ScopeScene,
+		SceneKind:      summary.Kind,
+		ExpiresAt:      stored.ExpiresAt.UTC().Format(time.RFC3339),
+		IncludesPerson: includesPerson,
 	}, nil
 }
 
@@ -151,10 +187,10 @@ func NewCoordinatorConfigLinkIssuer(h *Handler) inboundcoord.ConfigLinkIssuer {
 	return coordinatorConfigLinkIssuer{h: h}
 }
 
-// IssueConfigLink resolves the turn's scene/person exactly as for a task
-// carrying the same dispatch context (taskContextScope: A2A, rerun and org
-// rules included) and mints the default link for that conversation: the
-// scene link in a group, the personal link in a 1:1 chat.
+// IssueConfigLink resolves the turn's scene exactly as for a task carrying
+// the same dispatch context (taskContextScope: A2A, rerun, org and scene
+// fence rules included) and mints that conversation's scene link, in a group
+// and in a 1:1 chat alike.
 func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req inboundcoord.ConfigLinkRequest) (inboundcoord.ConfigLink, error) {
 	h := i.h
 	if h == nil || h.Queries == nil || h.DB == nil {
@@ -188,6 +224,7 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 		Scope:        scope,
 		Origin:       origin,
 		Issuer:       contextConfigLinkIssuerCoordinator,
+		HostAppended: true,
 		CoordTraceID: strings.TrimSpace(req.TraceID),
 	})
 	if err != nil {
@@ -204,8 +241,17 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 	return inboundcoord.ConfigLink{
 		URL:       result.URL,
 		Scope:     result.Scope,
-		ValidFor:  contextcap.LinkTTL(result.Scope),
-		SingleUse: result.Scope == contextcap.ScopePerson,
+		SceneKind: result.SceneKind,
+		ValidFor:  configLinkValidFor(result),
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+// configLinkValidFor is how long a minted link stays usable: a 1:1 chat's
+// link that carries its person lives as long as a person link.
+func configLinkValidFor(result multicaMCPContextConfigLinkResult) time.Duration {
+	if result.IncludesPerson {
+		return contextcap.LinkTTLPerson
+	}
+	return contextcap.LinkTTL(result.Scope)
 }

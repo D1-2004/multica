@@ -153,6 +153,9 @@ func BuildPrompt(task Task, provider string) string {
 }
 
 func buildPromptBody(task Task, provider string) string {
+	if task.DirectTaskPrompt != "" {
+		return task.DirectTaskPrompt + "\n"
+	}
 	if task.ChatSessionID != "" {
 		return buildChatPromptForProvider(task, provider)
 	}

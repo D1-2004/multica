@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
@@ -50,6 +51,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 
 			tokenString, fromCookie := extractToken(r)
 			if tokenString == "" {
+				if sess, ok := sceneConfigSession(r); ok {
+					r.Header.Set("X-User-ID", sess.UserID)
+					r.Header.Set("X-Auth-Method", auth.SceneSessionAuthMethod)
+					next.ServeHTTP(w, r.WithContext(auth.WithSceneSession(r.Context(), sess)))
+					return
+				}
 				slog.Debug("auth: no token found", "path", r.URL.Path)
 				http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 				return
@@ -80,7 +87,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				hash := auth.HashToken(tokenString)
 				tt, err := queries.GetTaskTokenByHash(r.Context(), hash)
 				if err != nil {
-					slog.Warn("auth: invalid task token", "path", r.URL.Path, "error", err)
+					slog.Warn("auth: invalid task token", "path", protocol.RedactSceneConfigMCPPath(r.URL.Path), "error", err)
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
@@ -232,7 +239,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_disabled")
 					return
 				}
-				if !strings.HasPrefix(r.URL.Path, "/api/mcp/workspaces/") && !IsWorkspaceMCPDispatch(r.Context()) {
+				if !strings.HasPrefix(r.URL.Path, "/api/mcp/workspaces/") && !IsWorkspaceMCPDispatch(r.Context()) && !IsConnectorAppConfigPath(r.URL.Path) {
 					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_endpoint_only")
 					return
 				}
@@ -388,6 +395,17 @@ func auditWorkspaceAccessRequest(r *http.Request, queries *db.Queries, row db.Ge
 	}); err != nil {
 		slog.Warn("auth: failed to audit workspace access request", "token_id", uuidToString(row.ID), "error", err)
 	}
+}
+
+// sceneConfigSession accepts the configure-page cookie only on the context
+// capability API, and only when the request has no other credential. A
+// DingTalk JWT therefore still wins.
+func sceneConfigSession(r *http.Request) (auth.SceneSession, bool) {
+	path := r.URL.Path
+	if path != "/api/context-capabilities" && !strings.HasPrefix(path, "/api/context-capabilities/") {
+		return auth.SceneSession{}, false
+	}
+	return auth.SceneSessionFromRequest(r, time.Now())
 }
 
 // extractToken returns the bearer token and whether it came from a cookie.

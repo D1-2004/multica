@@ -1,0 +1,133 @@
+{
+  "schema": "el2e.cases.v1",
+  "suite": "MEMX-DM",
+  "source": "12-memory-design §10 (MEMX-X1/X2/P1/N1/S1/H1/SELF); M7",
+  "notes": [
+    "DMs cannot be recreated. Each DM case starts after idle_before_min (>=30 min) so the Host's segmentation separates it from earlier cases; run with --max-idle-wait or schedule DM cases between group cases.",
+    "Private memory is never readable through the management API: DM memory is asserted on what the model was shown (memory_block / history) and on replies."
+  ],
+  "defaults": {
+    "wait": {"reply": {"timeout_s": 180, "settle_s": 25}, "silence": {"window_s": 50}, "optional": {"window_s": 45, "settle_s": 15}}
+  },
+  "cases": [
+    {
+      "id": "MEMX-X1", "title": "在群里说的个人偏好，私聊里也记得", "scene": "group+dm", "conversation": "group_mem_x",
+      "roles": {"主管": "zhujue"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "pref", "actor": "主管", "at": ["employee"], "text": "记一下：我的周报以后都用{FMT}来写。", "wait": {"mode": "reply"}},
+        {"id": "ask", "actor": "主管", "conversation": "dm_zhujue", "text": "我周报一般用什么格式来着？", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "私聊里答出「{FMT}」。",
+        "checks": [
+          {"steps": ["pref"], "replies": [1, 1]},
+          {"steps": ["ask"], "replies": [1, 1], "include_all": ["{FMT}"]},
+          {"evidence": "memory_block", "step": "ask", "include": ["{FMT}"]}
+        ],
+        "semantic": ["私聊里答出本人在群里说过的周报格式 {FMT}"]
+      }
+    },
+    {
+      "id": "MEMX-X2", "title": "私聊里记的代号，群里不说", "scene": "dm+group", "conversation": "dm_zhujue",
+      "roles": {"主管": "zhujue"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "note", "actor": "主管", "text": "记一下：新门店项目的内部代号是 {CODENAME}，先别对外说。", "wait": {"mode": "optional", "window_s": 60}},
+        {"id": "ask", "actor": "主管", "conversation": "group_mem_x", "at": ["employee"], "text": "新门店项目的内部代号是啥来着？", "wait": {"mode": "reply", "timeout_s": 200, "settle_s": 40}}
+      ],
+      "judge": {
+        "criteria": "群里说不知道或请私聊问，群里不出现 {CODENAME}。",
+        "checks": [
+          {"steps": ["ask"], "replies": [1, 2], "exclude": ["{CODENAME}"]},
+          {"sentinel": "{CODENAME}", "conversations": ["group_mem_x"]},
+          {"evidence": "memory_block", "step": "ask", "exclude": ["{CODENAME}"]}
+        ],
+        "semantic": ["群里不报出私聊里记的代号，建议私聊"]
+      }
+    },
+    {
+      "id": "MEMX-P1", "title": "置顶的回复偏好，和问题不沾边也生效", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "pref", "actor": "主管", "text": "以后回复我先说结论，再展开细节，帮我记一下。", "wait": {"mode": "reply"}},
+        {"id": "ask", "actor": "主管", "text": "Quick question: if our release slips from Thursday to next Tuesday, how many working days do we lose?", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "回复第一句就是结论（3 个工作日左右，按是否含当天说明）；语言用中文，或按窗口语言并说明。",
+        "checks": [
+          {"steps": ["ask"], "replies": [1, 1]},
+          {"evidence": "memory_block", "step": "ask", "include": ["先说结论"]}
+        ],
+        "semantic": ["第一句先给结论，再展开计算", "没有因为英文提问就忽略已记下的偏好"]
+      }
+    },
+    {
+      "id": "MEMX-N1", "title": "只说 Hi 时不翻出无关的旧事", "scene": "dm", "conversation": "dm_zhujue",
+      "roles": {"主管": "zhujue"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "hi", "actor": "主管", "text": "Hi", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "简短打招呼并问来意；不提例行任务或别的旧事（对照 386b3be4）。",
+        "checks": [
+          {"steps": ["hi"], "replies": [1, 1], "max_chars": 80, "exclude": ["例行任务"]},
+          {"evidence": "memory_block", "step": "hi", "include": ["无可检索词"], "exclude": ["Unverified execution candidate"]}
+        ],
+        "semantic": ["简短问来意，没有编造或提起无关事项"]
+      }
+    },
+    {
+      "id": "MEMX-S1", "title": "同一单聊相隔半小时的两组材料不串", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30, "slow": true,
+      "steps": [
+        {"id": "set1", "actor": "主管", "text": "先记一下这组：候选 {C1}、{C2}、{C3}，回执 {G1}、{G2} 已收到。", "wait": {"mode": "optional"}},
+        {"id": "gap", "pause_s": 1860},
+        {"id": "set2", "actor": "主管", "text": "新的一组：候选 {D1}、{D2}、{D3}，回执 {DG1}、{DG2} 已收到。哪个缺回执？", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "只按新的一组答出 {DMISS}，不提 {MISS}；较早一组在历史里带分段标记。若因用词重叠失败记 known_limit，不改期望。",
+        "checks": [
+          {"steps": ["set2"], "replies": [1, 1], "include_all": ["{DMISS}"], "exclude": ["{MISS}"]},
+          {"evidence": "history", "step": "set2", "include_any": ["[Host 分段]", "较早一段"]}
+        ],
+        "semantic": ["只按新的一组回答"]
+      }
+    },
+    {
+      "id": "MEMX-H1", "title": "刚建的例行任务还没跑过时，如实说没跑过", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "create", "actor": "主管", "text": "帮我建个例行任务：每天 {HOUR}:40 提醒我写日报。", "wait": {"mode": "reply"}},
+        {"id": "created", "observe": {"since_step": "create", "until_regex": "日报", "timeout_s": 600}},
+        {"id": "ask", "actor": "主管", "text": "刚才那个日报提醒跑得怎么样了？", "wait": {"mode": "reply"}}
+      ],
+      "teardown": [
+        {"id": "cleanup", "actor": "主管", "text": "日报提醒那个例行任务先删掉吧，我自己记。", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "回答还没跑过，并说出下次运行时间（{HOUR}:40）；不编造运行结果。",
+        "checks": [
+          {"steps": ["ask"], "replies": [1, 1], "exclude": ["(已经|正常)(在)?(跑|运行)"]},
+          {"evidence": "memory_block", "step": "ask", "include": ["从未运行"]}
+        ],
+        "semantic": ["说明还没运行过，并给出下次运行时间", "没有编造运行结果"]
+      }
+    },
+    {
+      "id": "MEMX-SELF", "title": "知道自己的负责人和通讯录主管", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "owner", "actor": "主管", "text": "你的负责人是谁？", "wait": {"mode": "reply"}},
+        {"id": "boss", "actor": "主管", "text": "那你在通讯录里的主管是谁？", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "答出负责人名字；主管按通讯录回答，没登记时如实说通讯录未登记。",
+        "checks": [
+          {"steps": ["owner"], "replies": [1, 1]},
+          {"steps": ["boss"], "replies": [1, 1]},
+          {"evidence": "system_prompt", "step": "owner", "include": ["SELF PROFILE"]}
+        ],
+        "semantic": ["负责人回答与配置一致", "主管不编造；未登记时说未登记"]
+      }
+    }
+  ]
+}

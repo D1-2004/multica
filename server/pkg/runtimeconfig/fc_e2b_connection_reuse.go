@@ -1,0 +1,69 @@
+package runtimeconfig
+
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+)
+
+const (
+	// DefaultFCE2BConnectionReuseTasks is the per-sandbox concurrency when
+	// max_concurrent_tasks is omitted or zero.
+	DefaultFCE2BConnectionReuseTasks = 6
+	maxFCE2BConnectionReuseTasks     = 50
+)
+
+// FCE2BConnectionReuse is runtime.fc_e2b.connection_reuse. Only
+// MaxConcurrentTasks is consulted. Whether an agent reuses a sandbox is
+// agent.sandbox_connection_reuse, which defaults on.
+//
+// Enabled, WorkspaceIDs and AgentIDs are the earlier gray list. They stay
+// decoded, and still validated, so a document published for that list keeps
+// parsing. They do not select anyone.
+type FCE2BConnectionReuse struct {
+	Enabled bool `json:"enabled"`
+	// MaxConcurrentTasks is how many tasks may share the sandbox. Zero uses
+	// DefaultFCE2BConnectionReuseTasks. Otherwise it must be 1–50.
+	MaxConcurrentTasks int      `json:"max_concurrent_tasks,omitempty"`
+	WorkspaceIDs       []string `json:"workspace_ids,omitempty"`
+	AgentIDs           []string `json:"agent_ids,omitempty"`
+}
+
+// Concurrency is the per-sandbox task cap. Zero means the default.
+func (r FCE2BConnectionReuse) Concurrency() int {
+	if r.MaxConcurrentTasks <= 0 {
+		return DefaultFCE2BConnectionReuseTasks
+	}
+	return r.MaxConcurrentTasks
+}
+
+func (r FCE2BConnectionReuse) validate() error {
+	if r.MaxConcurrentTasks != 0 && (r.MaxConcurrentTasks < 1 || r.MaxConcurrentTasks > maxFCE2BConnectionReuseTasks) {
+		return fmt.Errorf("fc_e2b.connection_reuse.max_concurrent_tasks must be between 1 and %d", maxFCE2BConnectionReuseTasks)
+	}
+	for _, list := range []struct {
+		name string
+		ids  []string
+	}{{"workspace_ids", r.WorkspaceIDs}, {"agent_ids", r.AgentIDs}} {
+		if err := validateUnique("fc_e2b.connection_reuse."+list.name, list.ids, false); err != nil {
+			return err
+		}
+		for _, id := range list.ids {
+			parsed, err := uuid.Parse(id)
+			if err != nil || parsed == uuid.Nil || parsed.String() != id {
+				return fmt.Errorf("fc_e2b.connection_reuse.%s contains invalid canonical UUID %q", list.name, id)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *FCE2BConnectionReuse) clone() *FCE2BConnectionReuse {
+	if r == nil {
+		return nil
+	}
+	out := *r
+	out.WorkspaceIDs = append([]string(nil), r.WorkspaceIDs...)
+	out.AgentIDs = append([]string(nil), r.AgentIDs...)
+	return &out
+}

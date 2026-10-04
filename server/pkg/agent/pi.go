@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -264,6 +265,8 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
 	hideAgentWindow(cmd)
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { signalProcessGroup(cmd.Process, syscall.SIGKILL); return nil }
 	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
 	cmd.WaitDelay = 10 * time.Second
 	if opts.Cwd != "" {
@@ -337,6 +340,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		var output strings.Builder
 		finalStatus := "completed"
 		var finalError string
+		var lastAssistant *piMessage
 		usage := make(map[string]TokenUsage)
 
 		// Pi message_update events can be large (they embed the full message
@@ -356,7 +360,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 			switch evt.Type {
 			case "agent_start":
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionPath})
 
 			case "turn_start":
 				output.Reset()
@@ -370,7 +374,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 				case "text_delta":
 					if d := drainPiTextBuffer(&textBuffer, evt.AssistantMessageEvent.Delta); d != "" {
 						output.WriteString(d)
-						trySend(msgCh, Message{Type: MessageText, Content: d})
+						trySend(msgCh, Message{Type: MessageText, Content: d, Phase: "delta"})
 					}
 				case "thinking_delta":
 					if d := evt.AssistantMessageEvent.Delta; d != "" {
@@ -397,8 +401,26 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 					Output: decodePiResult(evt.Result),
 				})
 
+			case "message_end":
+				if msg := decodePiMessage(evt.Message); msg != nil && msg.Role == "assistant" {
+					lastAssistant = msg
+				}
+
+			case "agent_end":
+				for i := len(evt.Messages) - 1; i >= 0; i-- {
+					if msg := decodePiMessage(evt.Messages[i]); msg != nil && msg.Role == "assistant" {
+						lastAssistant = msg
+						break
+					}
+				}
+
 			case "turn_end":
-				if msg := decodePiMessage(evt.Message); msg != nil && msg.Usage != nil {
+				trySend(msgCh, Message{Type: MessageStatus, Status: "turn_complete", SessionID: sessionPath})
+				msg := decodePiMessage(evt.Message)
+				if msg != nil && msg.Role == "assistant" {
+					lastAssistant = msg
+				}
+				if msg != nil && msg.Usage != nil {
 					model := msg.Model
 					if model == "" {
 						model = opts.Model
@@ -435,10 +457,11 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 		if d := flushPiTextBuffer(&textBuffer); d != "" {
 			output.WriteString(d)
-			trySend(msgCh, Message{Type: MessageText, Content: d})
+			trySend(msgCh, Message{Type: MessageText, Content: d, Phase: "delta"})
 		}
 
 		waitErr := cmd.Wait()
+		processGroupStopped := finishProcessGroup(cmd.Process)
 		duration := time.Since(startTime)
 
 		// Wait closes the process pipes, so a prompt write still blocked when the
@@ -458,8 +481,32 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("%s prompt write failed: %v", label, writeErr)
 		}
+		// Pi JSON mode can exit zero after an assistant error (including a
+		// non-retryable HTTP 401). Use the final assistant state, not text
+		// presence. A later successful automatic retry replaces an earlier
+		// error; a successful quiet or tool-only turn remains completed.
+		assistantFailed := false
+		if finalStatus == "completed" && lastAssistant != nil {
+			switch lastAssistant.StopReason {
+			case "error":
+				finalStatus = "failed"
+				assistantFailed = true
+			case "aborted":
+				finalStatus = "aborted"
+				assistantFailed = true
+			}
+			if assistantFailed {
+				finalError = redact.Text(strings.TrimSpace(lastAssistant.ErrorMessage))
+				if finalError == "" {
+					finalError = fmt.Sprintf("%s request %s", label, lastAssistant.StopReason)
+				}
+			}
+		}
 		if finalError != "" {
 			finalError = withAgentStderr(finalError, label, redact.Text(stderrBuf.Tail()))
+		}
+		if assistantFailed {
+			trySend(msgCh, Message{Type: MessageError, Content: finalError})
 		}
 
 		b.cfg.Logger.Info(label+" finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
@@ -471,12 +518,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionPath,
-			Usage:      usage,
+			ProcessGroupStopped: processGroupStopped,
+			Status:              finalStatus,
+			Output:              output.String(),
+			Error:               finalError,
+			DurationMs:          duration.Milliseconds(),
+			SessionID:           sessionPath,
+			Usage:               usage,
 		}
 	}()
 
@@ -504,6 +552,8 @@ type piStreamEvent struct {
 
 	// error: Message is a string. turn_end: Message is an object.
 	Message json.RawMessage `json:"message,omitempty"`
+	// agent_end carries the completed messages, including assistant failures.
+	Messages []json.RawMessage `json:"messages,omitempty"`
 
 	// auto_retry_end
 	Success    bool   `json:"success,omitempty"`
@@ -516,9 +566,11 @@ type piAssistantMessageEvent struct {
 }
 
 type piMessage struct {
-	Role  string   `json:"role,omitempty"`
-	Model string   `json:"model,omitempty"`
-	Usage *piUsage `json:"usage,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Usage        *piUsage `json:"usage,omitempty"`
+	StopReason   string   `json:"stopReason,omitempty"`
+	ErrorMessage string   `json:"errorMessage,omitempty"`
 }
 
 type piUsage struct {

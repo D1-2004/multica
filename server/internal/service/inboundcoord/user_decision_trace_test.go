@@ -14,7 +14,7 @@ import (
 func TestUserDecisionChoiceTraceUsesFrozenQuestionAndAcceptedChoice(t *testing.T) {
 	client, exporter := langfuseTestClient(t)
 	c := &Coordinator{Langfuse: client}
-	turn := Turn{TraceID: "12345678-1234-1234-1234-123456789abc", Source: SourceDigitalEmployee, ConversationID: "cid", SenderName: "test"}
+	turn := Turn{TraceID: "12345678-1234-1234-1234-123456789abc", Source: SourceDigitalEmployee, SceneID: testSceneID("cid"), ConversationID: "cid", SenderName: "test"}
 	root := c.startTurnTrace(context.Background(), turn, time.Now())
 	snapshot := UserDecisionSnapshot{Turn: turn, DecisionID: "decision", TraceRootSpanID: root.RootSpanID()}
 	raw, _ := json.Marshal(snapshot)

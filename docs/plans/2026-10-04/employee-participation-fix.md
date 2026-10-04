@@ -1,0 +1,15 @@
+# 持续安静修复合同
+
+参考 `/Users/yuanzhan/github/gawkbot@71e82a1809565281cbd0bf8185d3c125b715d934`：`internal/team/broker_office_channels.go:DisabledMembers` 区分未加入和明确禁用；`internal/team/notifier_targets.go:taskNotificationTargets` 使显式@也尊重禁用。采用频道级持久控制和投递前检查，不复制其进程内mutex/SQLite，不引入中文关键词识别器。
+
+按workspace/agent/tenant/scene_id持久化，模型用原生 `set_scene_participation` 写入quiet/active，Host验证当前source、外层instruction_quote和use-time权限；发起者唯一能恢复，不根据显示名、历史quote或另一个机器人发言解除。适用于group/dm的前台与proactive会话回复；后台Task继续执行、其已授权通知和routine不取消，此工具不能停任务。
+
+quiet允许发起者当前消息进入模型识别恢复，只有set_scene_participation/stay_quiet，不先回复再写状态。其他账号消息仍摄入，但wake确定性Quiet、0模型/0任务/0回复。恢复当前明确要求回应可视为重新点名；不响应仅引用旧恢复台词。首次pause ACK允许投递，其他处于quiet的普通前台结果在outbox入账前压制；已经由provider接受的发送不保证撤回。控制变更与工具journal同事务，source replay不增revision，不改冻结input/outcome。旧snapshot不能凭旧工具清单绕过新Host控制。
+
+独立数据库表，无FK，独立单语句CONCURRENTLY唯一索引；workspace删除显式清理。epoch18只在所有副本支持时生产/恢复，遵循现有exact marker合同。历史proactive关键词检查不再承担授权解除，以持久状态为唯一事实。未部署不改变预发。
+
+验证：pause ACK→另一账号引用→Quiet→发起者resume→恢复答复；精确scope隔离、冒充/历史quote、journal重放revision不增与投递前压制。独立DB/fake模型验证机制；真实模型选择和IM未验，不写E2E通过。
+
+实现与边界回填：新增ActionInput.employee_message_job_id由前台Host冻结；BeforeSend验证精确completed message job、scope和sceneNotice来源，并抑制尚未provider提交的旧回复。旧普通job UUID notice也受控。已accepted/unknown远端请求不能撤回。同步Router callback只在outbox入账时检查，没有后续provider提交门；旧多receipt hash且无新job字段的action亦不能保证覆盖。这些不冒称已修，原G08 native链已覆盖，callback扩展另列，不新增另一模块。后台Task通知不静音，routine配置不变。
+
+本轮补充批量原子前置检查：set_scene_participation声明Exclusive，Loop在任一Host调用前拒绝包含其他工具的batch，避免先派工作再暂停的部分效果。其他工具默认false，原多任务批量行为保留。控制Receipt使用scene-participation前缀，避免Job UUID被日志误当Run；ACK不虚构“后台已开始任务”。

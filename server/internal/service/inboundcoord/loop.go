@@ -762,6 +762,7 @@ func coordinatorLogIndex(turn Turn) []any {
 	}
 	return []any{
 		"coord_trace_id", strings.TrimSpace(turn.TraceID),
+		"scene_id", strings.TrimSpace(turn.SceneID),
 		"conversation_id", strings.TrimSpace(turn.ConversationID),
 		"conversation_name", conversationName(turn),
 		"conversation_kind", kind,

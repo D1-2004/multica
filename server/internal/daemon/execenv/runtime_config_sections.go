@@ -877,6 +877,16 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	writeDeliveryInvariant(b)
 }
 
+// buildDirectTaskBrief keeps the execution surface separate from platform
+// workflows. Agent and context instructions are preserved without text filtering.
+func buildDirectTaskBrief(provider string, ctx TaskContextForEnv) string {
+	var b strings.Builder
+	writeAgentIdentity(&b, ctx)
+	writeWorkspaceContext(&b, ctx)
+	writeSkills(&b, provider, ctx)
+	return b.String()
+}
+
 // buildMetaSkillContentSlim is the post-MUL-3560 brief assembler.
 // Called from buildMetaSkillContent (runtime_config.go). The
 // `runtime_brief_slim` flag that once gated it was retired in MUL-4297.
@@ -906,6 +916,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 	kind := classifyTask(ctx)
+	if kind == kindEmployeeDirect {
+		return buildDirectTaskBrief(provider, ctx)
+	}
 
 	// Session Continuity Notice, Task Initiator and Connected Apps used to be
 	// rendered here. They are per-run values, so emitting them into this file

@@ -24,6 +24,7 @@
     "./my-issues": "./my-issues/index.ts",
     "./skills": "./skills/index.ts",
     "./dsh-plugins": "./dsh-plugins/index.ts",
+    "./tag": "./tag/index.ts",
     "./product-features": "./product-features/index.ts",
     "./rich-content": "./rich-content/index.ts",
     "./agents": "./agents/index.ts",

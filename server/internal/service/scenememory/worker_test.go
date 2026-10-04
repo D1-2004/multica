@@ -13,7 +13,7 @@ type stubFlusher struct {
 	err error
 }
 
-func (s stubFlusher) Flush(context.Context, db.SceneMemory) error {
+func (s stubFlusher) Flush(context.Context, Memory) error {
 	return s.err
 }
 

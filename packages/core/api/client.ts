@@ -2,7 +2,10 @@ import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, Save
 import {
   AddedCatalogConnectorSchema,
   ConnectorAuthorizeUrlSchema,
+  EMPTY_CONTEXT_GITHUB_INSTALLATIONS,
+  ContextGitHubInstallationsSchema,
   InternalConnectorToolsRefreshSchema,
+  type ContextGitHubInstallations,
   type InternalConnectorToolsRefresh,
 } from "./internal-connector-schema";
 import {
@@ -15,6 +18,13 @@ import {
   ContextNodeGrantsRevokedSchema,
   ContextNodeMcpConfigResponseSchema,
   ContextPromptComponentsResponseSchema,
+  ContextRoutineEnvelopeSchema,
+  ContextRoutineRunEnvelopeSchema,
+  ContextConfigOAuthAppSchema,
+  AddContextConfigAppResponseSchema,
+  ContextRoutineRunsListSchema,
+  ContextRoutineWriteSchema,
+  ContextRoutinesListSchema,
   EMPTY_AGENT_SCENES_PAGE,
   EMPTY_AGENT_TENANTS,
   ConnectedAppDetailSchema,
@@ -49,11 +59,21 @@ import type {
   ContextNodeRef,
   ContextPromptComponent,
   ContextPromptComponentInput,
+  AddContextConfigAppInput,
+  AddContextConfigAppResult,
+  ContextConfigOAuthApp,
+  ContextConfigOAuthAppInput,
+  ContextRoutine,
+  ContextRoutineInput,
+  ContextRoutinePatch,
+  ContextRoutineRun,
+  ContextRoutineWriteResult,
   CreateAgentTenantInput,
   DeleteContextConnectorCredentialInput,
   DingTalkJsapiConfig,
   ListAgentScenesParams,
   ResolveContextConfigSceneInput,
+  SceneRoutinesTarget,
   SetAgentContextCapabilityOffersInput,
   SetContextCapabilityBindingInput,
   SetContextConnectorCredentialInput,
@@ -64,6 +84,7 @@ import type {
 } from "../types/context-capability";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
+import type { ConnectorApp, ConnectorAppInput, ConnectorAppList, ConnectorAuthInstance, ConnectorBinding, ConnectorInstanceInput, ConnectorResolveResult } from "./connector-apps";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
@@ -115,6 +136,8 @@ import type {
   IssueTableRowsResponse,
   Agent,
   AgentSceneMemory,
+  AgentMemoryLoop,
+  AgentMemorySelection,
   AgentSceneRelation,
   MikaBootstrapResponse,
   CreateAgentRequest,
@@ -375,6 +398,15 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import {
+  EMPTY_TAG_APPLY,
+  EMPTY_TAG_STATE,
+  EMPTY_TAG_TENANT_MUTATION,
+  TagApplyResponseSchema,
+  TagStateSchema,
+  TagTenantMutationSchema,
+} from "./tag-schema";
+import type { CreateTagInput, TagApplyResponse, TagState, TagTenantMutationResult } from "../tag/types";
 import type {
   AgentDshPlugin,
   DshPlugin,
@@ -660,6 +692,8 @@ export interface ApiClientIdentity {
 }
 
 export interface ApiClientOptions {
+  /** CSRF cookie belonging to this API session. Defaults to multica_csrf. */
+  csrfCookieName?: string;
   logger?: Logger;
   onUnauthorized?: () => void;
   /** Identifies the client to the server. Sent as X-Client-* headers. */
@@ -841,10 +875,12 @@ export class ApiClient {
 
   private readCsrfToken(): string | null {
     if (typeof document === "undefined") return null;
+    const prefix = `${this.options.csrfCookieName ?? "multica_csrf"}=`;
     const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
-    return match ? (match.split("=")[1] ?? null) : null;
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .find((cookie) => cookie.startsWith(prefix));
+    return match ? match.slice(prefix.length) : null;
   }
 
   private authHeaders(): Record<string, string> {
@@ -3139,9 +3175,9 @@ export class ApiClient {
     return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
   }
 
-  async listAgentSceneMemory(agentId: string): Promise<AgentSceneMemory[]> {
+  async listAgentSceneMemory(agentId: string, loop?: AgentMemoryLoop): Promise<AgentSceneMemory[]> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory${loop ? `?loop=${loop}` : ""}`,
     );
     return parseWithFallback(
       raw,
@@ -3151,70 +3187,74 @@ export class ApiClient {
     );
   }
 
-  /** One scene memory row by id (the scene detail's 记忆 sub-tab). A
-   * malformed response parses to a row with an empty id. */
-  async getAgentSceneMemory(agentId: string, memoryId: string): Promise<AgentSceneMemory> {
+  /** One scene's memory by its scene_id (the scene detail's 记忆
+   * sub-tab). A malformed response parses to a row with an empty id. */
+  async getAgentSceneMemory(agentId: string, sceneId: string, loop?: AgentMemoryLoop): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}${loop ? `?loop=${loop}` : ""}`,
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "GET /api/agents/{id}/scene-memory/{memoryId}" },
+      { endpoint: "GET /api/agents/{id}/scene-memory/{sceneId}" },
     );
   }
 
   async updateAgentSceneMemory(
     agentId: string,
-    memoryId: string,
-    body: { memory_text: string; expected_revision: number },
+    sceneId: string,
+    body: { memory_text: string; expected_revision: number; scene_id?: string; org_id?: string; loop?: AgentMemoryLoop },
+    loop?: AgentMemoryLoop,
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}${loop ? `?loop=${loop}` : ""}`,
       { method: "PUT", body: JSON.stringify(body) },
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "PUT /api/agents/{id}/scene-memory/{memoryId}" },
+      { endpoint: "PUT /api/agents/{id}/scene-memory/{sceneId}" },
     );
   }
 
   async resetAgentSceneMemory(
     agentId: string,
-    memoryId: string,
+    sceneId: string,
+    selection?: AgentMemorySelection,
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/reset`,
-      { method: "POST" },
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/reset${selection ? `?loop=${selection.loop}` : ""}`,
+      { method: "POST", ...(selection ? { body: JSON.stringify(selection) } : {}) },
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "POST /api/agents/{id}/scene-memory/{memoryId}/reset" },
+      { endpoint: "POST /api/agents/{id}/scene-memory/{sceneId}/reset" },
     );
   }
 
   async clearAgentSceneRelations(
     agentId: string,
-    memoryId: string,
+    sceneId: string,
+    selection?: AgentMemorySelection,
   ): Promise<void> {
     await this.fetch(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/relations/clear`,
-      { method: "POST" },
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/relations/clear${selection ? `?loop=${selection.loop}` : ""}`,
+      { method: "POST", ...(selection ? { body: JSON.stringify(selection) } : {}) },
     );
   }
 
+  /** Issues linked to one scene in the last 7 days, by its scene_id. */
   async listAgentSceneRelations(
     agentId: string,
-    conversationId: string,
+    sceneId: string,
   ): Promise<AgentSceneRelation[]> {
     const search = new URLSearchParams({
       agent_id: agentId,
-      conversation_id: conversationId,
+      scene_id: sceneId,
       since: "7d",
     });
     const raw = await this.fetch<unknown>(`/api/assoc/recall?${search.toString()}`);
@@ -4336,20 +4376,84 @@ export class ApiClient {
     });
   }
 
-  /** One scene the caller may configure. `orgId` names the scene's tenant
-   * when it is not the agent's own org. */
+  /** One scene the caller may configure, by its scene_id (the scope key
+   * the server lists). `orgId` names the scene's tenant when it is not the
+   * agent's own org. */
   async getContextConfigScene(
     agentId: string,
-    sceneKey: string,
+    sceneId: string,
     orgId = "",
   ): Promise<ContextConfigSceneDetail | null> {
     const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}${query}`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneId)}${query}`,
       { headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
-      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneKey}",
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneId}",
+      includeReceived: false,
+    });
+  }
+
+  /** Adds an official app at a level: the workspace installs it when
+   * missing, the agent offers it, and the level switches it on. null when
+   * the echo is malformed (the caller refetches). */
+  async addContextConfigApp(agentId: string, input: AddContextConfigAppInput): Promise<AddContextConfigAppResult | null> {
+    const body: Record<string, string> = { scope_type: input.scopeType, scope_key: input.scopeKey };
+    if (input.orgId) body.org_id = input.orgId;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(input.slug)}`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<AddContextConfigAppResult | null>(raw, AddContextConfigAppResponseSchema, null, {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/apps/{slug}",
+    });
+  }
+
+  /** A scene's own OAuth application of an app; null when malformed. */
+  async getContextConfigOAuthApp(
+    agentId: string,
+    slug: string,
+    scope: ContextConfigScopeInput,
+  ): Promise<ContextConfigOAuthApp | null> {
+    const query = new URLSearchParams({ scope_type: scope.scopeType, scope_key: scope.scopeKey });
+    if (scope.orgId) query.set("org_id", scope.orgId);
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app?${query.toString()}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigOAuthApp | null>(raw, ContextConfigOAuthAppSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app",
+    });
+  }
+
+  /** Removes a scene's own OAuth application (the agent's managers), so the
+   * scene signs in with the workspace's again. */
+  async deleteContextConfigOAuthApp(agentId: string, slug: string, scope: ContextConfigScopeInput): Promise<void> {
+    const query = new URLSearchParams({ scope_type: scope.scopeType, scope_key: scope.scopeKey });
+    if (scope.orgId) query.set("org_id", scope.orgId);
+    await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app?${query.toString()}`,
+      { method: "DELETE", headers: NO_WORKSPACE_HEADER },
+    );
+  }
+
+  /** Saves a scene's own OAuth application; an omitted secret keeps the stored one. */
+  async setContextConfigOAuthApp(
+    agentId: string,
+    slug: string,
+    scope: ContextConfigScopeInput,
+    input: ContextConfigOAuthAppInput,
+  ): Promise<ContextConfigOAuthApp | null> {
+    const body: Record<string, string> = { scope_type: scope.scopeType, scope_key: scope.scopeKey, client_id: input.clientId };
+    if (scope.orgId) body.org_id = scope.orgId;
+    if (input.clientSecret) body.client_secret = input.clientSecret;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app`,
+      { method: "PUT", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigOAuthApp | null>(raw, ContextConfigOAuthAppSchema, null, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app",
       includeReceived: false,
     });
   }
@@ -4460,6 +4564,40 @@ export class ApiClient {
     return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
       endpoint: "POST /api/context-capabilities/agents/{agentId}/connections/start",
       includeReceived: false,
+    });
+  }
+
+  /** GitHub App installations covered by one configure-page credential.
+   * A malformed body becomes a failed list (error "malformed") rather than
+   * an empty success. */
+  async listContextGitHubInstallations(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    connectorId: string,
+  ): Promise<ContextGitHubInstallations> {
+    const params = new URLSearchParams({
+      scope_type: scope.scopeType,
+      scope_key: scope.scopeKey,
+      connector_id: connectorId,
+    });
+    if (scope.orgId) params.set("org_id", scope.orgId);
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/github-installations?${params.toString()}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextGitHubInstallations>(raw, ContextGitHubInstallationsSchema, EMPTY_CONTEXT_GITHUB_INSTALLATIONS, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/github-installations",
+      includeReceived: false,
+    });
+  }
+
+  /** Exchanges the signed token on a GitHub return for the configure-page cookie.
+   * A bad token is an error; the caller still opens the page. */
+  async openSceneConfigSession(token: string): Promise<void> {
+    await this.fetch<unknown>("/api/scene-config/session", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      headers: NO_WORKSPACE_HEADER,
     });
   }
 
@@ -4578,6 +4716,97 @@ export class ApiClient {
     });
   }
 
+  // The workspace Tag (one multi-tenant digital employee per workspace).
+  // Workspace-scoped: the workspace is pinned explicitly so the query key's
+  // wsId and the request always agree.
+
+  private tagHeaders(workspaceId: string): Record<string, string> {
+    return { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId };
+  }
+
+  async getTag(workspaceId: string): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", { headers: this.tagHeaders(workspaceId) });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "GET /api/tag" });
+  }
+
+  async createTag(workspaceId: string, input: CreateTagInput): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", {
+      method: "POST",
+      body: JSON.stringify({
+        description: input.description ?? "",
+        runtime_id: input.runtimeId,
+        model: input.model ?? "",
+        copy_from_agent_id: input.copyFromAgentId ?? "",
+      }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "POST /api/tag" });
+  }
+
+  async setTagSidebarVisible(workspaceId: string, visible: boolean): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", {
+      method: "PATCH",
+      body: JSON.stringify({ sidebar_visible: visible }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "PATCH /api/tag" });
+  }
+
+  async deleteTag(workspaceId: string): Promise<void> {
+    await this.fetch<unknown>("/api/tag", { method: "DELETE", headers: this.tagHeaders(workspaceId) });
+  }
+
+  async createTagTenant(workspaceId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>("/api/tag/tenants", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "POST /api/tag/tenants",
+    });
+  }
+
+  async adoptTagTenant(workspaceId: string, agentId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>("/api/tag/tenants/adopt", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "POST /api/tag/tenants/adopt",
+    });
+  }
+
+  async renameTagTenant(workspaceId: string, tenantId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>(`/api/tag/tenants/${encodeURIComponent(tenantId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "PATCH /api/tag/tenants/{id}",
+    });
+  }
+
+  async deleteTagTenant(workspaceId: string, tenantId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/tag/tenants/${encodeURIComponent(tenantId)}`, {
+      method: "DELETE",
+      headers: this.tagHeaders(workspaceId),
+    });
+  }
+
+  async applyTag(workspaceId: string, tenantIds: string[], note = ""): Promise<TagApplyResponse> {
+    const raw = await this.fetch<unknown>("/api/tag/apply", {
+      method: "POST",
+      body: JSON.stringify({ tenant_ids: tenantIds, note }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagApplyResponse>(raw, TagApplyResponseSchema, EMPTY_TAG_APPLY, {
+      endpoint: "POST /api/tag/apply",
+    });
+  }
+
   // Admin 场域 (agent detail → 场域): tenants, their group chats and people,
   // and the Context Builder of each level. Workspace-scoped like the context
   // capability admin routes: the workspace is pinned explicitly so the query
@@ -4639,7 +4868,8 @@ export class ApiClient {
     );
   }
 
-  /** Group chats of one tenant, newest activity first. */
+  /** Scenes of one tenant (group chats and 1:1 chats), newest activity
+   * first. */
   async listAgentTenantGroups(
     workspaceId: string,
     agentId: string,
@@ -4659,7 +4889,7 @@ export class ApiClient {
     });
   }
 
-  /** People known under one tenant (a 1:1 chat is its person). */
+  /** People known under one tenant (their personal levels). */
   async listAgentTenantPersons(
     workspaceId: string,
     agentId: string,
@@ -4751,6 +4981,126 @@ export class ApiClient {
     return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
       endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config",
       // MCP server configs can carry headers and environment values.
+      includeReceived: false,
+    });
+  }
+
+  /** Request path, query and headers of a scene's routines: the configure
+   * page (org_id in the query, no workspace header) or an admin scene node. */
+  private sceneRoutinesRequest(
+    target: SceneRoutinesTarget,
+    suffix = "",
+  ): { path: string; headers: Record<string, string>; query: URLSearchParams } {
+    if (target.kind === "node") {
+      return {
+        path: `${this.contextNodePath(target.agentId, target.node)}/routines${suffix}`,
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": target.wsId },
+        query: new URLSearchParams(),
+      };
+    }
+    const query = new URLSearchParams();
+    if (target.orgId) query.set("org_id", target.orgId);
+    return {
+      path: `/api/context-capabilities/agents/${encodeURIComponent(target.agentId)}/routines${suffix}`,
+      headers: { ...NO_WORKSPACE_HEADER },
+      query,
+    };
+  }
+
+  private sceneRoutinesUrl(request: { path: string; query: URLSearchParams }): string {
+    const query = request.query.toString();
+    return query ? `${request.path}?${query}` : request.path;
+  }
+
+  /** The routines (例行任务) of one group or 1:1 chat scene. */
+  async listSceneRoutines(target: SceneRoutinesTarget): Promise<ContextRoutine[]> {
+    const request = this.sceneRoutinesRequest(target);
+    if (target.kind === "config") request.query.set("scene_id", target.sceneId);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { headers: request.headers });
+    return parseWithFallback<ContextRoutine[]>(raw, ContextRoutinesListSchema, [], {
+      endpoint: "GET …/routines",
+      // Routine instructions and webhook hints are user content.
+      includeReceived: false,
+    });
+  }
+
+  /** Creates a routine in the scene, or updates the scene's routine with the
+   * same purpose and schedule (`updated`). null when the echo is malformed. */
+  async createSceneRoutine(
+    target: SceneRoutinesTarget,
+    input: ContextRoutineInput,
+  ): Promise<ContextRoutineWriteResult | null> {
+    const request = this.sceneRoutinesRequest(target);
+    const body: Record<string, unknown> = { ...input };
+    if (target.kind === "config") {
+      body.scene_id = target.sceneId;
+      if (target.orgId) body.org_id = target.orgId;
+    }
+    const raw = await this.fetch<unknown>(request.path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: request.headers,
+    });
+    return parseWithFallback<ContextRoutineWriteResult | null>(raw, ContextRoutineWriteSchema, null, {
+      endpoint: "POST …/routines",
+      // A new webhook routine's response carries its full URL.
+      includeReceived: false,
+    });
+  }
+
+  async updateSceneRoutine(
+    target: SceneRoutinesTarget,
+    routineId: string,
+    patch: ContextRoutinePatch,
+  ): Promise<ContextRoutineWriteResult | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}`);
+    const body: Record<string, unknown> = { ...patch };
+    if (target.kind === "config" && target.orgId) body.org_id = target.orgId;
+    const raw = await this.fetch<unknown>(request.path, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      headers: request.headers,
+    });
+    return parseWithFallback<ContextRoutineWriteResult | null>(raw, ContextRoutineWriteSchema, null, {
+      endpoint: "PATCH …/routines/{routineId}",
+      includeReceived: false,
+    });
+  }
+
+  /** Deletes a routine; its run history stays. */
+  async deleteSceneRoutine(target: SceneRoutinesTarget, routineId: string): Promise<void> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}`);
+    await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "DELETE", headers: request.headers });
+  }
+
+  /** A routine's newest runs (status and times only). */
+  async listSceneRoutineRuns(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutineRun[]> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/runs`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { headers: request.headers });
+    return parseWithFallback<ContextRoutineRun[]>(raw, ContextRoutineRunsListSchema, [], {
+      endpoint: "GET …/routines/{routineId}/runs",
+      // Failure reasons can quote run output.
+      includeReceived: false,
+    });
+  }
+
+  /** Runs a routine now; resolves to the run it started (null when none). */
+  async runSceneRoutine(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutineRun | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/run`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "POST", headers: request.headers });
+    return parseWithFallback<ContextRoutineRun | null>(raw, ContextRoutineRunEnvelopeSchema, null, {
+      endpoint: "POST …/routines/{routineId}/run",
+      includeReceived: false,
+    });
+  }
+
+  /** Mints a new webhook URL (the old one stops working); the result carries
+   * the full URL once. */
+  async rotateSceneRoutineWebhook(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutine | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/rotate-webhook`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "POST", headers: request.headers });
+    return parseWithFallback<ContextRoutine | null>(raw, ContextRoutineEnvelopeSchema, null, {
+      endpoint: "POST …/routines/{routineId}/rotate-webhook",
       includeReceived: false,
     });
   }
@@ -4903,6 +5253,61 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  async listConnectorApps(workspaceId: string): Promise<ConnectorAppList> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps`);
+  }
+
+  async createConnectorApp(workspaceId: string, data: ConnectorAppInput): Promise<ConnectorApp> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateConnectorApp(workspaceId: string, appId: string, data: Partial<ConnectorAppInput>): Promise<ConnectorApp> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteConnectorApp(workspaceId: string, appId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}`, { method: "DELETE" });
+  }
+
+  async deleteConnectorInstance(workspaceId: string, appId: string, instanceId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances/${instanceId}`, { method: "DELETE" });
+  }
+
+  async createConnectorInstance(workspaceId: string, appId: string, data: ConnectorInstanceInput): Promise<ConnectorAuthInstance> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async replaceConnectorBindings(
+    workspaceId: string,
+    appId: string,
+    instanceId: string,
+    bindings: ConnectorBinding[],
+  ): Promise<{ bindings: ConnectorBinding[] }> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances/${instanceId}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({ bindings }),
+    });
+  }
+
+  async resolveConnectorApp(
+    workspaceId: string,
+    data: { provider: string; agent_id?: string; project_id?: string; environment?: string },
+  ): Promise<ConnectorResolveResult> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   // Owner-managed DTA workspace access. These credentials are intentionally

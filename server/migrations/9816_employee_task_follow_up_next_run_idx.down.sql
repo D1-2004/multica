@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_task_follow_up_next_run_idx;

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_routine_decision_queue_idx;

@@ -29,7 +29,10 @@ type SendRequest struct {
 }
 
 type SendResult struct {
-	OpenTaskID string
+	OpenTaskID         string
+	OpenConversationID string
+	OpenMessageID      string
+	A2UIReceipt        *A2UIReceipt
 }
 
 type SendStatus struct {

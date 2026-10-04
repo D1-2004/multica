@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_scene_message_proactive_due_idx;

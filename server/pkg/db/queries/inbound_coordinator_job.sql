@@ -173,8 +173,8 @@ WHERE assoc_edge.workspace_id = @workspace_id
   AND assoc_edge.rel = 'task_scene'
   AND assoc_edge.status = 'open'
   AND (
-    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
-    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
+    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @scene_id)
+    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @scene_id)
   )
   AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
   AND (agent_task_queue.fire_at IS NULL OR agent_task_queue.fire_at <= now())
@@ -257,8 +257,8 @@ WHERE scene_edge.workspace_id = @workspace_id
   AND scene_edge.rel = 'task_scene'
   AND scene_edge.status = 'open'
   AND (
-    (scene_edge.dst_type = 'scene' AND scene_edge.dst_id = @conversation_id)
-    OR (scene_edge.src_type = 'scene' AND scene_edge.src_id = @conversation_id)
+    (scene_edge.dst_type = 'scene' AND scene_edge.dst_id = @scene_id)
+    OR (scene_edge.src_type = 'scene' AND scene_edge.src_id = @scene_id)
   )
   AND (
     EXISTS (
@@ -312,8 +312,8 @@ WHERE assoc_edge.workspace_id = @workspace_id
   AND assoc_edge.status = 'open'
   AND assoc_task.status IN ('open', 'waiting')
   AND (
-    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
-    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
+    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @scene_id)
+    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @scene_id)
   );
 
 -- name: ParkInboundCoordinatorJob :execrows

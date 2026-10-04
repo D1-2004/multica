@@ -11,19 +11,7 @@ import (
 )
 
 func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
-	row := db.SceneMemory{
-		ID:                      pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
-		WorkspaceID:             pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
-		AgentID:                 pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
-		Platform:                "dingtalk",
-		OrgID:                   "org-1",
-		SceneKey:                "cid+abc==",
-		SceneKind:               "dm",
-		SceneTitle:              "冬翔",
-		MemoryRevision:          4,
-		AttemptCount:            2,
-		LastTriggerCoordTraceID: "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{SceneID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}, AgentID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true}, MemoryRevision: 4, AttemptCount: 2, LastTriggerCoordTraceID: "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"}, Scene: db.AgentScene{ID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}, AgentID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true}, Provider: "dingtalk", TenantOrgID: "org-1", ExternalSceneID: "cid+abc==", SceneKind: "dm", Title: "冬翔"}}
 	opts := flushTraceOptions(row, "预发测试智能体", time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC))
 	if opts.Name != flushTraceName || opts.SessionID != "cid+abc==" {
 		t.Fatalf("name/session = %q/%q", opts.Name, opts.SessionID)
@@ -32,7 +20,7 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 		t.Fatalf("tags = %v", opts.Tags)
 	}
 	keys := flushIndexKeys(row)
-	if keys["scene_memory_id"] != "01000000-0000-0000-0000-000000000000" || keys["coord_trace_id"] != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
+	if keys["scene_id"] != "01000000-0000-0000-0000-000000000000" || keys["coord_trace_id"] != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
 		t.Fatalf("index keys = %v", keys)
 	}
 	for _, covered := range []string{"scene_key", "conversation_id", "agent_id", "workspace_id", "dws_org_id"} {
@@ -60,7 +48,7 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 func TestHistoryReadTraceReportsChronologyAndMissingEvidence(t *testing.T) {
 	older := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
 	newer := older.Add(time.Minute)
-	row := db.SceneMemory{LeaseTargetThroughEvidenceID: "missing", LastTriggerEvidenceID: "visible"}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughEvidenceID: "missing", LastTriggerEvidenceID: "visible"}, Scene: db.AgentScene{}}
 	output := historyReadTraceOutput(row, HistoryPage{
 		Events:      []HistoryEvent{{OccurredAt: newer}, {OccurredAt: older}},
 		EvidenceIDs: []string{"visible"}, RawCount: 3, PaginationKnown: true,

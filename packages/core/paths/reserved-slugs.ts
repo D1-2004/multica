@@ -38,6 +38,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // likely-future global landing/entry routes; `homepage` matches the existing
   // `/homepage` landing variant in apps/web.
   "api",
+  "forward",
   "admin",
   "multica",
   "www",
@@ -64,6 +65,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "press",
   "download",
   "usecases",
+  "evals",
 
   // Account / billing (likely-future global routes in the avatar menu)
   "profile",
@@ -90,6 +92,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "runners",
   "skills",
   "internal-connectors",
+  "tag",
   "dsh-plugins",
   "features",
   "settings",

@@ -23,6 +23,9 @@ const (
 type ClientIdentity struct {
 	DaemonID string
 	UserID   string
+	// AuthPath is captured by the authenticated upgrade handler. It is never
+	// decoded from a client frame; RPC dispatch preserves credential authority.
+	AuthPath string `json:"-"`
 	// WorkspaceID is the legacy single-workspace scope used by older callers
 	// and daemon-token auth. New code should populate WorkspaceIDs from the
 	// runtime rows authorized for this connection.

@@ -216,13 +216,13 @@ func TestSceneCapacityReasonMatchesLimit(t *testing.T) {
 // Two utterances of one person must land on one budget even when the messages
 // present their identifiers in a different order.
 func TestSceneDelegatorGroupsOneSpeakerOnce(t *testing.T) {
-	first := sceneDelegator{ConversationID: "cid", Keys: []string{"staff-1", "open-1"}}
-	second := sceneDelegator{ConversationID: "cid", Keys: []string{"open-1", "staff-1"}}
+	first := sceneDelegator{SceneID: "scene-1", Keys: []string{"staff-1", "open-1"}}
+	second := sceneDelegator{SceneID: "scene-1", Keys: []string{"open-1", "staff-1"}}
 	needs := addSceneDelegatorNeed(addSceneDelegatorNeed(nil, first), second)
 	if len(needs) != 1 || needs[0].needed != 2 {
 		t.Fatalf("one speaker must spend one budget: %+v", needs)
 	}
-	other := sceneDelegator{ConversationID: "cid", Keys: []string{"staff-2"}}
+	other := sceneDelegator{SceneID: "scene-1", Keys: []string{"staff-2"}}
 	needs = addSceneDelegatorNeed(needs, other)
 	if len(needs) != 2 || needs[1].needed != 1 {
 		t.Fatalf("a second speaker keeps their own budget: %+v", needs)

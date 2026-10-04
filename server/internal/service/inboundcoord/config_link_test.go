@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,14 @@ const (
 	testCapabilityReply   = "我可以整理日报、查询会议纪要，也能帮你跟进待办。"
 	testConfigLinkContext = `{"dispatch_event_data":{"conversation":{"openConversationId":"cidCapGroup==","type":"group"}}}`
 )
+
+// testConfigLinkToken is the bearer token of testConfigLinkURL; it reads
+// the same plain and percent-encoded, so no copy of the link carries it.
+const testConfigLinkToken = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+
+// testConfigDeepLink is the DingTalk deep link the reply carries for
+// testConfigLinkURL.
+var testConfigDeepLink = ConfigLinkDeepLink(testConfigLinkURL)
 
 type configLinkIssuerStub struct {
 	mu       sync.Mutex
@@ -50,11 +59,15 @@ func (s *configLinkIssuerStub) calls() int {
 }
 
 func sceneConfigLink() ConfigLink {
-	return ConfigLink{URL: testConfigLinkURL, Scope: "scene", ValidFor: 30 * time.Minute, ExpiresAt: time.Now().Add(30 * time.Minute)}
+	return ConfigLink{URL: testConfigLinkURL, Scope: "scene", SceneKind: "group", ValidFor: 30 * time.Minute, ExpiresAt: time.Now().Add(30 * time.Minute)}
 }
 
-func personConfigLink() ConfigLink {
-	return ConfigLink{URL: testConfigLinkURL, Scope: "person", ValidFor: 15 * time.Minute, SingleUse: true, ExpiresAt: time.Now().Add(15 * time.Minute)}
+// dmConfigLink is the scene link of a 1:1 chat: minted exactly like a
+// group's, only its label differs.
+func dmConfigLink() ConfigLink {
+	link := sceneConfigLink()
+	link.SceneKind = "dm"
+	return link
 }
 
 func capabilityTurn(chatType string) Turn {
@@ -98,8 +111,8 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 		link     ConfigLink
 		wantLine string
 	}{
-		{name: "group gets the reusable scene link", chatType: "group", link: sceneConfigLink(), wantLine: "本群能力配置（30 分钟内有效）：" + testConfigLinkURL},
-		{name: "1:1 gets the single-use personal link", chatType: "p2p", link: personConfigLink(), wantLine: "你的个人能力配置（15 分钟内有效，限用一次）：" + testConfigLinkURL},
+		{name: "group gets the reusable scene link", chatType: "group", link: sceneConfigLink(), wantLine: "[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）"},
+		{name: "1:1 gets its own scene link, like a group", chatType: "p2p", link: dmConfigLink(), wantLine: "[本单聊能力配置](" + testConfigDeepLink + ")（30 分钟内有效）"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,8 +133,10 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 			if decision.Action != ActionReply || decision.UserText != want {
 				t.Fatalf("action=%s text=%q want %q", decision.Action, decision.UserText, want)
 			}
-			if !strings.HasSuffix(decision.UserText, testConfigLinkURL) {
-				t.Fatal("the capability answer must end with the link")
+			// A Markdown link to the DingTalk deep link: the bare page URL
+			// never shows in the reply.
+			if strings.Contains(decision.UserText, testConfigLinkURL) || !strings.Contains(decision.UserText, "]("+testConfigDeepLink+")") {
+				t.Fatal("the capability answer must end with a Markdown link to the deep link")
 			}
 			if len(decision.CoordinationActions) != 1 || decision.CoordinationActions[0].Reply != want {
 				t.Fatalf("describe_capabilities reply=%+v", decision.CoordinationActions)
@@ -148,7 +163,7 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 			for _, params := range chat.checkParams {
 				for _, message := range params.Messages {
 					raw, _ := message.MarshalJSON()
-					if strings.Contains(string(raw), "configure?link=") {
+					if strings.Contains(string(raw), testConfigLinkToken) {
 						t.Fatal("the reviewer saw the Host-appended link")
 					}
 				}
@@ -157,7 +172,7 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 			for _, step := range decision.Steps {
 				if step.Tool == toolContextConfigLink {
 					linkSteps++
-					if step.Error || strings.Contains(step.Output, "configure?link=") {
+					if step.Error || strings.Contains(step.Output, testConfigLinkToken) {
 						t.Fatalf("link step=%+v", step)
 					}
 				}
@@ -169,7 +184,7 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 			if !strings.Contains(logs.String(), `"event":"inbound_coordinator_config_link"`) || !strings.Contains(logs.String(), `"status":"issued"`) {
 				t.Fatalf("config link event missing: %s", logs.String())
 			}
-			if strings.Contains(logs.String(), "configure?link=") {
+			if strings.Contains(logs.String(), testConfigLinkToken) {
 				t.Fatalf("logs leak the configuration link: %s", logs.String())
 			}
 		})
@@ -179,8 +194,6 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 func TestCapabilityAnswerStaysUnchangedWhenLinkFails(t *testing.T) {
 	bad := sceneConfigLink()
 	bad.URL = "not a url"
-	shared := personConfigLink()
-	shared.SingleUse = false
 	cases := map[string]*configLinkIssuerStub{
 		"issuer error":                  {err: errors.New("This run did not come from a DingTalk group chat, so there is no group to configure.")},
 		"issuer panic":                  {panicMsg: "nil pointer"},
@@ -188,8 +201,8 @@ func TestCapabilityAnswerStaysUnchangedWhenLinkFails(t *testing.T) {
 		"malformed url":                 {link: bad},
 		"unknown scope":                 {link: ConfigLink{URL: testConfigLinkURL, Scope: "org", ValidFor: time.Minute}},
 		"no lifetime":                   {link: ConfigLink{URL: testConfigLinkURL, Scope: "scene"}},
-		"personal link not single use":  {link: shared},
-		"unknown conversation, no link": {err: errors.New("This run has no single identifiable DingTalk sender")},
+		"retired personal scope":        {link: ConfigLink{URL: testConfigLinkURL, Scope: "person", ValidFor: time.Minute}},
+		"unknown conversation, no link": {err: errors.New("This run did not come from a DingTalk group or 1:1 chat of this agent")},
 	}
 	for name, issuer := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -231,7 +244,7 @@ func TestConfigLinkOnlyForCapabilityAnswersOfEligibleTurns(t *testing.T) {
 	turn.Utterances = []WindowUtterance{{Sender: "冬翔", Text: "你好"}, {Sender: "冬翔", Text: "你有哪些能力？"}}
 	chat = capabilityChat(`{"actions":[{"kind":"describe_capabilities","source_refs":["u2"],"reply":"` + testCapabilityReply + `"},{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好！"}]}`)
 	decision, err = (&Coordinator{Chat: chat, Tools: &stubTools{}, ConfigLinks: issuer}).runLoop(context.Background(), turn)
-	want := testCapabilityReply + "\n\n本群能力配置（30 分钟内有效）：" + testConfigLinkURL + "\n\n你好！"
+	want := testCapabilityReply + "\n\n[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）\n\n你好！"
 	if err != nil || decision.UserText != want || decision.CoordinationActions[1].Reply != "你好！" {
 		t.Fatalf("mixed text=%q err=%v", decision.UserText, err)
 	}
@@ -294,8 +307,8 @@ func TestConfigLinkAbsentWhenCoordinatorIsOff(t *testing.T) {
 func TestRestoredCapabilityAnswerKeepsItsLinkWithoutMintingAgain(t *testing.T) {
 	saved := Decision{
 		Action: ActionReply, PlanVersion: WindowPlanVersion,
-		UserText:            testCapabilityReply + "\n\n本群能力配置（30 分钟内有效）：" + testConfigLinkURL,
-		CoordinationActions: []CoordinationAction{{Kind: "describe_capabilities", SourceRefs: []string{"u1"}, Reply: testCapabilityReply + "\n\n本群能力配置（30 分钟内有效）：" + testConfigLinkURL}},
+		UserText:            testCapabilityReply + "\n\n[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）",
+		CoordinationActions: []CoordinationAction{{Kind: "describe_capabilities", SourceRefs: []string{"u1"}, Reply: testCapabilityReply + "\n\n[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）"}},
 	}
 	issuer := &configLinkIssuerStub{link: sceneConfigLink()}
 	ctx := ContextWithPlanCheckpoint(context.Background(), &saved, func(Decision) error { return nil })
@@ -307,19 +320,28 @@ func TestRestoredCapabilityAnswerKeepsItsLinkWithoutMintingAgain(t *testing.T) {
 
 func TestConfigLinkLineLanguages(t *testing.T) {
 	for language, want := range map[string]string{
-		"zh": "本群能力配置（30 分钟内有效）：",
-		"en": "Configure this group's capabilities (valid for 30 min): ",
-		"ja": "このグループの機能設定（30 分間有効）：",
-		"ko": "이 그룹의 기능 설정 (30분간 유효): ",
+		"zh": "[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）",
+		"en": "[Configure this group's capabilities](" + testConfigDeepLink + ") (valid for 30 min)",
+		"ja": "[このグループの機能設定](" + testConfigDeepLink + ")（30 分間有効）",
+		"ko": "[이 그룹의 기능 설정](" + testConfigDeepLink + ") (30분간 유효)",
 	} {
-		line, err := configLinkLine(language, sceneConfigLink())
-		if err != nil || line != want+testConfigLinkURL {
-			t.Fatalf("%s line=%q err=%v", language, line, err)
+		line, deepLink := configLinkLine(language, sceneConfigLink())
+		if line != want || deepLink != testConfigDeepLink {
+			t.Fatalf("%s line=%q deepLink=%q", language, line, deepLink)
 		}
 	}
-	line, err := configLinkLine("en", personConfigLink())
-	if err != nil || line != "Configure your personal capabilities (valid for 15 min, single use): "+testConfigLinkURL {
-		t.Fatalf("personal line=%q err=%v", line, err)
+	for language, want := range map[string]string{
+		"zh": "[本单聊能力配置](" + testConfigDeepLink + ")（30 分钟内有效）",
+		"en": "[Configure this chat's capabilities](" + testConfigDeepLink + ") (valid for 30 min)",
+		"ja": "[この個別チャットの機能設定](" + testConfigDeepLink + ")（30 分間有効）",
+		"ko": "[이 1:1 채팅의 기능 설정](" + testConfigDeepLink + ") (30분간 유효)",
+	} {
+		if line, _ := configLinkLine(language, dmConfigLink()); line != want {
+			t.Fatalf("%s 1:1 line=%q", language, line)
+		}
+	}
+	if testConfigDeepLink != "dingtalk://dingtalkclient/page/link?url="+url.QueryEscape(testConfigLinkURL)+"&pc_slide=true" {
+		t.Fatalf("deep link=%q", testConfigDeepLink)
 	}
 	if got := redactConfigLink("see "+testConfigLinkURL, testConfigLinkURL); got != "see [configuration link]" {
 		t.Fatalf("redacted=%q", got)

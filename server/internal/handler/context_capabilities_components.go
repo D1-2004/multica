@@ -283,11 +283,24 @@ func (h *Handler) PutContextConfigMCPConfig(w http.ResponseWriter, r *http.Reque
 }
 
 // remoteMCPConfigOrBadRequest validates a configure-page custom MCP server
-// configuration (contextcap.NormalizeRemoteMCPConfig, plus no server named
-// like a managed server of the claim, reservedMCPServerName) and returns it
-// normalized (a JSON null when it names no server), or writes 400
-// invalid_mcp_config.
+// configuration (normalizeRemoteScopeMCPConfig) and returns it normalized (a
+// JSON null when it names no server), or writes 400 invalid_mcp_config.
 func remoteMCPConfigOrBadRequest(w http.ResponseWriter, raw json.RawMessage) (json.RawMessage, bool) {
+	config, reason := normalizeRemoteScopeMCPConfig(raw)
+	if reason != "" {
+		writeErrorCode(w, http.StatusBadRequest, contextCapErrInvalidMCPConfig, reason)
+		return nil, false
+	}
+	return config, true
+}
+
+// normalizeRemoteScopeMCPConfig validates a scope's custom MCP servers for
+// the configure page and the config-qwen-tag-scene tools:
+// contextcap.NormalizeRemoteMCPConfig (remote servers only), plus no server
+// named like a managed server of the claim (reservedMCPServerName). It
+// returns the normalized document (a JSON null when it names no server), or
+// the reason it is refused.
+func normalizeRemoteScopeMCPConfig(raw json.RawMessage) (json.RawMessage, string) {
 	config, err := contextcap.NormalizeRemoteMCPConfig(raw)
 	if err != nil {
 		reason := "mcp_config must be {\"mcpServers\": {...}} of remote servers"
@@ -295,16 +308,14 @@ func remoteMCPConfigOrBadRequest(w http.ResponseWriter, raw json.RawMessage) (js
 		if errors.As(err, &invalid) {
 			reason = invalid.Reason
 		}
-		writeErrorCode(w, http.StatusBadRequest, contextCapErrInvalidMCPConfig, reason)
-		return nil, false
+		return nil, reason
 	}
 	if config == nil {
-		return json.RawMessage("null"), true
+		return json.RawMessage("null"), ""
 	}
 	servers, err := contextcap.MCPServers(config)
 	if err != nil {
-		writeErrorCode(w, http.StatusBadRequest, contextCapErrInvalidMCPConfig, "mcpServers must be an object of servers")
-		return nil, false
+		return nil, "mcpServers must be an object of servers"
 	}
 	names := make([]string, 0, len(servers))
 	for name := range servers {
@@ -313,10 +324,8 @@ func remoteMCPConfigOrBadRequest(w http.ResponseWriter, raw json.RawMessage) (js
 	sort.Strings(names)
 	for _, name := range names {
 		if reservedMCPServerName(name) {
-			writeErrorCode(w, http.StatusBadRequest, contextCapErrInvalidMCPConfig,
-				"server name "+name+" is reserved for a server Multica manages; choose another name")
-			return nil, false
+			return nil, "server name " + name + " is reserved for a server Multica manages; choose another name"
 		}
 	}
-	return config, true
+	return config, ""
 }

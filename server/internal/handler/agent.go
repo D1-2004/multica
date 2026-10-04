@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/tag"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
+	"github.com/multica-ai/multica/server/internal/employeeloopconfig"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -91,10 +93,12 @@ type AgentResponse struct {
 	// agent's instructions, skills, and runtime have not changed. Off by
 	// default; local chats and issue comments already resume without it.
 	ChatSessionResume bool `json:"chat_session_resume"`
-	// InboundCoordinator runs the server-side assoc tool loop that replies
-	// immediately or opens an Issue. Off by default for new and existing
-	// agents; only an explicit owner on switch enables it.
+	// InboundCoordinator is the total enabled switch for message coordination.
+	// CoordinationMode selects the owner of new supported work independently;
+	// changing the mode never enables a disabled agent.
 	InboundCoordinator                  bool     `json:"inbound_coordinator"`
+	CoordinationMode                    string   `json:"coordination_mode"`
+	EmployeeLoopReady                   bool     `json:"employee_loop_ready"`
 	InboundCoordinatorUserDecisionMode  string   `json:"inbound_coordinator_user_decision_mode"`
 	InboundCoordinatorUserDecision      bool     `json:"inbound_coordinator_user_decision"`
 	InboundCoordinatorUserDecisionNames []string `json:"inbound_coordinator_user_decision_names"`
@@ -149,7 +153,11 @@ type AgentResponse struct {
 	InvocationTargets  []AgentInvocationTargetDTO `json:"invocation_targets"`
 	Status             string                     `json:"status"`
 	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
-	Model              string                     `json:"model"`
+	// SandboxConnectionReuse shares one FC/E2B sandbox across tasks in the
+	// same scene and trigger. On for existing agents. The runtime document
+	// only sets how many tasks may share that sandbox.
+	SandboxConnectionReuse bool   `json:"sandbox_connection_reuse"`
+	Model                  string `json:"model"`
 	// ThinkingLevel is the runtime-native reasoning/effort token persisted
 	// for this agent (empty = use runtime default). The picker is per-runtime
 	// per-model; the API never normalizes across providers. See MUL-2339.
@@ -213,6 +221,7 @@ func (h *Handler) hydrateTaskFinishedLoop(ctx context.Context, resp *AgentRespon
 }
 
 func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	h.hydrateAgentCoordination(ctx, resp)
 	if resp == nil {
 		return
 	}
@@ -381,6 +390,7 @@ func (h *Handler) hydrateAgentsSceneMemoryFlags(ctx context.Context, resps []Age
 }
 
 func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps []AgentResponse) {
+	h.hydrateAgentsCoordination(ctx, resps)
 	if len(resps) == 0 {
 		return
 	}
@@ -514,6 +524,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	contract, contractState := coordinatorcontract.Resolve(a.CoordinatorContract, a.Instructions)
 	return AgentResponse{
 		InboundCoordinatorUserDecisionMode: "off",
+		CoordinationMode:                   "coordinator",
 		ID:                                 uuidToString(a.ID),
 		WorkspaceID:                        uuidToString(a.WorkspaceID),
 		RuntimeID:                          uuidToString(a.RuntimeID),
@@ -541,6 +552,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		InvocationTargets:                  []AgentInvocationTargetDTO{},
 		Status:                             a.Status,
 		MaxConcurrentTasks:                 a.MaxConcurrentTasks,
+		SandboxConnectionReuse:             a.SandboxConnectionReuse,
 		Model:                              a.Model.String,
 		ThinkingLevel:                      a.ThinkingLevel.String,
 		ServiceTier:                        a.ServiceTier.String,
@@ -638,6 +650,7 @@ type ProjectResourceData struct {
 type ConnectedAppData = runtimeapps.ConnectedApp
 
 type AgentTaskResponse struct {
+	DirectTaskPrompt     string                    `json:"direct_task_prompt,omitempty"`
 	DSHNativePrompt      *protocol.DSHNativePrompt `json:"dsh_native_prompt,omitempty"`
 	ID                   string                    `json:"id"`
 	AgentID              string                    `json:"agent_id"`
@@ -648,6 +661,7 @@ type AgentTaskResponse struct {
 	Instruction          string                    `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string                    `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64                     `json:"trace_started_at_unix_ms,omitempty"`
+	MessageSeq           int32                     `json:"message_seq,omitempty"`
 	// DingTalkMessagePolicy is a trusted per-claim snapshot, independent of custom_env.
 	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace
@@ -1846,8 +1860,10 @@ type UpdateAgentRequest struct {
 	// removed key is an unambiguous "restore the managed text".
 	DispatchPromptOverrides             *map[string]string `json:"dispatch_prompt_overrides"`
 	DispatchAlwaysNewIssue              *bool              `json:"dispatch_always_new_issue"`
+	SandboxConnectionReuse              *bool              `json:"sandbox_connection_reuse"`
 	ChatSessionResume                   *bool              `json:"chat_session_resume"`
 	InboundCoordinator                  *bool              `json:"inbound_coordinator"`
+	CoordinationMode                    *string            `json:"coordination_mode"`
 	InboundCoordinatorUserDecisionMode  *string            `json:"inbound_coordinator_user_decision_mode"`
 	InboundCoordinatorUserDecision      *bool              `json:"inbound_coordinator_user_decision"`
 	InboundCoordinatorUserDecisionNames *[]string          `json:"inbound_coordinator_user_decision_names"`
@@ -2098,6 +2114,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if _, present := rawFields["coordination_mode"]; present {
+		if req.CoordinationMode == nil {
+			writeError(w, http.StatusBadRequest, employeeloopconfig.ErrInvalidMode.Error())
+			return
+		}
+		if err := employeeloopconfig.Validate(*req.CoordinationMode); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	normalizeCoordinationUpdate(&req)
+	if req.EventTriggerEnabled != nil && h.EventTriggers == nil {
+		writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
+		return
+	}
 	if _, present := rawFields["inbound_coordinator_user_decision_mode"]; present && req.InboundCoordinatorUserDecisionMode == nil {
 		writeError(w, http.StatusBadRequest, "inbound_coordinator_user_decision_mode must be off, all, or named")
 		return
@@ -2156,10 +2187,34 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A Tag employee's instructions, MCP, runtime, model and profile come
+	// from the Tag; only its tenant-owned settings (inbound coordinator,
+	// dispatch, sandbox connection reuse) are written here.
+	if req.Name != nil || req.Description != nil || req.AvatarURL != nil || req.Instructions != nil ||
+		req.McpConfig != nil || req.RuntimeID != nil || req.RuntimeConfig != nil || req.CustomArgs != nil ||
+		req.MaxConcurrentTasks != nil || req.Model != nil || req.ThinkingLevel != nil || req.ServiceTier != nil ||
+		req.ComposioToolkitAllowlist != nil {
+		if h.refuseTagEmployeeWrite(w, r, uuidToString(existing.WorkspaceID), uuidToString(existing.ID)) {
+			return
+		}
+	}
+
 	params := db.UpdateAgentParams{
 		ID: existing.ID,
 	}
 	if req.Name != nil {
+		// The workspace Tag is always called "Tag".
+		if *req.Name != existing.Name && h.DB != nil {
+			role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(existing.WorkspaceID), uuidToString(existing.ID))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check the tag")
+				return
+			}
+			if role == tag.RoleTemplate {
+				writeError(w, http.StatusConflict, "the tag's name is fixed")
+				return
+			}
+		}
 		params.Name = pgtype.Text{String: *req.Name, Valid: true}
 	}
 	if req.Description != nil {
@@ -2197,6 +2252,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DispatchAlwaysNewIssue != nil {
 		params.DispatchAlwaysNewIssue = pgtype.Bool{Bool: *req.DispatchAlwaysNewIssue, Valid: true}
+	}
+	if req.SandboxConnectionReuse != nil {
+		params.SandboxConnectionReuse = pgtype.Bool{Bool: *req.SandboxConnectionReuse, Valid: true}
 	}
 
 	if req.AvatarURL != nil {
@@ -2468,6 +2526,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.checkAgentCoordinationUpdate(r.Context(), existing, req); err != nil {
+		writeCoordinationError(w, err)
+		return
+	}
 	updated, err := h.Queries.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
@@ -2537,27 +2599,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Disabling inbound judging also disables proactive processing. Conflicting
-	// fields fail closed; enabling proactive processing enables judging in one transaction.
-	if req.EventTriggerEnabled != nil && req.InboundCoordinator != nil && !*req.InboundCoordinator {
-		disabled := false
-		req.EventTriggerEnabled = &disabled
-	}
-	if req.EventTriggerEnabled != nil && *req.EventTriggerEnabled {
-		enabled := true
-		req.InboundCoordinator = &enabled
-	}
-	if req.EventTriggerEnabled != nil {
-		if h.EventTriggers == nil {
-			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
-			return
-		}
-		if err := h.EventTriggers.SetEnabledAndInbound(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled, req.InboundCoordinator); err != nil {
-			slog.Error("update event trigger failed", "agent_id", id, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to update event trigger")
-			return
-		}
-	}
 	if req.ChatSessionResume != nil {
 		if err := h.Queries.UpdateAgentChatSessionResume(r.Context(), updated.ID, *req.ChatSessionResume); err != nil {
 			slog.Warn("update agent chat_session_resume failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
@@ -2565,31 +2606,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinatorUserDecisionMode != nil || req.InboundCoordinatorUserDecisionNames != nil || req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
-		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
-		if req.InboundCoordinatorUserDecisionNames != nil {
-			policyParams.UserDecisionNames = normalizeUserDecisionNames(*req.InboundCoordinatorUserDecisionNames)
-		}
-		if req.InboundCoordinatorUserDecision != nil {
-			policyParams.UserDecision = pgtype.Bool{Bool: *req.InboundCoordinatorUserDecision, Valid: true}
-		}
-		applyUserDecisionMode(req, &policyParams)
-		if req.InboundCoordinator != nil {
-			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
-		}
-		if req.DingTalkShowAITag != nil {
-			policyParams.ShowAiTag = pgtype.Bool{Bool: *req.DingTalkShowAITag, Valid: true}
-		}
-		if req.DingTalkResponseEnabled != nil {
-			policyParams.ResponseEnabled = pgtype.Bool{Bool: *req.DingTalkResponseEnabled, Valid: true}
-		}
-		if _, err := h.Queries.UpdateAgentDingTalkResponsePolicy(r.Context(), policyParams); err != nil {
-			slog.Warn("update agent DingTalk response policy failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to update DingTalk response policy")
+	if req.CoordinationMode != nil || req.EventTriggerEnabled != nil || req.InboundCoordinatorUserDecisionMode != nil || req.InboundCoordinatorUserDecisionNames != nil || req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
+		if err := h.updateAgentCoordinationPolicy(r.Context(), updated, parseUUID(requestUserID(r)), req); err != nil {
+			writeCoordinationError(w, err)
 			return
-		}
-		if h.DingTalkResponsePolicyNotifier != nil {
-			h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged()
 		}
 	}
 	if req.TaskFinishedLoopEnabled != nil {
@@ -2778,6 +2798,15 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "this agent is built into Multica and cannot be archived")
 		return
 	}
+	// The Tag template carries the configuration every tenant applies;
+	// archiving it would orphan the Tag. Remove the Tag first.
+	if role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(agent.WorkspaceID), uuidToString(agent.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	} else if role == tag.RoleTemplate {
+		writeError(w, http.StatusConflict, "this agent is the tag template; remove the tag before archiving it")
+		return
+	}
 
 	userID := requestUserID(r)
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -2921,10 +2950,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
-	}
+	canViewOrdinary := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID)
 
 	tasks, err := h.Queries.ListHumanVisibleAgentTasks(r.Context(), agent.ID)
 	if err != nil {
@@ -2932,9 +2958,20 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+	resp := make([]AgentTaskResponse, 0, len(tasks))
+	for _, t := range tasks {
+		if service.IsEmployeeDirectTask(t) {
+			if !h.canReadEmployeeDirectTask(r, t, agent) {
+				continue
+			}
+		} else if !canViewOrdinary {
+			continue
+		}
+		resp = append(resp, taskToResponse(t, workspaceID))
+	}
+	if !canViewOrdinary && len(resp) == 0 {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
@@ -3208,7 +3245,11 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 
 	resp := make([]AgentTaskResponse, 0, len(tasks))
 	for _, t := range tasks {
-		if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
+		if service.IsEmployeeDirectTask(t) {
+			if !h.canReadEmployeeDirectTaskByID(r, t) {
+				continue
+			}
+		} else if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
 			continue
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))

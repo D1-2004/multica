@@ -37,70 +37,113 @@ func (s *Store) WithTx(tx pgx.Tx) *Store {
 	return &Store{queries: s.queries.WithTx(tx)}
 }
 
-func (s *Store) Get(ctx context.Context, id Identity) (db.SceneMemory, error) {
-	id = id.normalized()
-	if !id.valid() {
-		return db.SceneMemory{}, ErrInvalidIdentity
+// Get returns the memory of a scene; a scene without memory is
+// pgx.ErrNoRows.
+func (s *Store) Get(ctx context.Context, sc db.AgentScene) (Memory, error) {
+	if !validScene(sc) {
+		return Memory{}, ErrInvalidIdentity
 	}
-	return s.queries.GetSceneMemoryByIdentity(ctx, db.GetSceneMemoryByIdentityParams{
-		WorkspaceID: id.WorkspaceID,
-		AgentID:     id.AgentID,
-		Platform:    id.Platform,
-		OrgID:       id.OrgID,
-		SceneKey:    id.SceneKey,
+	row, err := s.queries.GetAgentSceneMemory(ctx, db.GetAgentSceneMemoryParams{
+		SceneID:     sc.ID,
+		WorkspaceID: sc.WorkspaceID,
+		AgentID:     sc.AgentID,
 	})
+	if err != nil {
+		return Memory{}, err
+	}
+	return Memory{AgentSceneMemory: row, Scene: sc}, nil
 }
 
-func (s *Store) GetByID(ctx context.Context, workspaceID, agentID, memoryID pgtype.UUID) (db.SceneMemory, error) {
-	return s.queries.GetSceneMemoryByID(ctx, db.GetSceneMemoryByIDParams{
-		ID:          memoryID,
-		WorkspaceID: workspaceID,
-		AgentID:     agentID,
-	})
+// GetByScene loads an agent's scene by scene_id and its memory.
+func (s *Store) GetByScene(ctx context.Context, workspaceID, agentID, sceneID pgtype.UUID) (Memory, error) {
+	sc, err := s.queries.GetAgentScene(ctx, db.GetAgentSceneParams{ID: sceneID, WorkspaceID: workspaceID, AgentID: agentID})
+	if err != nil {
+		return Memory{}, err
+	}
+	return s.Get(ctx, sc)
 }
 
-func (s *Store) List(ctx context.Context, workspaceID, agentID pgtype.UUID, limit int32) ([]db.SceneMemory, error) {
+func (s *Store) List(ctx context.Context, workspaceID, agentID pgtype.UUID, limit int32) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	return s.queries.ListSceneMemoryByAgent(ctx, db.ListSceneMemoryByAgentParams{
+	rows, err := s.queries.ListAgentSceneMemoryByAgent(ctx, db.ListAgentSceneMemoryByAgentParams{
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		ListLimit:   limit,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return s.withScenes(ctx, workspaceID, agentID, rows)
 }
 
-func (s *Store) MarkDirty(ctx context.Context, id Identity, trigger DirtyTrigger) (db.SceneMemory, error) {
-	id = id.normalized()
-	if !id.valid() {
-		return db.SceneMemory{}, ErrInvalidIdentity
+// withScenes pairs memory rows with their scenes; a row whose scene is gone
+// is dropped.
+func (s *Store) withScenes(ctx context.Context, workspaceID, agentID pgtype.UUID, rows []db.AgentSceneMemory) ([]Memory, error) {
+	if len(rows) == 0 {
+		return []Memory{}, nil
+	}
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.SceneID)
+	}
+	scenes, err := s.queries.ListAgentScenesByIDs(ctx, db.ListAgentScenesByIDsParams{WorkspaceID: workspaceID, AgentID: agentID, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[pgtype.UUID]db.AgentScene, len(scenes))
+	for _, sc := range scenes {
+		byID[sc.ID] = sc
+	}
+	out := make([]Memory, 0, len(rows))
+	for _, row := range rows {
+		if sc, ok := byID[row.SceneID]; ok {
+			out = append(out, Memory{AgentSceneMemory: row, Scene: sc})
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) MarkDirty(ctx context.Context, sc db.AgentScene, trigger DirtyTrigger) (Memory, error) {
+	if !validScene(sc) {
+		return Memory{}, ErrInvalidIdentity
 	}
 	if trigger.OccurredAt.IsZero() {
 		trigger.OccurredAt = time.Now().UTC()
 	}
-	return s.queries.UpsertSceneMemoryDirty(ctx, db.UpsertSceneMemoryDirtyParams{
-		WorkspaceID:               id.WorkspaceID,
-		AgentID:                   id.AgentID,
-		Platform:                  id.Platform,
-		OrgID:                     id.OrgID,
-		SceneKey:                  id.SceneKey,
-		SceneKind:                 id.SceneKind,
-		SceneTitle:                id.SceneTitle,
+	row, err := s.queries.MarkAgentSceneMemoryDirty(ctx, db.MarkAgentSceneMemoryDirtyParams{
+		SceneID:                   sc.ID,
+		WorkspaceID:               sc.WorkspaceID,
+		AgentID:                   sc.AgentID,
 		DirtyThroughAt:            timestamptz(trigger.OccurredAt),
 		DirtyThroughEvidenceID:    strings.TrimSpace(trigger.EvidenceID),
 		LastTriggerJobID:          trigger.JobID,
 		LastTriggerCoordTraceID:   strings.TrimSpace(trigger.CoordTraceID),
 		LastTriggerIdempotencyKey: strings.TrimSpace(trigger.IdempotencyKey),
 	})
+	if err != nil {
+		return Memory{}, err
+	}
+	return Memory{AgentSceneMemory: db.AgentSceneMemory(row), Scene: sc}, nil
 }
 
-func (s *Store) Claim(ctx context.Context) (db.SceneMemory, error) {
-	return s.queries.ClaimSceneMemory(ctx)
+// Claim leases the next dirty scene memory and loads its scene.
+func (s *Store) Claim(ctx context.Context) (Memory, error) {
+	row, err := s.queries.ClaimAgentSceneMemory(ctx)
+	if err != nil {
+		return Memory{}, err
+	}
+	sc, err := s.queries.GetAgentScene(ctx, db.GetAgentSceneParams{ID: row.SceneID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID})
+	if err != nil {
+		return Memory{AgentSceneMemory: row}, err
+	}
+	return Memory{AgentSceneMemory: row, Scene: sc}, nil
 }
 
-func (s *Store) Renew(ctx context.Context, row db.SceneMemory) error {
-	n, err := s.queries.RenewSceneMemoryLease(ctx, db.RenewSceneMemoryLeaseParams{
-		ID:         row.ID,
+func (s *Store) Renew(ctx context.Context, row Memory) error {
+	n, err := s.queries.RenewAgentSceneMemoryLease(ctx, db.RenewAgentSceneMemoryLeaseParams{
+		SceneID:    row.SceneID,
 		LeaseToken: row.LeaseToken,
 	})
 	if err != nil {
@@ -112,37 +155,51 @@ func (s *Store) Renew(ctx context.Context, row db.SceneMemory) error {
 	return nil
 }
 
-func (s *Store) CommitBatch(ctx context.Context, row db.SceneMemory, batch CommitBatch) (db.SceneMemory, error) {
+// CommitBatch commits one flushed page. A non-empty batch title becomes the
+// scene's title in the directory.
+func (s *Store) CommitBatch(ctx context.Context, row Memory, batch CommitBatch) (Memory, error) {
 	if batch.ReplaceText && !ValidateMemoryText(batch.MemoryText) {
-		return db.SceneMemory{}, ErrMemoryText
+		return Memory{}, ErrMemoryText
 	}
 	meta := batch.FlushMeta
 	if len(meta) == 0 {
 		meta = []byte("{}")
 	}
 	if !json.Valid(meta) || len(meta) > MaxFlushMetaBytes {
-		return db.SceneMemory{}, ErrFlushMeta
+		return Memory{}, ErrFlushMeta
 	}
-	updated, err := s.queries.CommitSceneMemoryBatch(ctx, db.CommitSceneMemoryBatchParams{
+	updated, err := s.queries.CommitAgentSceneMemoryBatch(ctx, db.CommitAgentSceneMemoryBatchParams{
 		ReplaceText:            batch.ReplaceText,
 		MemoryText:             batch.MemoryText,
-		SceneTitle:             strings.TrimSpace(batch.SceneTitle),
 		SourceCursorAt:         timestamptz(batch.SourceCursorAt),
 		SourceCursorEvidenceID: strings.TrimSpace(batch.SourceCursorEvidenceID),
 		LastFlushMeta:          meta,
-		ID:                     row.ID,
+		SceneID:                row.SceneID,
 		LeaseToken:             row.LeaseToken,
 		ExpectedMemoryRevision: batch.ExpectedMemoryRevision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.SceneMemory{}, s.classifyLeaseWrite(ctx, row, ErrStaleRevision)
+		return Memory{}, s.classifyLeaseWrite(ctx, row, ErrStaleRevision)
 	}
-	return updated, err
+	if err != nil {
+		return Memory{}, err
+	}
+	sc := row.Scene
+	if title := strings.TrimSpace(batch.SceneTitle); title != "" && title != sc.Title && sc.ID.Valid {
+		touched, touchErr := s.queries.TouchAgentScene(ctx, db.TouchAgentSceneParams{
+			Title: title, ID: sc.ID, WorkspaceID: sc.WorkspaceID, AgentID: sc.AgentID,
+			LastActiveAt: sc.LastActiveAt,
+		})
+		if touchErr == nil {
+			sc = touched
+		}
+	}
+	return Memory{AgentSceneMemory: updated, Scene: sc}, nil
 }
 
-func (s *Store) FinishClaim(ctx context.Context, row db.SceneMemory) error {
-	n, err := s.queries.FinishSceneMemoryClaim(ctx, db.FinishSceneMemoryClaimParams{
-		ID:         row.ID,
+func (s *Store) FinishClaim(ctx context.Context, row Memory) error {
+	n, err := s.queries.FinishAgentSceneMemoryClaim(ctx, db.FinishAgentSceneMemoryClaimParams{
+		SceneID:    row.SceneID,
 		LeaseToken: row.LeaseToken,
 	})
 	if err != nil {
@@ -154,18 +211,18 @@ func (s *Store) FinishClaim(ctx context.Context, row db.SceneMemory) error {
 	return nil
 }
 
-func (s *Store) Retry(ctx context.Context, row db.SceneMemory, delay time.Duration, code, message string) error {
+func (s *Store) Retry(ctx context.Context, row Memory, delay time.Duration, code, message string) error {
 	if delay < 5*time.Second {
 		delay = 5 * time.Second
 	}
 	if delay > 15*time.Minute {
 		delay = 15 * time.Minute
 	}
-	n, err := s.queries.RetrySceneMemoryClaim(ctx, db.RetrySceneMemoryClaimParams{
+	n, err := s.queries.RetryAgentSceneMemoryClaim(ctx, db.RetryAgentSceneMemoryClaimParams{
 		DelaySeconds:  delay.Seconds(),
 		LastErrorCode: clipErr(code, 64),
 		LastError:     clipErr(message, 500),
-		ID:            row.ID,
+		SceneID:       row.SceneID,
 		LeaseToken:    row.LeaseToken,
 	})
 	if err != nil {
@@ -177,9 +234,9 @@ func (s *Store) Retry(ctx context.Context, row db.SceneMemory, delay time.Durati
 	return nil
 }
 
-func (s *Store) ReleasePending(ctx context.Context, row db.SceneMemory) error {
-	n, err := s.queries.ReleaseSceneMemoryPending(ctx, db.ReleaseSceneMemoryPendingParams{
-		ID:         row.ID,
+func (s *Store) ReleasePending(ctx context.Context, row Memory) error {
+	n, err := s.queries.ReleaseAgentSceneMemoryPending(ctx, db.ReleaseAgentSceneMemoryPendingParams{
+		SceneID:    row.SceneID,
 		LeaseToken: row.LeaseToken,
 	})
 	if err != nil {
@@ -191,11 +248,11 @@ func (s *Store) ReleasePending(ctx context.Context, row db.SceneMemory) error {
 	return nil
 }
 
-func (s *Store) Block(ctx context.Context, row db.SceneMemory, code, message string) error {
-	n, err := s.queries.BlockSceneMemory(ctx, db.BlockSceneMemoryParams{
+func (s *Store) Block(ctx context.Context, row Memory, code, message string) error {
+	n, err := s.queries.BlockAgentSceneMemory(ctx, db.BlockAgentSceneMemoryParams{
 		LastErrorCode: clipErr(code, 64),
 		LastError:     clipErr(message, 500),
-		ID:            row.ID,
+		SceneID:       row.SceneID,
 		LeaseToken:    row.LeaseToken,
 	})
 	if err != nil {
@@ -207,89 +264,78 @@ func (s *Store) Block(ctx context.Context, row db.SceneMemory, code, message str
 	return nil
 }
 
-func (s *Store) ReplaceText(ctx context.Context, workspaceID, agentID, memoryID pgtype.UUID, expectedRevision int64, text string) (db.SceneMemory, error) {
+func (s *Store) ReplaceText(ctx context.Context, row Memory, expectedRevision int64, text string) (Memory, error) {
 	if !ValidateMemoryText(text) {
-		return db.SceneMemory{}, ErrMemoryText
+		return Memory{}, ErrMemoryText
 	}
-	row, err := s.queries.ReplaceSceneMemoryText(ctx, db.ReplaceSceneMemoryTextParams{
+	updated, err := s.queries.ReplaceAgentSceneMemoryText(ctx, db.ReplaceAgentSceneMemoryTextParams{
 		MemoryText:             text,
-		ID:                     memoryID,
-		WorkspaceID:            workspaceID,
-		AgentID:                agentID,
+		SceneID:                row.SceneID,
+		WorkspaceID:            row.WorkspaceID,
+		AgentID:                row.AgentID,
 		ExpectedMemoryRevision: expectedRevision,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.SceneMemory{}, ErrStaleRevision
+			return Memory{}, ErrStaleRevision
 		}
-		return db.SceneMemory{}, err
+		return Memory{}, err
 	}
-	return row, nil
+	return Memory{AgentSceneMemory: updated, Scene: row.Scene}, nil
 }
 
-func IdentityFromRow(row db.SceneMemory) Identity {
-	return Identity{
-		WorkspaceID: row.WorkspaceID,
-		AgentID:     row.AgentID,
-		Platform:    row.Platform,
-		OrgID:       row.OrgID,
-		SceneKey:    row.SceneKey,
-		SceneKind:   row.SceneKind,
-		SceneTitle:  row.SceneTitle,
-	}
-}
-
-func (s *Store) Reset(ctx context.Context, id Identity, cutoff DirtyTrigger) (db.SceneMemory, error) {
-	id = id.normalized()
-	if !id.valid() {
-		return db.SceneMemory{}, ErrInvalidIdentity
+func (s *Store) Reset(ctx context.Context, sc db.AgentScene, cutoff DirtyTrigger) (Memory, error) {
+	if !validScene(sc) {
+		return Memory{}, ErrInvalidIdentity
 	}
 	if cutoff.OccurredAt.IsZero() {
 		cutoff.OccurredAt = time.Now().UTC()
 	}
-	return s.queries.ResetSceneMemory(ctx, db.ResetSceneMemoryParams{
-		WorkspaceID:            id.WorkspaceID,
-		AgentID:                id.AgentID,
-		Platform:               id.Platform,
-		OrgID:                  id.OrgID,
-		SceneKey:               id.SceneKey,
-		SceneKind:              id.SceneKind,
-		SceneTitle:             id.SceneTitle,
+	row, err := s.queries.ResetAgentSceneMemory(ctx, db.ResetAgentSceneMemoryParams{
+		SceneID:                sc.ID,
+		WorkspaceID:            sc.WorkspaceID,
+		AgentID:                sc.AgentID,
 		SourceCursorAt:         timestamptz(cutoff.OccurredAt),
 		SourceCursorEvidenceID: strings.TrimSpace(cutoff.EvidenceID),
 	})
+	if err != nil {
+		return Memory{}, err
+	}
+	return Memory{AgentSceneMemory: row, Scene: sc}, nil
 }
 
 func (s *Store) CountValidLeases(ctx context.Context) (int64, error) {
-	return s.queries.CountValidSceneMemoryLeases(ctx)
+	return s.queries.CountValidAgentSceneMemoryLeases(ctx)
 }
 
 func (s *Store) DeleteByWorkspace(ctx context.Context, workspaceID pgtype.UUID) error {
-	return s.queries.DeleteSceneMemoryByWorkspace(ctx, workspaceID)
+	return s.queries.DeleteAgentSceneMemoryByWorkspace(ctx, workspaceID)
 }
 
 func (s *Store) DeleteByAgent(ctx context.Context, workspaceID, agentID pgtype.UUID) error {
-	return s.queries.DeleteSceneMemoryByAgent(ctx, db.DeleteSceneMemoryByAgentParams{
+	return s.queries.DeleteAgentSceneMemoryByAgent(ctx, db.DeleteAgentSceneMemoryByAgentParams{
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 	})
 }
 
-func (s *Store) classifyLeaseWrite(ctx context.Context, row db.SceneMemory, fallback error) error {
-	current, err := s.GetByID(ctx, row.WorkspaceID, row.AgentID, row.ID)
+func (s *Store) classifyLeaseWrite(ctx context.Context, row Memory, fallback error) error {
+	current, err := s.queries.GetAgentSceneMemory(ctx, db.GetAgentSceneMemoryParams{
+		SceneID: row.SceneID, WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrLeaseLost
 		}
 		return err
 	}
-	if !leaseOwned(current, row) {
+	if !leaseOwned(current, row.AgentSceneMemory) {
 		return ErrLeaseLost
 	}
 	return fallback
 }
 
-func leaseOwned(current, claimed db.SceneMemory) bool {
+func leaseOwned(current, claimed db.AgentSceneMemory) bool {
 	if !current.LeaseToken.Valid || !claimed.LeaseToken.Valid {
 		return false
 	}
@@ -334,7 +380,7 @@ func retryDelayWithCap(attempt int32, capDelay time.Duration) time.Duration {
 	return delay
 }
 
-func StatusOf(row db.SceneMemory) string {
+func StatusOf(row Memory) string {
 	if row.BlockedAt.Valid {
 		return "blocked"
 	}

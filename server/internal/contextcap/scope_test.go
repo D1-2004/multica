@@ -13,24 +13,24 @@ func TestScopeFromTaskContext(t *testing.T) {
 	}{
 		{
 			name: "group with single sender",
-			raw: `{"dispatch_source":{"platform":"dingtalk"},"dispatch_event_data":{
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_source":{"platform":"dingtalk"},"dispatch_event_data":{
 				"conversation":{"openConversationId":" cidGroupA== ","type":"group","title":"Ops room"},
 				"sender":{"staffId":"staff-1","displayName":"Alice"},
 				"messages":[{"openMsgId":"m1","senderStaffId":"staff-1"},{"openMsgId":"m2","senderStaffId":"staff-1"}]}}`,
-			want: Scope{SceneKey: "cidGroupA==", SceneTitle: "Ops room", PersonKey: "staff-1", PersonName: "Alice", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Ops room", PersonKey: "staff-1", PersonName: "Alice", ConversationType: "group"},
 		},
 		{
 			name: "one unstamped message belongs to the data-level sender",
-			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-1","displayName":"Alice","uid":"uid-1"},
 				"messages":[{"openMsgId":"msg","text":"hello"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", PersonKey: "staff-1", PersonName: "Alice", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", PersonKey: "staff-1", PersonName: "Alice", ConversationType: "group"},
 		},
 		{
 			name: "recorded agent org is kept for the binding-drift check",
-			raw: `{"external_identity":{"dws":{"uid":"agent-uid","orgId":" 5001 "}},"dispatch_event_data":{
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"external_identity":{"dws":{"uid":"agent-uid","orgId":" 5001 "}},"dispatch_event_data":{
 				"conversation":{"openConversationId":"cidGroupA","type":"group"},"sender":{"staffId":"staff-1"}}}`,
-			want: Scope{SceneKey: "cidGroupA", PersonKey: "staff-1", ConversationType: "group", DispatchOrgID: "5001"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", PersonKey: "staff-1", ConversationType: "group", DispatchOrgID: "5001"},
 		},
 		{
 			name: "event dispatch without messages keeps its actor",
@@ -39,17 +39,17 @@ func TestScopeFromTaskContext(t *testing.T) {
 		},
 		{
 			name: "several messages without staff ids prove nothing",
-			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-2","displayName":"Yan"},
 				"messages":[{"openMsgId":"x","text":"from X"},{"openMsgId":"y","text":"from Y"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group"},
 		},
 		{
 			name: "partial identities in a merged window",
-			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-a","uid":"uid-a"},
 				"messages":[{"openMsgId":"m-a","senderStaffId":"staff-a","senderUid":"uid-a"},{"openMsgId":"m-b","senderOpenDingTalkId":"open-b"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group"},
 		},
 		{
 			name: "single message naming another uid",
@@ -65,17 +65,17 @@ func TestScopeFromTaskContext(t *testing.T) {
 		},
 		{
 			name: "coalesced follow-ups need stamped messages",
-			raw: `{"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{
 				"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-y"},"messages":[{"openMsgId":"m-x","text":"from X"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group"},
 		},
 		{
 			name: "coalesced follow-ups of one stamped person",
-			raw: `{"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{
 				"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-y"},"messages":[{"senderStaffId":"staff-y"},{"senderStaffId":"staff-y"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", PersonKey: "staff-y", ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", PersonKey: "staff-y", ConversationType: "group"},
 		},
 		{
 			name: "replayed context has no layers",
@@ -86,21 +86,34 @@ func TestScopeFromTaskContext(t *testing.T) {
 		},
 		{
 			name: "group title alias",
-			raw:  `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupB","type":"group","conversationTitle":"Alias title"},"sender":{}}}`,
-			want: Scope{SceneKey: "cidGroupB", SceneTitle: "Alias title", ConversationType: "group"},
+			raw:  `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupB","type":"group","conversationTitle":"Alias title"},"sender":{}}}`,
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Alias title", ConversationType: "group"},
 		},
 		{
 			name: "snake title alias",
-			raw:  `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupC","type":"group","conversation_title":"Snake"}}}`,
-			want: Scope{SceneKey: "cidGroupC", SceneTitle: "Snake", ConversationType: "group"},
+			raw:  `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupC","type":"group","conversation_title":"Snake"}}}`,
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Snake", ConversationType: "group"},
 		},
 		{
-			// The DM is a configuration scene (DirectSceneKey) but carries no
-			// runtime scene layer this round.
-			name: "single chat has no runtime scene",
-			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidDirect","type":"single","title":"DM"},
+			// A 1:1 chat is a scene like a group: its SceneRef is its layer.
+			name: "single chat carries its scene",
+			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},"dispatch_event_data":{"conversation":{"openConversationId":"cidDirect","type":"single","title":"DM"},
 				"sender":{"staffId":"staff-2","displayName":"Bob"},"messages":[{"senderStaffId":"staff-2"}]}}`,
-			want: Scope{PersonKey: "staff-2", PersonName: "Bob", ConversationType: "single", DirectSceneKey: "cidDirect"},
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", SceneTitle: "DM", PersonKey: "staff-2", PersonName: "Bob", ConversationType: "single"},
+		},
+		{
+			// The conversation id alone is never a scene: only the resolved
+			// SceneRef is.
+			name: "conversation without a scene ref has no scene",
+			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group","title":"Ops room"},
+				"sender":{"staffId":"staff-1"}}}`,
+			want: Scope{PersonKey: "staff-1", ConversationType: "group"},
+		},
+		{
+			name: "malformed scene ref is ignored",
+			raw: `{"agent_scene":{"scene_id":"cidGroupA"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
+				"sender":{"staffId":"staff-1"}}}`,
+			want: Scope{PersonKey: "staff-1", ConversationType: "group"},
 		},
 		{
 			name: "unknown conversation type has no DM scene",
@@ -110,20 +123,10 @@ func TestScopeFromTaskContext(t *testing.T) {
 		},
 		{
 			name: "multi sender merged run has no person",
-			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"dispatch_event_data":{"conversation":{"openConversationId":"cidGroupA","type":"group"},
 				"sender":{"staffId":"staff-1","displayName":"Alice"},
 				"messages":[{"senderStaffId":"staff-1"},{"senderStaffId":"staff-9"}]}}`,
-			want: Scope{SceneKey: "cidGroupA", ConversationType: "group"},
-		},
-		{
-			name: "invalid cid prefix",
-			raw:  `{"dispatch_event_data":{"conversation":{"openConversationId":"xidGroup","type":"group"},"sender":{"staffId":"s"}}}`,
-			want: Scope{PersonKey: "s", ConversationType: "group"},
-		},
-		{
-			name: "cid with inner whitespace",
-			raw:  `{"dispatch_event_data":{"conversation":{"openConversationId":"cid Group","type":"group"}}}`,
-			want: Scope{ConversationType: "group"},
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group"},
 		},
 		{
 			name: "sender staff id with control character",
@@ -131,10 +134,154 @@ func TestScopeFromTaskContext(t *testing.T) {
 			want: Scope{ConversationType: "single"},
 		},
 		{
+			// A staffId decides even when it is unusable: the openDingTalkId
+			// never stands in for a staffId the dispatch named.
+			name: "invalid staff id does not fall back to the openDingTalkId",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"single"},
+				"sender":{"staffId":"a\u0007b","openDingTalkId":"DopenA"},"messages":[{"senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			// DWS native subscription: the sender is named only by the
+			// openDingTalkId the receiving account sees.
+			name: "native group mention keys the person by openDingTalkId",
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},"external_identity":{"dws":{"uid":"598441033","orgId":"439446171"}},"dispatch_event_data":{
+				"conversation":{"openConversationId":"cidGroupA","type":"group","title":"Multica 预发群测试"},
+				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
+				"messages":[{"openMsgId":"m1","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","mentions":[{"uid":"598441033"}]}]}}`,
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", SceneTitle: "Multica 预发群测试", PersonKey: "odt:Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+				PersonName: "冬翔", ConversationType: "group", DispatchOrgID: "439446171"},
+		},
+		{
+			name: "native single chat keys the same person the same way",
+			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},"external_identity":{"dws":{"uid":"598441033","orgId":"439446171"}},"dispatch_event_data":{
+				"conversation":{"openConversationId":"cidDirect","type":"single"},
+				"sender":{"displayName":"冬翔","openDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"},
+				"messages":[{"openMsgId":"m2","senderOpenDingTalkId":"Dv6WPxM5cBX83sOS9u0PAAwiEiE"}]}}`,
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", PersonKey: "odt:Dv6WPxM5cBX83sOS9u0PAAwiEiE",
+				PersonName: "冬翔", ConversationType: "single", DispatchOrgID: "439446171"},
+		},
+		{
+			name: "merged native window of one sender",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{PersonKey: "odt:DopenA", ConversationType: "group"},
+		},
+		{
+			name: "merged native window of two senders has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"senderOpenDingTalkId":"DopenB"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "merged native window with an unstamped message has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA"},{"text":"who?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "coalesced follow-ups without messages have no native person",
+			raw:  `{"coordinator_follow_up_comment_ids":["c1","c2"],"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"}}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "a message with a staff id is not the openDingTalkId sender",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"senderOpenDingTalkId":"DopenA","senderStaffId":"staff-9"}]}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			name: "disagreeing sender openDingTalkIds name nobody",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"DopenA","senderOpenDingTalkId":"DopenB"}}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			name: "only senderOpenDingTalkId is enough",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"senderOpenDingTalkId":"DopenA"}}}`,
+			want: Scope{PersonKey: "odt:DopenA", ConversationType: "single"},
+		},
+		{
+			// A work item cut from a merged window keeps the window's sender;
+			// its one message, whose own sender is unknown, proves nothing.
+			name: "a native message without its own openDingTalkId has no person",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},"sender":{"openDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"anon","text":"who sent this?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "a staff id carrying the openDingTalkId prefix is refused",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"staffId":"odt:DopenA","openDingTalkId":"DopenA"}}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
+			// A native sender whose staffId the server proved keys the person
+			// by that staffId, like a Router delivery.
+			name: "native sender with a resolved staff id",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},
+				"sender":{"staffId":"103262","displayName":"冬翔","openDingTalkId":"DopenA","senderOpenDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"m1","senderStaffId":"103262","senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{PersonKey: "103262", PersonName: "冬翔", ConversationType: "group"},
+		},
+		{
+			// A work item cut from a merged native window keeps the window's
+			// resolved sender; its anonymous line proves nothing.
+			name: "native resolved sender does not cover an anonymous line",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},
+				"sender":{"staffId":"103262","openDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"anon","text":"who sent this?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
+			name: "the literal null is no openDingTalkId",
+			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"null"}}}`,
+			want: Scope{ConversationType: "single"},
+		},
+		{
 			// Still a dispatch: the org layer may apply without scene or person.
 			name: "dispatch without conversation or sender",
 			raw:  `{"dispatch_event_data":{}}`,
 			want: Scope{Dispatched: true},
+		},
+		{
+			name: "group scene routine carries the scene and its org, never a person",
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},
+				"scene_routine":{"routine_id":"r1","tenant_org_id":" 5001 ","kind":"group","person_staff_id":"staff-1"}}`,
+			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group", DispatchOrgID: "5001"},
+		},
+		{
+			name: "dm scene routine never carries a person, even one an older context named",
+			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},
+				"scene_routine":{"routine_id":"r2","tenant_org_id":"5001","kind":"dm","person_staff_id":"staff-7"}}`,
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", ConversationType: "single", DispatchOrgID: "5001"},
+		},
+		{
+			name: "dm scene routine has no person",
+			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},
+				"scene_routine":{"routine_id":"r2","tenant_org_id":"5001","kind":"dm"}}`,
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", ConversationType: "single", DispatchOrgID: "5001"},
+		},
+		{
+			name: "replayed scene routine has no layers",
+			raw: `{"replayed_dispatch_context":true,"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},
+				"scene_routine":{"routine_id":"r1","tenant_org_id":"5001","kind":"group"}}`,
+			want: Scope{},
+		},
+		{
+			name: "scene routine of an unknown kind has no layers",
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},
+				"scene_routine":{"routine_id":"r1","tenant_org_id":"5001","kind":"enterprise"}}`,
+			want: Scope{},
+		},
+		{
+			name: "scene routine without an org has no layers",
+			raw: `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"},
+				"scene_routine":{"routine_id":"r1","kind":"group"}}`,
+			want: Scope{},
+		},
+		{
+			name: "a scene ref alone is not a routine",
+			raw:  `{"agent_scene":{"scene_id":"11111111-1111-4111-8111-111111111111"}}`,
+			want: Scope{},
 		},
 		{name: "no dispatch data", raw: `{"issue_id":"x"}`, want: Scope{}},
 		{name: "malformed json", raw: `{"dispatch_event_data":`, want: Scope{}},
@@ -169,9 +316,9 @@ func TestScopeLayerSelection(t *testing.T) {
 		{name: "org only", scope: Scope{Dispatched: true, OrgID: "org-1"}, layers: true, want: LayerSelection{OrgID: "org-1", Org: true}},
 		{
 			name:   "org, scene and person",
-			scope:  Scope{Dispatched: true, OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"},
+			scope:  Scope{Dispatched: true, OrgID: "org-1", SceneID: "11111111-1111-4111-8111-111111111111", PersonKey: "staff-1"},
 			layers: true,
-			want:   LayerSelection{OrgID: "org-1", Org: true, SceneKey: "cidGroup", PersonKey: "staff-1"},
+			want:   LayerSelection{OrgID: "org-1", Org: true, SceneID: "11111111-1111-4111-8111-111111111111", PersonKey: "staff-1"},
 		},
 		{
 			// An org id without a dispatch is not an org layer.
@@ -238,6 +385,23 @@ func TestIsDirectConversationType(t *testing.T) {
 	} {
 		if got := IsDirectConversationType(tc.kind); got != tc.want {
 			t.Errorf("IsDirectConversationType(%q) = %v, want %v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestTriggerPersonKey(t *testing.T) {
+	for _, tc := range []struct{ staff, open, want string }{
+		{"staff-1", "DopenA", "staff-1"},
+		{" staff-1 ", "", "staff-1"},
+		{"", " DopenA ", "odt:DopenA"},
+		{"", "NULL", ""},
+		{"", "", ""},
+		{"odt:DopenA", "", ""},
+		{"a\u0007b", "DopenA", ""},
+		{"", "a b", ""},
+	} {
+		if got := TriggerPersonKey(tc.staff, tc.open); got != tc.want {
+			t.Errorf("TriggerPersonKey(%q, %q) = %q, want %q", tc.staff, tc.open, got, tc.want)
 		}
 	}
 }

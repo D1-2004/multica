@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -107,9 +110,11 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			// An agent without a DingTalk identity (a robot channel) keeps
-			// its scene and personal configuration under org "", its
-			// implicit tenant (contextCapAgentInOrg, configuration links):
-			// the scene and person layers apply, there is no org layer.
+			// its personal configuration under org "", its implicit tenant
+			// (contextCapAgentInOrg, configuration links): the person layer
+			// applies, there is no org layer and no scene, since every
+			// Agent work scene belongs to a tenant org.
+			scope.SceneID, scope.SceneTitle = "", ""
 			return scope, ""
 		case err != nil:
 			slog.WarnContext(ctx, "context capabilities: agent DingTalk identity unavailable; skipping org, scene and personal layers",
@@ -133,6 +138,7 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		orgID = strings.TrimSpace(identity.OrgID)
 		if orgID == "" {
 			// An identity without an org is orgless too.
+			scope.SceneID, scope.SceneTitle = "", ""
 			return scope, ""
 		}
 	}
@@ -145,6 +151,29 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		return contextcap.Scope{}, taskContextLookupFailed
 	}
 	scope.OrgID = orgID
+	// The scene layer is the task's Agent work scene only while that scene
+	// is the agent's conversation scene in the task's tenant org and the
+	// agent still serves that org through its binding (the use-time fence of
+	// docs/agent-scene.md, agentTenantOrg); otherwise the task keeps its org
+	// and person layers without one.
+	if scope.SceneID != "" {
+		_, err := contextcap.GetScene(ctx, h.DB, uuidToString(workspaceID), uuidToString(task.AgentID), orgID, scope.SceneID)
+		if err == nil {
+			var current string
+			current, err = agentTenantOrg(ctx, h.Queries, scene.Owner{WorkspaceID: workspaceID, AgentID: task.AgentID}, scope.DispatchOrgID)
+			if err == nil && current != orgID {
+				err = scene.ErrStaleTenant
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, contextcap.ErrNotFound) && !errors.Is(err, contextcap.ErrInvalidInput) &&
+				!errors.Is(err, scene.ErrStaleTenant) && !errors.Is(err, scene.ErrUnresolved) {
+				slog.WarnContext(ctx, "context capabilities: task scene lookup failed; skipping the scene layer",
+					"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
+			}
+			scope.SceneID, scope.SceneTitle = "", ""
+		}
+	}
 	return scope, ""
 }
 
@@ -227,10 +256,11 @@ func (h *Handler) taskEffectiveContext(ctx context.Context, workspaceID pgtype.U
 var connectorServerNamePattern = regexp.MustCompile(`^c[0-9a-f]{16}$`)
 
 // reservedMCPServerName reports a server name the claim's managed MCP
-// servers use: the multica server and the connector servers. A custom server
+// servers use: the multica server, the scene configuration server and the
+// connector servers. A custom server
 // of that name would make the managed merge (injectRunnerMCP) fail the claim.
 func reservedMCPServerName(name string) bool {
-	return name == "multica" || connectorServerNamePattern.MatchString(name)
+	return name == "multica" || name == sceneConfigMCPServerName || connectorServerNamePattern.MatchString(name)
 }
 
 // mergeTaskContext is the one merge of an effective context, used by the
@@ -346,6 +376,16 @@ func (t taskEffectiveContext) instructions(base string) string {
 	}
 }
 
+// personKeyHash is a short digest of a trigger person key for logs, "" for
+// none.
+func personKeyHash(key string) string {
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:6])
+}
+
 // logClaim writes the one context line of a claim: the task's tenant org and
 // layers (or why none applies), the applied prompt components and custom MCP
 // servers as layer:name, the ones a nearer layer overrides as
@@ -353,8 +393,10 @@ func (t taskEffectiveContext) instructions(base string) string {
 // a runtime without MCP, and how many skills and connectors the scope layers
 // switch on (connectors are mounted only with a usable credential, see
 // authorizedTaskConnectors). Names only: never prompt text, server
-// configuration or credentials. Tasks without a DingTalk dispatch context
-// and A2A tasks log nothing.
+// configuration or credentials. The trigger person appears only as
+// person_key_hash, so two runs can be told to share a person without
+// logging the key. Tasks without a DingTalk dispatch context and A2A tasks
+// log nothing.
 func (t taskEffectiveContext) logClaim(ctx context.Context, task db.AgentTaskQueue) {
 	if t.Skipped == taskContextNoDispatch || t.Skipped == taskContextA2A {
 		return
@@ -394,6 +436,7 @@ func (t taskEffectiveContext) logClaim(ctx context.Context, task db.AgentTaskQue
 	slog.InfoContext(ctx, "context builder: claim context",
 		"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID),
 		"org_id", t.Scope.OrgID, "skipped", t.Skipped, "layers", strings.Join(layers, ","),
+		"person_key_hash", personKeyHash(t.Scope.PersonKey),
 		"prompts", prompts, "prompts_overridden", promptsOverridden,
 		"mcp_servers", servers, "mcp_servers_overridden", serversOverridden,
 		"mcp_servers_reserved", t.ReservedMCPServers, "mcp_servers_unmounted", t.UnmountedMCPServers,
@@ -541,6 +584,9 @@ func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *interna
 		c.setResolvedCredential("", connectorCredentialNone)
 		return true
 	}
+	if decided, ok := h.applyAuthInstanceCredential(ctx, c, task); decided {
+		return ok
+	}
 	now := time.Now()
 	orgKey := ""
 	if scope.HasOrg() {
@@ -549,7 +595,7 @@ func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *interna
 	for _, layer := range []struct {
 		scopeType string
 		key       string
-	}{{contextcap.ScopePerson, scope.PersonKey}, {contextcap.ScopeScene, scope.SceneKey}, {contextcap.ScopeOrg, orgKey}} {
+	}{{contextcap.ScopePerson, scope.PersonKey}, {contextcap.ScopeScene, scope.SceneID}, {contextcap.ScopeOrg, orgKey}} {
 		if layer.key == "" {
 			continue
 		}

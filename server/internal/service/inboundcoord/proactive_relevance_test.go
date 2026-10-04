@@ -62,7 +62,7 @@ func TestGroupReviewSharesParticipationPolicyAndTrustedIdentity(t *testing.T) {
 
 func proactiveRelevanceFixtures() []coordinatorReplayFixture {
 	group := func(text string) Turn {
-		return Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "cidReplaySyntheticSceneA==", PersonID: "sender", SenderName: "小林", AgentName: "小周 Runtime", EmployeeAccountName: "小助", DWSUID: "employee-id", Message: text, Instructions: "你是小助，群里的数字员工。职责是协助排查支付故障、整理经用户授权的工作材料。不要替同事答应工作。", HistoryStatus: "empty", SceneMemoryStatus: "empty", SkillsStatus: "empty"}
+		return Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, SceneID: testSceneID("cidReplaySyntheticSceneA=="), ConversationID: "cidReplaySyntheticSceneA==", PersonID: "sender", SenderName: "小林", AgentName: "小周 Runtime", EmployeeAccountName: "小助", DWSUID: "employee-id", Message: text, Instructions: "你是小助，群里的数字员工。职责是协助排查支付故障、整理经用户授权的工作材料。不要替同事答应工作。", HistoryStatus: "empty", SceneMemoryStatus: "empty", SkillsStatus: "empty"}
 	}
 	otherMention := group("@小周 在吗")
 	otherMention.Utterances = []WindowUtterance{{Text: otherMention.Message, Sender: "小林", Mentions: []MessageMention{{UID: "other-id"}}}}

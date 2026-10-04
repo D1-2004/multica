@@ -275,3 +275,73 @@ func TestIssueEnvOmitsEmpty(t *testing.T) {
 		t.Fatalf("%v", env)
 	}
 }
+
+// An agent that prepends the task's shim directory under another spelling
+// ("workdir/../dws-shim") must not make the wrapper resolve itself.
+func TestLookPathExceptSkipsShimDirUnderAnySpelling(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix PATH shim")
+	}
+	t.Parallel()
+	root := t.TempDir()
+	shimDir, err := ensureDWSShim(root, "/opt/multica")
+	if err != nil || shimDir == "" {
+		t.Fatalf("shim: %q %v", shimDir, err)
+	}
+	workdir := filepath.Join(root, "workdir")
+	realDir := filepath.Join(root, "bin")
+	for _, dir := range []string{workdir, realDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "dws"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "shim-link")
+	if err := os.Symlink(shimDir, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{workdir + "/../dws-shim", shimDir + "/", link} {
+		path := strings.Join([]string{spelling, shimDir, realDir}, string(os.PathListSeparator))
+		got, err := lookPathExcept("dws", shimDir, path)
+		if err != nil || got != filepath.Join(realDir, "dws") {
+			t.Fatalf("PATH entry %q resolved %q %v, want the real dws", spelling, got, err)
+		}
+	}
+}
+
+func TestRunDWSWrapRefusesUnboundedReentry(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	ran := false
+	code := RunDWSWrap(DWSWrapDeps{
+		Args:   []string{"--", "--help"},
+		Stdout: io.Discard,
+		Stderr: &stderr,
+		Getenv: func(key string) string {
+			if key == dwsWrapDepthEnv {
+				return "4"
+			}
+			return ""
+		},
+		LookPath: func(string) (string, error) { return "/x/dws", nil },
+		Run: func(string, []string, io.Writer, io.Writer) error {
+			ran = true
+			return nil
+		},
+	})
+	if code != 126 || ran || !strings.Contains(stderr.String(), "refusing to recurse") {
+		t.Fatalf("code=%d ran=%v stderr=%q", code, ran, stderr.String())
+	}
+	// A normal depth still passes through.
+	code = RunDWSWrap(DWSWrapDeps{
+		Args: []string{"--", "--help"}, Stdout: io.Discard, Stderr: io.Discard,
+		Getenv:   func(key string) string { return map[string]string{dwsWrapDepthEnv: "1"}[key] },
+		LookPath: func(string) (string, error) { return "/x/dws", nil },
+		Run:      func(string, []string, io.Writer, io.Writer) error { ran = true; return nil },
+	})
+	if code != 0 || !ran {
+		t.Fatalf("depth 1 passthrough code=%d ran=%v", code, ran)
+	}
+}

@@ -15,9 +15,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
-type pageHistoryFunc func(context.Context, db.SceneMemory) (HistoryPage, error)
+type pageHistoryFunc func(context.Context, Memory) (HistoryPage, error)
 
-func (f pageHistoryFunc) Read(ctx context.Context, row db.SceneMemory) (HistoryPage, error) {
+func (f pageHistoryFunc) Read(ctx context.Context, row Memory) (HistoryPage, error) {
 	return f(ctx, row)
 }
 
@@ -27,7 +27,7 @@ func TestMemoryFlusherResumesPageAndOnlyFinishesAtTarget(t *testing.T) {
 	store := NewStore(db.New(pool))
 	id := testIdentity(t)
 	dirtyReady(t, pool, store, id)
-	_, err := pool.Exec(ctx, "UPDATE scene_memory SET memory_text='existing fact',history_resume_before=now()-interval '1 day' WHERE workspace_id=$1", id.WorkspaceID)
+	_, err := pool.Exec(ctx, "UPDATE agent_scene_memory SET memory_text='existing fact',history_resume_before=now()-interval '1 day' WHERE workspace_id=$1", id.WorkspaceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestMemoryFlusherResumesPageAndOnlyFinishesAtTarget(t *testing.T) {
 	}))
 	defer model.Close()
 	client := llm.New(llm.Config{APIKey: "test", BaseURL: model.URL, MaxRetries: -1})
-	first := &MemoryFlusher{Store: store, LLM: client, History: pageHistoryFunc(func(_ context.Context, claimed db.SceneMemory) (HistoryPage, error) {
+	first := &MemoryFlusher{Store: store, LLM: client, History: pageHistoryFunc(func(_ context.Context, claimed Memory) (HistoryPage, error) {
 		return HistoryPage{PaginationKnown: true, HasMore: true, NextCursor: next, Events: []HistoryEvent{{EvidenceID: "older", OccurredAt: next.Add(-time.Second), Content: "older fact", Speaker: "peer"}}, EvidenceIDs: []string{"older"}}, nil
 	})}
 	if err := first.Flush(ctx, row); err != nil {
@@ -66,7 +66,7 @@ func TestMemoryFlusherResumesPageAndOnlyFinishesAtTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := &MemoryFlusher{Store: store, LLM: client, History: pageHistoryFunc(func(_ context.Context, claimed db.SceneMemory) (HistoryPage, error) {
+	second := &MemoryFlusher{Store: store, LLM: client, History: pageHistoryFunc(func(_ context.Context, claimed Memory) (HistoryPage, error) {
 		if !historyStartAfter(claimed, false, time.Now()).Equal(next) {
 			t.Fatal("restart did not resume page two")
 		}
@@ -84,7 +84,7 @@ func TestMemoryFlusherResumesPageAndOnlyFinishesAtTarget(t *testing.T) {
 	}
 }
 
-func planCompleteFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
+func planCompleteFlush(row Memory, events []HistoryEvent) (flushPlan, error) {
 	page := HistoryPage{Events: events, PaginationKnown: true}
 	for _, event := range events {
 		page.EvidenceIDs = append(page.EvidenceIDs, event.EvidenceID)
@@ -92,7 +92,7 @@ func planCompleteFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, er
 	return planFlush(row, page)
 }
 
-func commitPlanForTest(t *testing.T, row db.SceneMemory, plan flushPlan) db.SceneMemory {
+func commitPlanForTest(t *testing.T, row Memory, plan flushPlan) Memory {
 	t.Helper()
 	meta, err := json.Marshal(map[string]any{"history_progress": plan.progress})
 	if err != nil {
@@ -110,16 +110,7 @@ func TestForwardHistoryProgressSurvivesMoreThanEightPagesAndRestart(t *testing.T
 	start := time.Date(2026, 9, 3, 14, 2, 14, 0, time.UTC)
 	const total = 310
 	cutoff := start.Add((total - 1) * time.Second)
-	row := db.SceneMemory{
-		SceneKind: KindGroup, DirtyRevision: 34,
-		LeaseTargetDirtyRevision: pgtype.Int8{Int64: 34, Valid: true},
-		LeaseTargetThroughAt:     timestamptz(cutoff), LeaseTargetThroughEvidenceID: "event-309",
-		LastTriggerAt: timestamptz(cutoff), LastTriggerEvidenceID: "event-309",
-		PendingFromAt: timestamptz(start), PendingFromEvidenceID: "event-000",
-		SourceCursorAt: timestamptz(start.Add(90 * time.Second)), SourceCursorEvidenceID: "event-090",
-		HistoryResumeBefore: timestamptz(start.Add(120 * time.Second)),
-		BootstrappedAt:      timestamptz(start.Add(-time.Hour)),
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{DirtyRevision: 34, LeaseTargetDirtyRevision: pgtype.Int8{Int64: 34, Valid: true}, LeaseTargetThroughAt: timestamptz(cutoff), LeaseTargetThroughEvidenceID: "event-309", LastTriggerAt: timestamptz(cutoff), LastTriggerEvidenceID: "event-309", PendingFromAt: timestamptz(start), PendingFromEvidenceID: "event-000", SourceCursorAt: timestamptz(start.Add(90 * time.Second)), SourceCursorEvidenceID: "event-090", HistoryResumeBefore: timestamptz(start.Add(120 * time.Second)), BootstrappedAt: timestamptz(start.Add(-time.Hour))}, Scene: db.AgentScene{SceneKind: KindGroup}}
 	if got := historyStartAfter(row, true, time.Now()); !got.Equal(start.Add(-time.Second)) {
 		t.Fatalf("stale backward continuation must not exclude the target: %s", got)
 	}
@@ -162,7 +153,7 @@ func TestForwardHistoryProgressSurvivesMoreThanEightPagesAndRestart(t *testing.T
 
 func TestForwardHistorySameSecondAcrossPagesUsesExactCursor(t *testing.T) {
 	at := time.Date(2026, 9, 4, 7, 36, 23, 0, time.UTC)
-	row := db.SceneMemory{DirtyRevision: 1, LeaseTargetThroughAt: timestamptz(at), LeaseTargetThroughEvidenceID: "middle", LastTriggerEvidenceID: "middle"}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{DirtyRevision: 1, LeaseTargetThroughAt: timestamptz(at), LeaseTargetThroughEvidenceID: "middle", LastTriggerEvidenceID: "middle"}, Scene: db.AgentScene{}}
 	page := HistoryPage{PaginationKnown: true, HasMore: true, NextCursor: at.Add(500 * time.Millisecond), Events: []HistoryEvent{{EvidenceID: "zzz", OccurredAt: at, Content: "first"}}, EvidenceIDs: []string{"zzz"}}
 	first, err := planFlush(row, page)
 	if err != nil || first.caughtUp {
@@ -180,7 +171,7 @@ func TestForwardHistorySameSecondAcrossPagesUsesExactCursor(t *testing.T) {
 
 func TestForwardHistoryNewDirtyRevisionReplaysLateWindow(t *testing.T) {
 	at := time.Date(2026, 9, 4, 7, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{DirtyRevision: 8, SourceCursorAt: timestamptz(at), PendingFromAt: timestamptz(at.Add(-time.Hour)), PendingFromEvidenceID: "late"}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{DirtyRevision: 8, SourceCursorAt: timestamptz(at), PendingFromAt: timestamptz(at.Add(-time.Hour)), PendingFromEvidenceID: "late"}, Scene: db.AgentScene{}}
 	row = commitPlanForTest(t, row, flushPlan{cursorAt: at, progress: historyProgress{DirtyRevision: 7, After: at.Add(time.Minute), PendingSeen: true}})
 	if _, ok := restoredHistoryProgress(row); ok {
 		t.Fatal("new revision reused old evidence coverage")
@@ -198,7 +189,7 @@ func TestForwardHistoryNewDirtyRevisionReplaysLateWindow(t *testing.T) {
 
 func TestForwardHistoryEmptyTextPageAdvancesWithoutPretendingCaughtUp(t *testing.T) {
 	at := time.Date(2026, 9, 4, 7, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{DirtyRevision: 2, LeaseTargetThroughAt: timestamptz(at.Add(time.Hour)), LeaseTargetThroughEvidenceID: "target"}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{DirtyRevision: 2, LeaseTargetThroughAt: timestamptz(at.Add(time.Hour)), LeaseTargetThroughEvidenceID: "target"}, Scene: db.AgentScene{}}
 	plan, err := planFlush(row, HistoryPage{PaginationKnown: true, HasMore: true, NextCursor: at.Add(time.Second)})
 	if err != nil || plan.caughtUp || len(plan.batch) != 0 || !plan.cursorAt.IsZero() {
 		t.Fatalf("plan=%+v err=%v", plan, err)
@@ -217,7 +208,7 @@ func TestForwardHistoryEmptyTextPageAdvancesWithoutPretendingCaughtUp(t *testing
 
 func TestForwardHistoryRejectsOversizedPageInsteadOfDroppingTail(t *testing.T) {
 	page := HistoryPage{PaginationKnown: true, Events: make([]HistoryEvent, flushBatchEvents+1)}
-	if _, err := planFlush(db.SceneMemory{}, page); FlushErrorCode(err) != ErrorIncomplete {
+	if _, err := planFlush(Memory{}, page); FlushErrorCode(err) != ErrorIncomplete {
 		t.Fatalf("oversized page accepted: %v", err)
 	}
 }

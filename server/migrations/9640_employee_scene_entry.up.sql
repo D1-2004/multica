@@ -1,0 +1,42 @@
+CREATE TABLE IF NOT EXISTS employee_event_consumption (
+ workspace_id uuid NOT NULL,
+ agent_id uuid NOT NULL,
+ tenant_org_id text NOT NULL,
+ scene_id uuid,
+ receipt_id uuid NOT NULL,
+ consumer text NOT NULL DEFAULT 'work' CHECK (consumer='work'),
+ owner_loop text NOT NULL CHECK (owner_loop IN ('coordinator','employee')),
+ config_revision text NOT NULL,
+ reason text NOT NULL DEFAULT '',
+ principal_id uuid NOT NULL,
+ payload jsonb NOT NULL,
+ job_id uuid,
+ state text NOT NULL CHECK (state IN ('delegated','queued','completed','held')),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ CHECK(scene_id IS NOT NULL OR state='held')
+);
+
+CREATE TABLE IF NOT EXISTS employee_scene_job (
+ id uuid NOT NULL DEFAULT gen_random_uuid(),
+ workspace_id uuid NOT NULL,
+ agent_id uuid NOT NULL,
+ tenant_org_id text NOT NULL,
+ scene_id uuid NOT NULL,
+ principal_id uuid NOT NULL,
+ items jsonb NOT NULL,
+ message_count integer NOT NULL CHECK (message_count BETWEEN 1 AND 32),
+ state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','running','completed')),
+ available_at timestamptz NOT NULL DEFAULT now(),
+ lease_token uuid,
+ lease_until timestamptz,
+ generation bigint NOT NULL DEFAULT 0,
+ attempt_count integer NOT NULL DEFAULT 0,
+ model_attempts integer NOT NULL DEFAULT 0 CHECK (model_attempts BETWEEN 0 AND 3),
+ input_snapshot jsonb,
+ model_journal jsonb NOT NULL DEFAULT '[]',
+ tool_journal jsonb NOT NULL DEFAULT '{}',
+ outcome jsonb,
+ last_error text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
