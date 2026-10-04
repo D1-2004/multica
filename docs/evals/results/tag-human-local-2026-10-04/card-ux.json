@@ -1,0 +1,44 @@
+{
+  "mode": "isolatedPG_scriptedmodel_fakeprovider",
+  "base": "608edae5161dbc1df3ef7c52b5514fae052dc773",
+  "actual_UI_not_verified": true,
+  "actual_DM_fix_not_verified": true,
+  "first_transport_skip": "A2UI_RESPONSE_TEST_DATABASE_URL omitted once; original process retained, explicit isolatedrerun passed",
+  "checks": {
+    "handler": {
+      "top_level_pass": 60,
+      "named_pass": 129,
+      "fail": 0,
+      "skip": 0,
+      "local_path": "/tmp/tag-card-ux-handler.jsonl",
+      "sha256": "b22fa828e9d50629eefe599c73a032b9e0dc85d62f83159474c4aedda24806f2"
+    },
+    "transport-final": {
+      "top_level_pass": 12,
+      "named_pass": 34,
+      "fail": 0,
+      "skip": 0,
+      "local_path": "/tmp/tag-card-ux-transport-final.jsonl",
+      "sha256": "52b082730d16ad2c91660cd2ed46fed2f4017ad077ce6308ab600e6efefb023e"
+    }
+  },
+  "compile_only_server": "passed",
+  "vet": "passed",
+  "migrations": [
+    "10120",
+    "10121"
+  ],
+  "recovery": "independentPG stop afterfinal review, no sharedconfig/DWS/Runtime writes",
+  "rebase_verification": {
+    "target": "80d74195a1b095ff3cd47506c662ae7dc428d464",
+    "changes": "once contract/foreground Host; semantic rebase no conflict",
+    "human_affected_named_pass": 52,
+    "fail": 0,
+    "skip": 0,
+    "compiler": "passed",
+    "log": {
+      "local_path": "/tmp/tag-card-ux-rebased.jsonl",
+      "sha256": "350376a1b77448a7a636c9b5d39ae90ce10935163345a7db15a195604ad0b9ac"
+    }
+  }
+}

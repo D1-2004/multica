@@ -247,6 +247,31 @@ func allows(actor Actor, row Interaction, got click) bool {
 	if row.spec.OperatorUID != "" && got.Operator != row.spec.OperatorUID {
 		return false
 	}
+	if row.spec.EmployeeCompact && (row.Kind == KindConfirm || row.Kind == KindChoose) {
+		if got.Outcome == "skipped" {
+			return true
+		}
+		if got.Outcome != "answered" || (!row.spec.Multiple && len(got.Selected) > 1) || (len(got.Selected) == 0 && got.Custom == "") {
+			return false
+		}
+		seen := map[string]bool{}
+		for _, id := range got.Selected {
+			if seen[id] {
+				return false
+			}
+			seen[id] = true
+			found := false
+			for _, option := range row.spec.Options {
+				if option.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+	}
 	return true
 }
 
@@ -361,6 +386,8 @@ func normalize(req OpenRequest) (Interaction, error) {
 		ReceiverOpenDingTalkID: req.ReceiverOpenDingTalkID,
 		OperatorUID:            req.OperatorUID,
 		Markdown:               req.Markdown,
+		EmployeeCompact:        req.EmployeeCompact,
+		SourceQuote:            clip(strings.Join(strings.Fields(req.SourceQuote), " "), 80),
 	}
 	switch req.Kind {
 	case KindConfirm, KindChoose:

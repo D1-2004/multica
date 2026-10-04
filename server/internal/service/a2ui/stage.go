@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+
 	"github.com/google/uuid"
 )
 
@@ -66,4 +69,71 @@ func (s *Service) InspectNativeAnswer(ctx context.Context, actor Actor, line []b
 		return NativeAnswer{}, ErrInvalid
 	}
 	return NativeAnswer{got.PublicID, got.EventID, got.Operator, got.Selected, got.Custom, got.Outcome}, nil
+}
+
+// ResolvedProjection derives the closed display from the persisted candidates.
+// The caller owns answer admission and durable update retries; this method has
+// no write effects and never trusts caller-supplied labels or task routing.
+func (s *Service) ResolvedProjection(ctx context.Context, publicID string, result Result) ([]string, error) {
+	row, err := s.Get(ctx, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if row.Kind != KindConfirm && row.Kind != KindChoose && row.Kind != KindApproval {
+		return nil, fmt.Errorf("%w: resolved projection requires frozen choices", ErrInvalid)
+	}
+	ref, ok := ParseRef(row.PublicID)
+	if !ok || ref.ID != row.ID || ref.Family != row.Kind.Family() {
+		return nil, fmt.Errorf("%w: resolved projection reference", ErrInvalid)
+	}
+	surfaceID := row.spec.SurfaceID
+	if surfaceID == "" {
+		surfaceID = ref.SurfaceID()
+	}
+	if surfaceID != ref.SurfaceID() {
+		return nil, fmt.Errorf("%w: resolved projection surface", ErrInvalid)
+	}
+	if result.Outcome == string(StatusSkipped) {
+		return projectResolvedAsk(surfaceID, row.Question, nil, "", result.Outcome)
+	}
+	switch result.Outcome {
+	case string(StatusAnswered):
+	case string(StatusApproved), string(StatusRejected):
+		if row.Kind != KindApproval {
+			return nil, fmt.Errorf("%w: resolved projection outcome", ErrInvalid)
+		}
+	default:
+		return nil, fmt.Errorf("%w: resolved projection outcome", ErrInvalid)
+	}
+	if !row.spec.Multiple && len(result.Selected) > 1 {
+		return nil, fmt.Errorf("%w: resolved projection selection count", ErrInvalid)
+	}
+	byID := make(map[string]string, len(row.spec.Options))
+	for _, option := range row.spec.Options {
+		byID[option.ID] = compactOptionLabel(option)
+	}
+	labels := make([]string, 0, len(result.Selected))
+	seen := make(map[string]bool, len(result.Selected))
+	for _, id := range result.Selected {
+		label, found := byID[id]
+		if !found || seen[id] {
+			return nil, fmt.Errorf("%w: resolved projection option", ErrInvalid)
+		}
+		seen[id] = true
+		labels = append(labels, label)
+	}
+	custom := strings.TrimSpace(result.Custom)
+	if result.Outcome == string(StatusApproved) || result.Outcome == string(StatusRejected) {
+		index := 0
+		if result.Outcome == string(StatusRejected) {
+			index = 1
+		}
+		if len(row.spec.Options) < 2 || len(result.Selected) != 1 || result.Selected[0] != row.spec.Options[index].ID {
+			return nil, fmt.Errorf("%w: resolved projection approval decision", ErrInvalid)
+		}
+	}
+	if len(labels) == 0 && custom == "" {
+		return nil, fmt.Errorf("%w: resolved projection empty answer", ErrInvalid)
+	}
+	return projectResolvedAsk(surfaceID, row.Question, labels, custom, result.Outcome)
 }

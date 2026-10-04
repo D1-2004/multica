@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_human_card_projection_due_idx;

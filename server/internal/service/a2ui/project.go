@@ -27,6 +27,9 @@ func projectCard(publicID, surfaceID string, kind Kind, header, question string,
 }
 
 func projectAsk(publicID, surfaceID string, kind Kind, header, question string, spec storedRequest) ([]string, error) {
+	if spec.EmployeeCompact && (kind == KindConfirm || kind == KindChoose) {
+		return projectEmployeeAsk(publicID, surfaceID, question, spec)
+	}
 	selection := "single"
 	if spec.Multiple {
 		selection = "multiple"
@@ -123,6 +126,130 @@ func projectAsk(publicID, surfaceID string, kind Kind, header, question string, 
 			"surfaceId": surfaceID, "components": append([]any{root}, components...),
 		}},
 	)
+}
+
+// projectEmployeeAsk keeps frozen choices in action literals rather than a
+// client-editable answer model. Multiple choice still has an explicit finish.
+func projectEmployeeAsk(publicID, surfaceID, question string, spec storedRequest) ([]string, error) {
+	children := []string{"question"}
+	components := []any{titleText("question", question)}
+	if spec.SourceQuote != "" {
+		children = append([]string{"source-quote"}, children...)
+		components = append(components, captionText("source-quote", "“"+spec.SourceQuote+"”"))
+	}
+	model := map[string]any{"clarification": map[string]any{
+		"sourceTurnId": publicID, "sourceProjectionVersion": Version,
+	}}
+	if !spec.Multiple {
+		for _, option := range spec.Options {
+			labelID, rowID, buttonID := "label-"+option.ID, "choice-row-"+option.ID, "choice-"+option.ID
+			children = append(children, buttonID)
+			optionChildren := []string{labelID}
+			containerKind := "Row"
+			if option.Description != "" {
+				descriptionID := "description-" + option.ID
+				optionChildren = append(optionChildren, descriptionID)
+				containerKind = "Column"
+				components = append(components, captionText(descriptionID, compactDescription(option.Description)))
+			}
+			components = append(components,
+				bodyText(labelID, option.Label),
+				basicComponent(rowID, containerKind, map[string]any{"children": optionChildren, "justify": "start", "align": "start", "gap": 2}),
+				basicComponent(buttonID, "Button", map[string]any{
+					"child": rowID, "variant": "borderless", "action": directChoiceAction(publicID, option.ID),
+				}),
+			)
+		}
+	} else {
+		pickerOptions := make([]any, 0, len(spec.Options))
+		for _, option := range spec.Options {
+			pickerOptions = append(pickerOptions, map[string]any{"label": compactOptionLabel(option), "value": option.ID})
+		}
+		clarification := model["clarification"].(map[string]any)
+		clarification["answers"] = map[string]any{"q0": map[string]any{"selected": []string{}, "custom": ""}}
+		children = append(children, "choices", "actions")
+		components = append(components,
+			basicComponent("choices", "ChoicePicker", map[string]any{
+				"options": pickerOptions, "value": pathOf("/clarification/answers/q0/selected"),
+				"variant": "multipleSelection", "displayStyle": "checkbox",
+			}),
+			basicComponent("actions", "Row", map[string]any{"children": []string{"submit"}, "align": "center", "justify": "end"}),
+			basicComponent("submitLabel", "Text", map[string]any{"text": "确认"}),
+			basicComponent("submit", "Button", map[string]any{
+				"child": "submitLabel", "variant": "primary", "action": map[string]any{"event": map[string]any{
+					"name": submitEvent, "context": map[string]any{
+						"outcome": "answered", "sourceTurnId": publicID, "sourceProjectionVersion": Version,
+						"answers": pathOf("/clarification/answers"),
+					},
+				}}, "checks": submitChecks(false),
+			}),
+		)
+	}
+	components = append([]any{basicComponent("root", "Column", map[string]any{
+		"children": children, "align": "stretch", "justify": "start", "gap": 8,
+	})}, components...)
+	return encodeMessages(
+		map[string]any{"version": "v1.0", "createSurface": map[string]any{
+			"surfaceId": surfaceID, "catalogId": catalogPublic, "dataModel": model,
+		}},
+		map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": surfaceID, "components": components}},
+	)
+}
+
+func compactDescription(description string) string {
+	return clip(strings.Join(strings.Fields(description), " "), 80)
+}
+
+func compactOptionLabel(option storedOption) string {
+	if option.Description == "" {
+		return option.Label
+	}
+	return option.Label + " · " + compactDescription(option.Description)
+}
+
+func directChoiceAction(publicID, optionID string) map[string]any {
+	return map[string]any{"event": map[string]any{
+		"name": submitEvent,
+		"context": map[string]any{
+			"outcome": "answered", "sourceTurnId": publicID,
+			"sourceProjectionVersion": Version,
+			"answers":                 map[string]any{"q0": map[string]any{"selected": []string{optionID}, "custom": ""}},
+		},
+	}}
+}
+
+// projectResolvedAsk replaces the surface tree with text only. The previous
+// buttons remain unreachable from root even on renderers that retain old ids.
+func projectResolvedAsk(surfaceID, question string, labels []string, custom, outcome string) ([]string, error) {
+	children := []string{"resolved-question"}
+	components := []any{titleText("resolved-question", question)}
+	for i, label := range labels {
+		id := "resolved-" + strconv.Itoa(i)
+		children = append(children, id)
+		components = append(components,
+			bodyText(id+"-label", label),
+			publicComponent(id+"-check", "Text", map[string]any{
+				"text": "✓", "variant": "body", "colorToken": colorPrimary, "maxLine": 1,
+			}),
+			basicComponent(id, "Row", map[string]any{
+				"children": []string{id + "-label", id + "-check"}, "justify": "spaceBetween", "align": "center", "gap": 8,
+			}),
+		)
+	}
+	if custom != "" && len(labels) == 0 {
+		children = append(children, "resolved-custom")
+		components = append(components, captionText("resolved-custom", clip(custom, 160)))
+	}
+	if outcome == string(StatusSkipped) {
+		children = append(children, "resolved-skipped")
+		components = append(components, captionText("resolved-skipped", "先不选"))
+	}
+	components = append([]any{basicComponent("root", "Column", map[string]any{
+		"children": children, "align": "stretch", "justify": "start", "gap": 8,
+	})}, components...)
+	return encodeMessages(map[string]any{"version": "v1.0", "updateComponents": map[string]any{
+		"surfaceId": surfaceID, "components": components,
+	}})
 }
 
 func projectChart(surfaceID, title string, spec storedRequest) ([]string, error) {
