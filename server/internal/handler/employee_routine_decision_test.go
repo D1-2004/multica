@@ -90,6 +90,13 @@ func (x *employeeRoutineHandlerFixture) processWake(t *testing.T) {
 // dispatch starts exactly the frozen packet once, with routine notices.
 func TestEmployeeRoutineDecisionWakeDispatchesFrozenRule(t *testing.T) {
 	x, model := newEmployeeRoutineDecisionFixture(t, "FROZEN_DECISION_V1: remind only when the weekly report is missing.")
+	prepareNumericRoutineSendIdentity(t, x.f, &x.a)
+	previousResponses := testHandler.DingTalkResponses
+	testHandler.DingTalkResponses = x.f.h.DingTalkResponses
+	t.Cleanup(func() { testHandler.DingTalkResponses = previousResponses })
+	previousWorker := testHandler.EmployeeSceneWorker
+	testHandler.EmployeeSceneWorker = x.f.h.EmployeeSceneWorker
+	t.Cleanup(func() { testHandler.EmployeeSceneWorker = previousWorker })
 	ctx := context.Background()
 	model.respond = func(int) (string, map[string]any) {
 		return wakeToolCall("call-run", "run_routine", map[string]any{"reason": "the weekly report is missing"})
@@ -126,7 +133,7 @@ func TestEmployeeRoutineDecisionWakeDispatchesFrozenRule(t *testing.T) {
 	auth := service.TaskClaimAuthorization{EmployeeDirectRuntimeIDs: []pgtype.UUID{x.runtime.ID}}
 	claimed := x.claimExact(t, auth, parseUUID(state.QueueID))
 	req := newDaemonTokenRequest(http.MethodPost, "/", nil, testWorkspaceID, x.daemonID)
-	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1)
+	req.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityEmployeeDirectV1+","+protocol.DWSMessagePolicyCapability)
 	resp, _, _, _, failure := testHandler.buildClaimedTaskResponse(req, claimed, x.runtime, "", uuidToString(x.runtime.ID), testWorkspaceID)
 	if failure != nil || !strings.Contains(resp.DirectTaskPrompt, "FROZEN_DECISION_V1") || strings.Contains(resp.DirectTaskPrompt, "CHANGED_DECISION_V2") {
 		t.Fatalf("decided claim failure=%v prompt=%q", failure, resp.DirectTaskPrompt)

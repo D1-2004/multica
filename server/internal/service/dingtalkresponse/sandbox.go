@@ -27,7 +27,7 @@ func (s *Service) RecordSandboxReceipt(ctx context.Context, in ActionInput, rece
 	// verify this task's send. Incoming callback content is not trusted routing.
 	in = ActionInput{WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, TaskID: in.TaskID, IssueID: in.IssueID,
 		DWSUID: in.DWSUID, DWSOrgID: in.DWSOrgID, ConversationID: in.ConversationID,
-		SenderOpenDingTalkID: in.SenderOpenDingTalkID, IsGroup: in.IsGroup}
+		SenderOpenDingTalkID: in.SenderOpenDingTalkID, IsGroup: in.IsGroup, DWSEnvironment: in.DWSEnvironment}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		return err
