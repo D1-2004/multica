@@ -158,10 +158,14 @@ func (h *Handler) admitEmployeeHumanResponseTx(ctx context.Context, tx pgx.Tx, q
 	return nil
 }
 
+const employeeHumanQuestionFraming = `HUMAN INTERACTION: When the current human asks to choose options or clarify a recipient before work starts, or required input is missing before any authorized preparation can begin, use a2ui_ask here in Employee and end this round. Do not dispatch that unresolved work to Pi just to ask the human. dispatch_task.follow_up_steps are automatically runnable authorized steps, never a human-input wait; never put "ask, wait for human, then assume they answered" into a plan. No Task is needed merely to ask. A current question about the options does not accept them: explain or clarify without dispatch. The selected scope, synthetic materials, method and no-send/no-contact constraints come from the actual source, never add real-document searches or file sending that it did not request. If preparation itself is authorized before the missing answer, its completed Pi round may later emit the strict clarification result; no live sandbox session waits for the human.
+HUMAN ANSWERS: Buttons are shortcuts. A current message may answer, provide new information, change the request, ask back, or start another topic. Use accept_human_response only when the actual outer wording clearly addresses one listed pending_human_questions entry; preserve all words and added constraints. Explicit quote identifies the question; otherwise resolve from meaning and conversation, never choose the latest Task by default. If ambiguous ask which. New topics/thanks do not satisfy or cancel all pending questions. An old question never overrides a newer explicit request.`
+
 func (w *EmployeeSceneWorker) appendHumanQuestions(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, input *employeeSavedInput) error {
 	if !w.humanQuestionsReady(ctx) {
 		return nil
 	}
+	input.Config.Persona.Instructions += "\n\n" + employeeHumanQuestionFraming
 	database, ok := employeeEntryDB(w.handler)
 	if !ok {
 		return humanquestion.ErrInvalid
@@ -187,7 +191,6 @@ func (w *EmployeeSceneWorker) appendHumanQuestions(ctx context.Context, job empl
 	}
 	raw, _ := json.Marshal(map[string]any{"pending_human_questions": questions})
 	input.Input.TaskBrief += "\n\n" + string(raw)
-	input.Config.Persona.Instructions += "\n\nHUMAN QUESTIONS: Buttons are shortcuts. A current message may answer, provide new information, change the request, ask back, or start another topic. Use accept_human_response only when the actual outer wording clearly addresses one listed question; preserve all words and added constraints. Explicit quote identifies the question; otherwise resolve from meaning and conversation, never choose the latest Task by default. If ambiguous ask which. New topics/thanks do not satisfy or cancel all pending questions. An old question never overrides a newer explicit request."
 	return nil
 }
 

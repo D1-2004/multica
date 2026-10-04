@@ -47,3 +47,7 @@ human_response item仅question_ref/response_ref/version、message_count=0，不�
 文件真实送达且用户要求不再总结时，抑制额外消息不抑制已核实的V2结果推进：有效结果可完成Goal；suggest不再发额外卡片；clarify保留问题/mandatory wait供后续普通文字补充，不额外发卡。非法或非结构结果仍不宣布Goal完成。
 
 持久quiet与人工问答结合：旧前台卡不恢复参与，不启动新执行或产生新前台回复；前台未提交的新卡在quiet时压制。已授权后台Run的结果/轮末卡保留原通知规则。效果事务与新发送前再次检查；已受理的远端请求沿原回执对账，不冒称撤回。
+
+## 首次询问裁决
+
+human reader就绪的新message snapshot无论是否已有pending question，都冻结人工交互策略。当前人要求先确认选项/接收人或尚缺执行前的必要信息时，由前台a2ui_ask发题后结束本轮；不得把提问包装成dispatch_task或自动follow_up_steps。后者是已授权可自动执行的步骤，不表示人工等待。普通问回不接受为答案，合成素材和全部执行/外发约束不得扩写为查真实资料或文件发送。Pi轮末澄清仍只在确有先做的授权准备工作时使用。旧冻结snapshot/journal不热改。

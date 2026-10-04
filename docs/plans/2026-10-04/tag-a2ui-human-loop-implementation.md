@@ -69,3 +69,17 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 真实取证面检查发现typed终态工具未导出LF Host结果，虽然journal落库，但真实验证不能直接从终态generation读取receipt/Task/Run/queue。先更新LF合同，再补同已有frontend一致的工具观测与question/response来源索引；只在实际journal回调执行时记录，replay不制造工具调用，不增加模型请求或改变派发。该有限观测改动随候选交付，验证脱敏、实际结果IDs与重放次数。
 
 有限取证补充验证完成：Human全部＋既有frontend trace共18顶层/37命名通过，零fail/skip；真实DB journal重放不增加tool span/Run，Host receipt与实际Task/Run/queue一致，秘钥哨兵经既有脱敏消失，server compile-only通过。仍是独立本地scripted model/provider，未签真实IM。
+
+## H01真实首轮失败与有限修复
+
+统一source36a18c/release34ceba/Run3110385309，现场两live loop22/human1且Tag13/Runtime461验证。H01冬翔17:37:17明确先单选后执行，但Loop98de1ca7实际dispatch_task并自动follow_up_steps，17:37:25建Task0fd4c4d3，17:37:39第二Run运行；没有A2UI卡。17:39:06现场另一真人回复A（非本session发出）晚于提前执行，不清除原FAIL。系统另加真实资料查询/文件交付，17:41:54文件送达新测试群；原现场留存。原人17:42:29停止后APIcancelled/无activeRun。
+
+初始完整LF gen含a2ui_ask，但首问没有HUMAN策略，appendHumanQuestions在pending为空时早返回。只补Host新snapshot策略，清楚禁止用自动plan表示人类wait，保留独立Pi准备/轮末与已有自动步骤合同；不写中文关键词硬路由，不改旧冻结input/journal。修后局部模型/数据库约束仅作本地证据，H01原反例仍待独立修复发布真实复验。其余依赖前台首问的case暂停，保存首轮FAIL而非清History重跑到绿。
+
+## 后续交付工作流（用户最新要求）
+
+后续改动全部经a1创建Code Review，目标统一feat/tag-multitenant，并向用户给出CLI返回的CR链接。合并代码、解决目标分支集成冲突及部署由“发布协调”session负责；本session只维护范围明确的源分支、CR与验收证据。收到其部署完成通知后重新核对精确source/release/run、live marker/fence、Runtime及配置，再接续原反例与冻结场景；不自行合并或发布。
+
+本次首问修复从最新aone/feat/tag-multitenant@1b28362ca2独立建源分支codex/tag-human-first-question-cr-20261004，仅摘880c712981的5文件修复与合同/证据，避免旧分支历史及独立公共入口混入CR。原H01失败和群历史保留，CR创建不表示修后真实模型已通过。
+
+CR目标基线复验完成：独立PG15434已按该版迁移，本Human及联合入口21顶层/40命名通过、零fail/skip，cmd/server compile-only通过。此为本地scripted model/provider，仍等待“发布协调”合并/部署完成通知，再验原H01和其余9入口。

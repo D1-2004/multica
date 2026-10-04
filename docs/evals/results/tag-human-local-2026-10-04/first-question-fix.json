@@ -1,0 +1,37 @@
+{
+  "reason": "realH01 failed before answer; first snapshot lacked human framing when no pending questions",
+  "local_mode": "isolatedPG/scriptedmodel",
+  "top_level_pass": 19,
+  "named_pass": 38,
+  "fail": 0,
+  "skip": 0,
+  "compiler": "passed",
+  "proves": [
+    "first question framing on empty pending ledger",
+    "no unsupported producer policy upgrade",
+    "frozen snapshot/journal unchanged on replay",
+    "prior Human local boundaries retained"
+  ],
+  "not_proved": [
+    "actual model chooses a2ui_ask after fix",
+    "real rendering/callback/freshRun/finaldelivery"
+  ],
+  "log": {
+    "local_path": "/tmp/tag-human-first-question-fix.jsonl",
+    "sha256": "b207cab3452dadffb8cf020cb998ac41a2fbc572f33bbe94f0ac95138ce014f0"
+  },
+  "cr_target_verification": {
+    "base": "1b28362ca27112b7df1a07210983ab8565cdddfe",
+    "target_branch": "feat/tag-multitenant",
+    "top_level_pass": 21,
+    "named_pass": 40,
+    "fail": 0,
+    "skip": 0,
+    "compiler": "passed",
+    "local_mode": "isolatedPG/scriptedmodel",
+    "log": {
+      "local_path": "/tmp/tag-human-cr-handler.jsonl",
+      "sha256": "f9432ff569af607436431123277c762dce1f2e4e1c14b289e22110a919cca3e0"
+    }
+  }
+}
