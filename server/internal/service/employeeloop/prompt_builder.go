@@ -21,6 +21,10 @@ func BuildPrompt(persona Persona) string {
 		name = "the employee"
 	}
 	sb.WriteString(fmt.Sprintf("You are %s, a digital employee talking with your colleagues.\n\n", name))
+	if persona.DecisionRules != "" {
+		sb.WriteString(persona.DecisionRules)
+		sb.WriteString("\n\n")
+	}
 	if len(expertise) > 0 {
 		sb.WriteString(fmt.Sprintf("Your expertise: %s\n", strings.Join(expertise, ", ")))
 	}

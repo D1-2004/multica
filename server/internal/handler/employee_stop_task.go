@@ -76,6 +76,9 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
+	if binding.SharedReadOnly {
+		return employeeloop.ToolResult{}, nil, errors.New("shared_read_only task cannot be stopped")
+	}
 	if err = employeeQuotedControl(source, binding); err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}

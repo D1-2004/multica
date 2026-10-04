@@ -71,12 +71,18 @@ type Input struct {
 // Persona contains trusted employee configuration, separate from conversation data.
 type Persona struct {
 	Name, Personality, Tone string
+	// DecisionRules is an optional trusted, front-loaded decision contract.
+	// Empty legacy snapshots keep their original prompt bytes.
+	DecisionRules string `json:"DecisionRules,omitempty"`
 	// Instructions contains trusted configured duties and business constraints.
 	// It does not grant Host permissions or capabilities.
 	Instructions string
 	Expertise    []string
 }
 type Config struct {
+	// StreamedFeedback is frozen only into new protocol inputs. Old snapshots
+	// keep Chat and their original request hashes.
+	StreamedFeedback bool `json:"streamed_feedback,omitempty"`
 	// OnBatchRejected observes validation failures before Host effects.
 	OnBatchRejected     func([]ToolCall, error) `json:"-"`
 	Persona             Persona

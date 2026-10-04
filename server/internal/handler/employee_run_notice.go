@@ -517,6 +517,9 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 // notice. It fences a fresh submission; provider-accepted/unknown actions never
 // call it and continue the existing query/receipt reconciliation path.
 func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkresponse.ActionInput) error {
+	if in.EmployeeFirstFeedbackJobID != "" {
+		return h.beforeEmployeeFirstFeedbackSend(ctx, in)
+	}
 	if in.EmployeeMessageJobID != "" {
 		return h.beforeEmployeeParticipationSend(ctx, in)
 	}

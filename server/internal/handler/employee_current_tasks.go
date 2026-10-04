@@ -27,7 +27,8 @@ type employeeCurrentTaskBinding struct {
 	TaskID       string `json:"task_id"`
 	// Origin is employeeQuoteOrigin for a candidate resolved from the exact
 	// message the source quotes; empty for the requester's recent tasks.
-	Origin string `json:"origin,omitempty"`
+	Origin         string `json:"origin,omitempty"`
+	SharedReadOnly bool   `json:"shared_read_only,omitempty"`
 }
 type employeeCurrentTaskRead struct {
 	SourceRef string                       `json:"source_ref"`
@@ -44,6 +45,19 @@ const employeeTaskExecutionInheritancePolicy = "CURRENT TASK CONTROL (ordered de
 const employeeCurrentTaskGuidance = employeeTaskExecutionInheritancePolicy + "These are source-bound candidates, not current status. Read the selected task before answering progress or continuing it. Use human_source_links (the original requester wording, names and source association visible in this conversation) with the current dialogue to distinguish tasks whose summarized goals look alike. Creation and execution timestamps are facts, not a rule to select the newest. If this source names an earlier request or work just discussed, match that actual source relationship rather than an older task with a similar goal. With multiple still-plausible candidates ask which one; do not select the newest by default. All state_at_snapshot/latest_run_at_snapshot fields are frozen evidence, not current status or process-exit proof; read_task remains mandatory for progress or continuation. Ordinary thanks/chat needs no task action. Continue only a succeeded task explicitly requested by this source; running, failed and cancelled tasks cannot be restarted here. Questions about a finished report (what a number means or what its evidence proves) can be answered directly. " + " An explicitly requested new retrospective, report or comparison is a new deliverable, even when it is short and no new data is needed; “不要重新统计” means reuse the result, not answer the new deliverable in the foreground. When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task. Task result_report is executor-reported content, never proof of delivery or completion of a new request."
 
 func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) ([]employeeCurrentTaskBinding, string, error) {
+	ready, err := w.taskDiscoveryReady(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return w.currentTasksForInput(ctx, job, envelopes, ready)
+}
+
+// The snapshot builder passes the version already chosen for its tool table,
+// so a changing replica gate cannot mix new tools with legacy task reports.
+func (w *EmployeeSceneWorker) currentTasksForInput(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, ready bool) ([]employeeCurrentTaskBinding, string, error) {
+	if ready {
+		return w.discoveredInputTasks(ctx, job, envelopes)
+	}
 	database, ok := employeeEntryDB(w.handler)
 	if !ok {
 		return nil, "", errors.New("employee task storage is unavailable")
@@ -138,7 +152,7 @@ func (h *employeeSceneHost) currentTaskBinding(ctx context.Context, tx employeeQ
 			return binding, nil
 		}
 	}
-	return employeeCurrentTaskBinding{}, errors.New("task_ref is not a candidate for this source")
+	return h.discoveryBinding(ctx, tx, source, ref)
 }
 
 // Recheck original admission and invocation rights inside the tool transaction.
@@ -185,6 +199,9 @@ func (h *employeeSceneHost) readCurrentTask(ctx context.Context, tx pgx.Tx, sour
 	binding, err := h.currentTaskBinding(ctx, tx, source, ref)
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
+	}
+	if binding.SharedReadOnly {
+		return h.readSharedTask(ctx, tx, source, call, binding)
 	}
 	snapshot, err := employeetask.NewStore(tx).ReadCurrent(ctx, h.taskScope(), source.RequesterRef, binding.TaskID)
 	if err != nil {
@@ -265,6 +282,9 @@ func (h *employeeSceneHost) prepareContinuation(ctx context.Context, source empl
 	binding, err := h.currentTaskBinding(ctx, database, source, ref)
 	if err != nil {
 		return nil, err
+	}
+	if binding.SharedReadOnly {
+		return nil, errors.New("shared_read_only task cannot be continued")
 	}
 	if err = employeeQuotedControl(source, binding); err != nil {
 		return nil, err
@@ -411,6 +431,15 @@ func (h *employeeSceneHost) currentTaskReplay(ctx context.Context, tx pgx.Tx, so
 	binding, err := h.currentTaskBinding(ctx, tx, source, ref)
 	if err != nil {
 		return nil, err
+	}
+	if binding.SharedReadOnly {
+		if call.Name != "read_task" {
+			return nil, errors.New("shared_read_only task cannot be controlled or read for history")
+		}
+		if _, err := employeetask.NewStore(tx).ReadSharedMetadata(ctx, h.taskScope(), source.RequesterRef, binding.TaskID); err != nil {
+			return nil, err
+		}
+		return raw, nil
 	}
 	task, err := employeetask.NewStore(tx).Get(ctx, h.taskScope(), binding.TaskID)
 	if err != nil {

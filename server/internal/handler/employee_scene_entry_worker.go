@@ -58,7 +58,9 @@ import (
 // Older workers cannot safely execute the newly frozen task_ref tool calls.
 // Marker 20 combines marker 19 steer support with disclosure-only progress wakes
 // and their current-Run send fence.
-const EmployeeLoopReplicaMarker = "[employee-loop:20]"
+// Marker 21 adds source-bound task discovery and the explicit first-request
+// feedback frame, its running send fence and the frozen streaming request flag.
+const EmployeeLoopReplicaMarker = "[employee-loop:21]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only
@@ -80,6 +82,9 @@ type EmployeeSceneWorker struct {
 	// MemoryToolsReady reports whether every live replica supports
 	// EmployeeMemoryReplicaMarker; nil keeps new inputs on memory tools v1.
 	MemoryToolsReady func(context.Context) (bool, error)
+	// TaskDiscoveryReady gates new demand-driven task discovery inputs. Nil
+	// retains legacy candidate snapshots; frozen inputs are never upgraded.
+	TaskDiscoveryReady func(context.Context) (bool, error)
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -587,6 +592,13 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	}
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: w.newInputTools(ctx)}}
 	input.Config.HistoryPresentation = employeeloop.HistoryPresentationConversationTurnsV1
+	for _, tool := range input.Config.Tools {
+		if tool.Name == "find_tasks" {
+			input.Config.Persona.DecisionRules = employeeTaskDecisionRules
+			break
+		}
+	}
+	employeeConfigureFirstFeedback(&input.Config, job, messages, envelopes)
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
@@ -601,7 +613,7 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		input.ModelRoute = &plan
 		input.Config.Model = plan.Candidates[0].Model
 	}
-	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
+	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasksForInput(ctx, job, envelopes, input.Config.Persona.DecisionRules != "")
 	if err != nil {
 		return employeeSavedInput{}, err
 	}
@@ -704,6 +716,18 @@ type employeeJournalModel struct {
 }
 
 func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	return m.chat(ctx, request, nil)
+}
+func (m *employeeJournalModel) ChatStreamed(ctx context.Context, request openai.ChatCompletionNewParams, observe func(openai.ChatCompletionChunk) error) (*openai.ChatCompletion, error) {
+	extra := map[string]any{}
+	for k, v := range request.ExtraFields() {
+		extra[k] = v
+	}
+	extra["stream"] = true
+	request.SetExtraFields(extra)
+	return m.chat(ctx, request, observe)
+}
+func (m *employeeJournalModel) chat(ctx context.Context, request openai.ChatCompletionNewParams, observe func(openai.ChatCompletionChunk) error) (*openai.ChatCompletion, error) {
 	ordinal := m.ordinal
 	m.ordinal++
 	failJournal := func(err error) (*openai.ChatCompletion, error) {
@@ -791,7 +815,16 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 		return m.recordFailure(ctx, ordinal, errors.New("employee legacy model is unavailable"))
 	}
 	generation := employeeTraceGeneration(ctx, m.job, ordinal, request, routeMetadata)
-	out, err := delegate.Chat(callCtx, request)
+	var out *openai.ChatCompletion
+	if observe != nil {
+		if streamed, ok := delegate.(employeeloop.StreamingModel); ok {
+			out, err = streamed.ChatStreamed(callCtx, request, observe)
+		} else {
+			err = errors.New("employee prepared provider has no streamed completion support")
+		}
+	} else {
+		out, err = delegate.Chat(callCtx, request)
+	}
 	// A provider may return a completion after its deadline with no error.
 	// Retain it as diagnostic output, but never accept its tool calls.
 	if callErr := callCtx.Err(); callErr != nil {
@@ -843,6 +876,9 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 	h := w.handler
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+		if err := supersedeEmployeeFirstFeedback(ctx, tx, job.ID); err != nil {
+			return err
+		}
 		// Reuse this transaction for the use-time fences; borrowing the pool here
 		// deadlocks a single-connection deployment while Complete holds its lease.
 		permissionView := &Handler{Queries: db.New(tx)}

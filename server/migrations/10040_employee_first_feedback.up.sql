@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS employee_first_feedback (
+ id uuid NOT NULL,
+ workspace_id uuid NOT NULL,
+ agent_id uuid NOT NULL,
+ tenant_org_id text NOT NULL,
+ scene_id uuid NOT NULL,
+ job_id uuid NOT NULL,
+ receipt_id uuid NOT NULL,
+ source_ref text NOT NULL,
+ requester_ref text NOT NULL,
+ principal_id uuid NOT NULL,
+ native_call_id text NOT NULL,
+ text text NOT NULL,
+ action_id text NOT NULL,
+ action_input jsonb NOT NULL,
+ state text NOT NULL DEFAULT 'enqueued' CHECK (state IN ('enqueued','suppressed')),
+ reason text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);

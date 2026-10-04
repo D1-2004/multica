@@ -1005,6 +1005,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryReplicaMarker)
 	}
+	// New task discovery and streamed feedback are frozen together only once
+	// every live reader can execute and safely send this protocol.
+	h.EmployeeSceneWorker.TaskDiscoveryReady = func(ctx context.Context) (bool, error) {
+		if opts.DeploymentFence == nil {
+			return false, nil
+		}
+		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeLoopReplicaMarker)
+	}
 	// Scene digest (memory M11): each newly persisted human transcript line
 	// marks its scene dirty in the insert transaction; the budgeted writer
 	// claims scenes only once every live replica advertises the digest marker.
