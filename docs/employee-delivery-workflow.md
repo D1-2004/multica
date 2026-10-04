@@ -24,3 +24,5 @@
 对应已完成批次的实际轨迹见[收口效率沿革](plans/2026-10-04/employee-closeout-efficiency-history.md)，当前交付事实见[执行表](employee-delivery-execution.md)。这些是批次记录，不作为固定账号、路径或截止的项目政策。
 
 SPEC / EVALS相关交付按[验证组织与维护](evals/verification-maintenance.md)映射需求、稳定用例与受影响P0；定义、代码发布和真实验收分别报告，当前责任与结果仍以唯一执行表为准。
+
+持续收件与发布采用[增量验证规则](evals/verification-maintenance.md#收件发布与增量验证)：测试不中断整轮、不全量重启，版本穿窗只处理受影响用例；缺环境明确标注，缺对应case向交付者补件。
