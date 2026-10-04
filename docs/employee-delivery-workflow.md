@@ -102,3 +102,5 @@ LF 用本仓 `inspect-langfuse` / `inspect-langfuse-trace` 和 `scripts/query-la
 交付材料包含本次代码/部署 manifest、测试名单与边界、逐例 IM/API/SLS/LF 证据、清理/恢复、开放承诺和下步。临时材料尽快转存持久证据目录，认证目录不入库、不分享；只读 token 不落正文。
 
 当前状态唯一入口见 [执行表](employee-delivery-execution.md)，本轮结论见 [最终验收报告](plans/2026-10-03/employee-loop-backend-delivery/23-acceptance-report.md)；15接续核对与11执行板仅作历史沿革。具体账号、群、run、runtime、marker 以当波 manifest 的实时读取为准，不能从个人 skill 永久抄固定值。
+
+最近独立修复批次：[四项局部修复交付报告](plans/2026-10-04/employee-four-fixes-report.md)。当前版本及部署事实仍以[唯一执行表](employee-delivery-execution.md)为准，不能把本地候选当已发布。

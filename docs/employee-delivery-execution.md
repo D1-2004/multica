@@ -1,12 +1,12 @@
 # Employee 本轮唯一执行表
 
-当前摘要唯一权威；最后更新：2026-10-04 08:39，Asia/Shanghai。范围于08:14冻结，08:43硬截止。历史材料保留，不再作为当前状态入口。
+当前摘要唯一权威；最后更新：2026-10-04 09:28，Asia/Shanghai。上轮范围08:14冻结并在08:43前收口；09:00后的四项修复为用户单独授权的新批次。历史材料保留，不再作为当前状态入口。
 
 ## 当前交付版本
 
 | 对象 | 当前事实 |
 | --- | --- |
-| Multica源码 | f4c4790cbea1066857f96d4b6468c9710d77646b |
+| Multica源码 | 已部署功能基线f4c4790；本轮本地修复候选788088f2d4/epoch18，未推送未部署 |
 | Release / 预发 | a4c7b77e9225290e91de8ed1d0cafde611011225；pipeline66 / run3110369623，07:00:25部署成功，验证门未关闭 |
 | Live副本 | pod149134 06:58:47.051、pod56137 06:59:57.988启动；normal，两epoch17/webhook1/memory1–3 |
 | 测试Agent | workspace5f8b5b73 / agent33af235e；RealNiubility rev11；runtime461aabb2，原Template4osx6sfmkew1ysmdck4n未切 |
@@ -51,3 +51,18 @@
 | 测试记忆与actorleases | 仅新测试记录 | 已精确forgotten，群/DM lease释放；原历史保留 |
 
 本轮已收口：review汇总、恢复/清理回读和最终报告已完成。后续按开放项另立批次。禁止新的真实测试/长等待/构建/部署。新问题按严重度登记后续，不重启本轮范围。
+
+
+## 用户单独授权的四项修复（09:28 本地交付）
+
+[本轮报告](plans/2026-10-04/employee-four-fixes-report.md)与[Plan](plans/2026-10-04/employee-four-fixes.md)。不修改上轮真实验收结论，不开启新部署/IM轮次。
+
+| 项 | 当前结论 | 证据 | 限制/下一步 |
+| --- | --- | --- | --- |
+| 新任务归属 | 代码合同修复，独立新Task/redo/builds_on本地通过 | EMPLOYEE-FOUR-FIXES-20261004/integrated-handler-tests.log | 真实模型选择及Python未复验，原E2E FAIL保留 |
+| 遗忘遗漏 | 新TaskWake历史沿用可信本人过滤，本地builder通过及旧实现对照失败 | EMPLOYEE-FOUR-FIXES-20261004/privacy | 旧冻结snapshot未治理；预发epoch17未切 |
+| 提醒事实 | 有界持久过程事实、时间边界与unknown输入验证通过 | EMPLOYEE-FOUR-FIXES-20261004/task-facts | 真实表述未复验，不补长等 |
+| 持续安静 | 持久控制、owner恢复、异账号0模型及native排队抑制通过 | EMPLOYEE-FOUR-FIXES-20261004/quiet-final-tests.log | Router callback提交前、旧多receipt哈希notice保留边界；后台通知不静音 |
+| 本地清理 | 三独立DB已drop且回读0，配置未动 | EMPLOYEE-FOUR-FIXES-20261004/cleanup.json | 开发worktree保留审计，未新增远端对象 |
+
+当前行动已结束；发布/真实四例复验需另批授权。本轮无新增全仓migration冲突，已有lint失败保留，不扩大修复。
