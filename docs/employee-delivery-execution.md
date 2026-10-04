@@ -102,3 +102,21 @@
 | 发布窗口routine | Runtime准备失败保留 | 10:00运行a5c3e376未重跑，不新增Runtime修复/镜像 |
 
 之前的08:39/09:28/09:58摘要只作沿革，不是当前部署事实；功能整体不签收，未关闭人工预发验证。
+
+## SPEC / EVALS接管回执（当前职责）
+
+已收到并核对源session的人类移交授权：本session负责统一集成/预发发布、组织后续验证和持续维护SPEC+EVALS；源session停止独立发布。不需要再次确认；没有创建后台自动化或新的部署轮次。
+
+| 项 | 核对事实 |
+| --- | --- |
+| fetch来源 | aone/feat/evaluation-hub精确HEAD34dc79f7eabb63153f63a83930bc9dd49a67b4e9；功能78fffd467179e5ed577317d8e834ad731643abaf |
+| 完整序列 | 3512f2543f → e1d8f13495 → 3a2f721ad0 → 326e563cb8 → 8e7f4a447d → 78fffd4671均为已发布f9a6d687的祖先，不只取最后一笔 |
+| 必需资产 | 交接、上报合同、贡献规范、三定义、evalreport模块、CLI及10020–10023 eval migrations共22文件齐全；source与集成blob逐项相等，除最后交接文档外与已发布release亦相等 |
+| 统一分支 | employee/progress-release，接管代码核对HEAD6852c43343e44f6685b20898e0c56cb720191319；已rebase到平台f9a6d687并摘取34dc的交接文档。reader20/steer/progress及本session记录保留，主checkout其他WIP未动 |
+| 当前检查 | make eval-check通过：5 SPEC、5分类、20 P0、16场景、123用例（78 existing / 45 defined）；evalcatalog/evalreport Go检查通过。只是定义/局部检查，不是办公E2E |
+| 安全接缝 | human-before-workspace、全live eval-report:1、workspace事务清理、三个INVALID索引恢复hook均在统一代码中；不把代码存在升级为真实协议验收 |
+| 已发布/待验 | 完整功能已在13:16发布的f9a6d687；本次新增交接/维护文档无需再部署。预发页面、真实报告201/200/409和权限反例未跑，整体评测仍不签收 |
+| 单一入口 | 预发publisher为本session统一分支；原CR36361979历史证据保留，不重跑其旧阻塞实例。下一次行为/发布从统一来源推进 |
+| 后续组织 | 按[维护流程](evals/verification-maintenance.md)依次组织原新任务FAIL、后台阶段展示、记忆交互及报告协议；每次映射SPEC→case→受影响P0，保留未执行分母 |
+
+精确核对证据：EMPLOYEE-PROGRESS-INTEGRATION-20261004/evals-receipt.json、evals-definition-check.log。本次代码接管与收件回执完成；后续真实验收另有明确窗口/范围，不冒称已完成。
