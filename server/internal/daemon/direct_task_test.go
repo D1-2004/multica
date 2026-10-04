@@ -17,7 +17,7 @@ import (
 func TestDirectTaskPromptAndCapability(t *testing.T) {
 	task := Task{ID: "queue-1", WorkspaceID: "workspace-1", DirectTaskPrompt: "Analyze current order queue and return exact marker DIRECT_OK"}
 	p := BuildPrompt(task, "codex")
-	if !strings.Contains(p, task.DirectTaskPrompt) || !strings.Contains(p, "captured automatically") {
+	if p != task.DirectTaskPrompt+"\n" {
 		t.Fatal(p)
 	}
 	for _, bad := range []string{"Start by running `multica issue get", "multica issue create", "Autopilot"} {
@@ -70,13 +70,10 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(brief), "Direct employee task") {
-		t.Fatalf("wrong runtime brief: %s", brief)
-	}
 	if !strings.Contains(string(brief), task.Agent.Instructions) {
 		t.Fatal("prepared Direct brief lost role/scene instructions")
 	}
-	for _, forbidden := range []string{"# Multica Agent Runtime", "## Available Commands", "## Important: Always Use", "multica attachment upload"} {
+	for _, forbidden := range []string{"# Multica Agent Runtime", "# Direct Employee Execution", "## Background Task Safety", "## Output", "## Available Commands", "## Important: Always Use", "multica attachment upload"} {
 		if strings.Contains(string(brief), forbidden) {
 			t.Errorf("prepared Direct brief leaked %q", forbidden)
 		}

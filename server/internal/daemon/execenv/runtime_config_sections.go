@@ -815,9 +815,6 @@ func writeDeliveryInvariant(b *strings.Builder) {
 func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	b.WriteString("## Output\n\n")
 	switch kind {
-	case kindEmployeeDirect:
-		b.WriteString("This is a Direct employee task. Your final assistant output is captured automatically as the run result. State the outcome concisely; the host owns delivery to the originating scene.\n\n")
-		b.WriteString("**Delivering files here:** use the installed DingTalk file tools and report delivery only from verified receipts. Never present runtime-local paths as delivered files.\n")
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
@@ -884,13 +881,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 // workflows. Agent and context instructions are preserved without text filtering.
 func buildDirectTaskBrief(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
-	b.WriteString("# Direct Employee Execution\n\n")
 	writeAgentIdentity(&b, ctx)
 	writeWorkspaceContext(&b, ctx)
 	writeSkills(&b, provider, ctx)
-	b.WriteString("## Background Task Safety\n\n")
-	b.WriteString("Your run ends when your top-level turn exits. Collect required work and tool results before returning; do not leave run-owned work in the background or promise a later wakeup.\n\n")
-	writeOutput(&b, kindEmployeeDirect, ctx)
 	return b.String()
 }
 

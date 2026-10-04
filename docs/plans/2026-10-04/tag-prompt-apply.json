@@ -1,0 +1,68 @@
+{
+  "server": "https://pre-fde-workbench.dingtalk.com",
+  "workspace_id": "5f8b5b73-f912-4879-9a29-b763d103fedf",
+  "template_id": "cfa971c0-11e2-441c-918f-483418d814ea",
+  "previous_revision": 12,
+  "apply": {
+    "revision": 13,
+    "published": true,
+    "results": [
+      {
+        "tenant_id": "4ab3b895-5ae8-4e5c-a23b-69e6c2d5284b",
+        "applied": true,
+        "skipped_skill_ids": [],
+        "skipped_connector_ids": [],
+        "skipped_plugin_ids": [],
+        "skipped_offer_ids": []
+      },
+      {
+        "tenant_id": "cc357586-119c-4b7e-8f04-c6be51865088",
+        "applied": true,
+        "skipped_skill_ids": [],
+        "skipped_connector_ids": [],
+        "skipped_plugin_ids": [],
+        "skipped_offer_ids": []
+      }
+    ]
+  },
+  "readback": [
+    {
+      "agent_id": "23cbd386-9498-4848-a112-a6953b4aaef5",
+      "instructions_match": true,
+      "changed_fields": [
+        "instructions",
+        "updated_at"
+      ]
+    },
+    {
+      "agent_id": "33af235e-e03b-4be2-be3b-bbae8b97fce5",
+      "instructions_match": true,
+      "changed_fields": [
+        "instructions",
+        "updated_at"
+      ]
+    }
+  ],
+  "before_sha256": "eecda334e732b9737099c8dfd331983092fb99013fa3195df9e92a4cd8b7338a",
+  "after_sha256": "ed42f4a706d5024ebb80a83d88e45739eb6c44abc178234cb55c003bb8137e7a",
+  "model_e2e_verified": false,
+  "initial_revision": 11,
+  "all_tenants_readback": {
+    "revision": 13,
+    "unpublished": false,
+    "tenants": [
+      {
+        "id": "4ab3b895-5ae8-4e5c-a23b-69e6c2d5284b",
+        "name": "钉钉",
+        "agent_id": "23cbd386-9498-4848-a112-a6953b4aaef5",
+        "applied_revision": 13
+      },
+      {
+        "id": "cc357586-119c-4b7e-8f04-c6be51865088",
+        "name": "RealNiubility",
+        "agent_id": "33af235e-e03b-4be2-be3b-bbae8b97fce5",
+        "applied_revision": 13
+      }
+    ]
+  }
+}
