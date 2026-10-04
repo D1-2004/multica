@@ -178,13 +178,13 @@ WHERE id = $1;
 INSERT INTO autopilot_trigger (
     autopilot_id, kind, enabled, cron_expression, timezone,
     next_run_at, webhook_token, label, provider, event_filters,
-    published_by_type, published_by_id, merge_interval_minutes
+    published_by_type, published_by_id, merge_interval_minutes, run_at
 ) VALUES (
     $1, $2, $3, sqlc.narg('cron_expression'), sqlc.narg('timezone'),
     sqlc.narg('next_run_at'), sqlc.narg('webhook_token'), sqlc.narg('label'),
     COALESCE(sqlc.narg('provider')::text, 'generic'),
     sqlc.narg('event_filters'),
-    sqlc.narg('published_by_type'), sqlc.narg('published_by_id'), sqlc.narg('merge_interval_minutes')
+    sqlc.narg('published_by_type'), sqlc.narg('published_by_id'), sqlc.narg('merge_interval_minutes'), sqlc.narg('run_at')
 ) RETURNING *;
 
 -- name: SetAutopilotTriggerPublisher :exec
@@ -214,11 +214,21 @@ UPDATE autopilot_trigger SET
     cron_expression = COALESCE(sqlc.narg('cron_expression'), cron_expression),
     timezone = COALESCE(sqlc.narg('timezone'), timezone),
     next_run_at = sqlc.narg('next_run_at'),
+    run_at = COALESCE(sqlc.narg('run_at'), run_at),
     label = COALESCE(sqlc.narg('label'), label),
     event_filters = COALESCE(sqlc.narg('event_filters'), event_filters),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: GetAutopilotTriggerForUpdate :one
+SELECT * FROM autopilot_trigger WHERE id = $1 FOR UPDATE;
+
+-- name: ConsumeOnceAutopilotTrigger :execrows
+-- Consume in the same transaction as durable occurrence admission.
+UPDATE autopilot_trigger
+SET next_run_at = NULL, last_fired_at = now(), updated_at = now()
+WHERE id = $1 AND kind = 'once' AND run_at = $2 AND last_fired_at IS NULL;
 
 -- name: DeleteAutopilotTrigger :exec
 DELETE FROM autopilot_trigger WHERE id = $1;
@@ -430,14 +440,14 @@ RETURNING *;
 -- Filters out webhook / api triggers, disabled triggers, paused/archived
 -- autopilots, and any trigger missing its cron expression. ORDER BY id
 -- keeps the per-tick scope list stable across replicas.
-SELECT t.id, t.autopilot_id, t.cron_expression, t.timezone, t.created_at, t.last_fired_at
+SELECT t.id, t.autopilot_id, t.kind, t.run_at, t.cron_expression, t.timezone, t.created_at, t.last_fired_at
 FROM autopilot_trigger t
 JOIN autopilot a ON a.id = t.autopilot_id
-WHERE t.kind = 'schedule'
+WHERE t.kind IN ('schedule', 'once')
   AND t.enabled = TRUE
   AND a.status = 'active'
-  AND t.cron_expression IS NOT NULL
-  AND t.cron_expression <> ''
+  AND ((t.kind = 'schedule' AND t.cron_expression IS NOT NULL AND t.cron_expression <> '')
+    OR (t.kind = 'once' AND t.run_at IS NOT NULL))
 ORDER BY t.id;
 
 -- =====================

@@ -1,0 +1,2 @@
+ALTER TABLE employee_scene_job VALIDATE CONSTRAINT employee_scene_job_kind_check;
+ALTER TABLE employee_scene_job VALIDATE CONSTRAINT employee_scene_job_message_count_check;

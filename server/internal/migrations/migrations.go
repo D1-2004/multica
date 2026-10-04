@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/selfexec"
@@ -63,12 +64,30 @@ func Files(direction string) ([]string, error) {
 		return nil, err
 	}
 
-	if direction == "down" {
-		sort.Sort(sort.Reverse(sort.StringSlice(files)))
-	} else {
-		sort.Strings(files)
-	}
+	sortMigrationFiles(files, direction == "down")
 	return files, nil
+}
+
+// sortMigrationFiles orders versions numerically across the 9999 boundary.
+// Same-prefix stems keep lexical order; the migration ledger still uses the
+// entire stem, so neither aliases nor applied-version identity changes.
+func sortMigrationFiles(files []string, reverse bool) {
+	less := func(a, b string) bool {
+		ap, _, _ := strings.Cut(filepath.Base(a), "_")
+		bp, _, _ := strings.Cut(filepath.Base(b), "_")
+		an, ae := strconv.ParseUint(ap, 10, 64)
+		bn, be := strconv.ParseUint(bp, 10, 64)
+		if ae == nil && be == nil && an != bn {
+			return an < bn
+		}
+		return a < b
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if reverse {
+			return less(files[j], files[i])
+		}
+		return less(files[i], files[j])
+	})
 }
 
 // AllVersions returns every "up" migration version found on disk, in apply

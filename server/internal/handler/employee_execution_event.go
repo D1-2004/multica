@@ -35,7 +35,8 @@ const employeeExecutionSchema = "employee.execution/1"
 // a newer proof or require a foreground replica-marker change.
 // Version 5 also verifies Host-dispatched plan steps; a replica without it
 // recorded their skips under version 4, which version 5 reassesses.
-const employeeExecutionProofVersion = 5
+// Version 6 verifies typed human-response jobs against their actual journal.
+const employeeExecutionProofVersion = 6
 
 // employeeExecutionTerminal is a fact, never a continuation or a user message.
 // The output remains on Run/queue; the envelope contains only durable references.
@@ -318,7 +319,7 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 		return "source_job_missing", nil
 	}
 	var job employeeentry.Job
-	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State)
+	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state,kind FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State, &job.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "source_job_missing", nil
 	}
@@ -330,6 +331,23 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 	}
 	if job.State != "completed" {
 		return "source_job_pending", nil
+	}
+	sourceJobID := b.JobID
+	humanJob := job
+	if job.Kind == employeeentry.KindHumanResponse {
+		humanJob.ID = b.JobID
+		binding, e := readEmployeeHumanBinding(ctx, tx, humanJob)
+		if e != nil {
+			return "human_response_binding_revoked", nil
+		}
+		var meta struct {
+			ResponseID string `json:"employee_human_response_id"`
+		}
+		if json.Unmarshal(b.Queue.Context, &meta) != nil || meta.ResponseID != binding.Response.ID || b.SourceRef != binding.Question.SourceRef {
+			return "human_response_queue_binding_mismatch", nil
+		}
+		job = binding.OriginJob
+		sourceJobID = job.ID
 	}
 	if !employeeExecutionInputMatches(b.Queue, c, metadata) {
 		_, steered, err := employeeExecutionSteerInput(ctx, tx, b)
@@ -361,7 +379,7 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 				return "source_receipt_invalid", nil
 			}
 			var admitted bool
-			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1 AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7 AND owner_loop='employee' AND state='completed')`, receiptID, b.JobID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.SceneID, principal).Scan(&admitted)
+			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1 AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7 AND owner_loop='employee' AND state='completed')`, receiptID, sourceJobID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.SceneID, principal).Scan(&admitted)
 			if err != nil {
 				return "", err
 			}
@@ -385,6 +403,9 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 	}
 	if b.SourceReceiptID == "" {
 		return "source_message_missing", nil
+	}
+	if humanJob.Kind == employeeentry.KindHumanResponse {
+		return employeeHumanExecutionProof(ctx, tx, b, humanJob)
 	}
 	return employeeExecutionDispatchProof(ctx, tx, b)
 }

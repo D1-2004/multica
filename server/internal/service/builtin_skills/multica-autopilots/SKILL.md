@@ -134,3 +134,13 @@ and conversation IDs to read messages when the runbook requires their content.
 The run detail exposes the same statistics in `trigger_payload`. No prompt
 placeholder is required. Both `create_issue` and `run_only` are supported.
 The former hourly conversation-summary task creator is retired.
+
+## Scene one-shot schedules
+
+A scene-managed trigger may have `kind=once` with an absolute `run_at`. Manage
+it through the scene configuration MCP/API, not generic autopilot commands:
+scene-managed writes are refused with `managed_by_scene`. It requires Employee
+mode, preserves the originating scene and selected source context, and admits
+one occurrence. `last_fired_at` means consumed/admitted, not delivered. Pending
+one-shots can be rescheduled or cancelled; consumed ones cannot be rearmed.
+Do not translate a one-shot into cron or sleep in an execution.

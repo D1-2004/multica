@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_human_response_event_idx;

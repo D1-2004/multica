@@ -378,8 +378,24 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 
 **本人跨源私人记录撤销（`[employee-loop:17]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。
 
+## 按需事项查找与首轮公开反馈（reader21）
+
+新输入先在可信前缀判断当前人的请求。明确要求另开独立新工作时，创建新Task并保留实际执行方法；主题、数值或旧报告相同不能代替执行。不在普通输入里默认装入最近五个旧事项及成功报告，以免旧答案提前锚定判断。只有需要查询、续接或依赖旧成果时才调用原生 `find_tasks(source_ref, query?)`。确切引用保留本人的 `q` 候选，但预置内容仅为元数据。query是有界goal字面子串匹配，多个合理候选需澄清。
+
+查找先取同workspace/agent/tenant/scene下当前消息requester的匹配，零匹配才在已观测登记的group取同场域其他人的安全摘要。DM不跨人。共享候选只给目标、状态、时间；`read_task`仍只给这些元数据，history、continue、stop、steer和builds_on均拒绝。动态引用 `native_call_id:tN` 与查找结果在工具journal同事务保存；消费与重放校验当前source/requester、scope及实际归属，不能把可读当可改。旧t/q快照和原请求字节保留。
+
+新构建、单一真人来源且有回应资格的输入可在同一次首模型请求里输出完整的 `first_feedback` 公开帧，然后继续必要只读计划。SSE observer只接收已解析且来源明确的一句自然意图；不转发普通text delta、推理或业务参数。Host以持久化首请求和 `model_attempts==1` 校验首次接收；重发未完成首请求不能另开反馈资格，已入账效果可幂等重放。完整响应通过finish_reason、整批及参数校验后才跑普通业务工具。合法首句可能已提交而后续流失败，两项分别记录，最终必须如实收束。三次真实请求预算、20秒单请求期限和原路由授权不变，没有反馈专用推理轮次。
+
+`employee_first_feedback`、独立response_action与native journal同事务；key绑定job+receipt，不含lease、文本或尝试数。公开意图receipt有专用前缀，无terminal/Task/Run、原Router callback或执行证明。通知存储故障回滚后作为可选工具拒绝，业务可继续；权限、lease和journal错误仍受原fence约束。running发送门重查来源、principal、场域、安静与最终状态；最终Complete原子取消pending，发送reserve的CAS避免迟到复活。unknown/accepted只沿现有provider查询，不重发也不阻塞final；已外部提交的消息不能保证撤回或第三方到达次序。
+
+新producer使用已选择工具表的同一版本结果，仅全部在线reader21就绪才冻结新查找/流式字段；混版暂停受理、恢复和新发送，旧冻结输入不热改。后台执行进度仍按原progress wake合同处理。直答、严格格式、安静、直接受理不额外首句；真实模型选择及IM效果由发布后的场景验证，源码、SSE夹具和本地DB不签产品E2E。范围、来源与接手清单见[本批Plan](plans/2026-10-04/employee-intent-stream-implementation.md)。
+
 ## 持续会话安静（epoch18）
 
 参考GawkBot固定71e82a的DisabledMembers/notifier_targets：明确禁用不能被@绕过。stay_quiet只结束当轮；持续安静要求通过原生set_scene_participation记录scene级quiet，只有原发起者当前外层明确恢复或重新要求回应可改active。模型选语义，Host守精确source/quote/权限，不用中文关键词自动写状态。其他账号的会话wake摄入后零模型Quiet；后台Task/routine继续，通知按原授权发送。暂停/恢复有确认回复；quiet下不能通过旧snapshot调用普通工具或发送普通前台回复。状态与journal同事务，重放不增revision。
 
 native foreground action发送前验证其completed message job、scope和notice绑定，quiet压制尚未提交provider的其他job回复；暂停ACK例外仅该控制job。已提交远端请求不保证撤回。同步Router callback在入账时受控，尚缺独立提交前控制；旧多receipt哈希notice没有新job字段也有边界，不签所有前台投递全覆盖。新表及工具需所有live副本epoch18；目前仅本地实现，未部署。不得在quiet控制仍有效时直接回退到不支持该状态的epoch17；恢复active并排空新工具job后才可安排兼容回退，另批审核。
+
+## 人工选择与文字答复（开发分支）
+
+新增能力合同见 [人工交互](employee-human-interaction.md)。新生产者由独立 `[employee-human:1]` 门禁保护，保留旧快照与计划/V1合同；轮末结构、前台询问、typed答复和普通文字均复用本Loop。开发接入不表示已经部署或通过真实IM。

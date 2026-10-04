@@ -216,6 +216,9 @@ func (h *Handler) employeeAcceptedNoticeSource(ctx context.Context, tx pgx.Tx, s
 // or absent model policy never revokes an earlier explicit file-only instruction.
 // The input boundary excludes promises accepted after this particular Run.
 func (h *Handler) employeeTaskNoticeCommitment(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding, principal string, checkPolicy bool) (employeetask.CompletionNoticePolicy, *service.DirectTaskNoticeOrigin, error) {
+	if policy, origin, handled, err := h.employeeHumanNoticeCommitment(ctx, tx, b, principal); handled {
+		return policy, origin, err
+	}
 	policy := employeetask.CompletionNoticePolicy{Mode: employeetask.CompletionNoticeAlways}
 	var origin *service.DirectTaskNoticeOrigin
 	rows, err := tx.Query(ctx, `SELECT e.kind,e.source_key,e.body,s.payload->>'queue_task_id',COALESCE(j.id::text,''),j.tool_journal
@@ -326,8 +329,8 @@ func (h *Handler) employeeContinuationNoticePolicy(ctx context.Context, task emp
 	if json.Unmarshal(queue.Context, &delivery) != nil {
 		return policy, nil, nil, holdEmployeeNotice("completion_notice_source_mismatch")
 	}
-	b := employeeNoticeBinding{Scope: task.Scope, TaskID: task.ID, QueueID: queueID, Requester: task.RequesterRef, JobID: delivery.JobID, SourceRef: delivery.SourceRef}
-	if err = tx.QueryRow(ctx, `SELECT id::text FROM employee_task_run WHERE queue_task_id=$1 AND task_id=$2::uuid AND workspace_id=$3::uuid`, id, task.ID, task.Scope.WorkspaceID).Scan(&b.RunID); err != nil {
+	b := employeeNoticeBinding{Scope: task.Scope, TaskID: task.ID, QueueID: queueID, Queue: queue, Requester: task.RequesterRef, JobID: delivery.JobID, SourceRef: delivery.SourceRef}
+	if err = tx.QueryRow(ctx, `SELECT id::text,goal_revision FROM employee_task_run WHERE queue_task_id=$1 AND task_id=$2::uuid AND workspace_id=$3::uuid`, id, task.ID, task.Scope.WorkspaceID).Scan(&b.RunID, &b.RunGoalRevision); err != nil {
 		return policy, nil, nil, err
 	}
 	committed, committedOrigin, err := h.employeeTaskNoticeCommitment(ctx, tx, b, principal, true)

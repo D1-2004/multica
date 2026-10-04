@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/employeeloopconfig"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
@@ -44,6 +45,7 @@ const (
 	sceneRoutineIntervalProbe = 12
 	sceneRoutineTriggerCron   = "schedule"
 	sceneRoutineTriggerHook   = "webhook"
+	sceneRoutineTriggerOnce   = "once"
 )
 
 // sceneRoutineRunNote ends a routine run's instructions at claim: the Host
@@ -78,6 +80,7 @@ type sceneRoutineTrigger struct {
 	// normalized envelope that an Employee run reads; empty means
 	// /event and /eventPayload. Not settable from a chat.
 	PayloadFields []string `json:"payload_fields,omitempty"`
+	RunAt         string   `json:"run_at,omitempty"`
 }
 
 // sceneRoutineInput creates a routine.
@@ -87,7 +90,8 @@ type sceneRoutineInput struct {
 	Trigger      sceneRoutineTrigger `json:"trigger"`
 	// EmployeeExecution is run_only (default) or employee_decide; it applies
 	// when the agent runs in employee mode.
-	EmployeeExecution string `json:"employee_execution,omitempty"`
+	EmployeeExecution string                    `json:"employee_execution,omitempty"`
+	Source            *contextcap.RoutineSource `json:"-"`
 }
 
 // sceneRoutinePatch edits a routine; nil fields stay. The trigger kind never
@@ -105,6 +109,7 @@ type sceneRoutinePatch struct {
 	// EmployeeExecution switches run_only / employee_decide for new
 	// occurrences; accepted occurrences keep their frozen choice.
 	EmployeeExecution *string `json:"employee_execution"`
+	RunAt             *string `json:"run_at"`
 }
 
 // sceneRoutineActor is who writes a routine: a configure-page member, or the
@@ -141,6 +146,8 @@ type sceneRoutineCounterpart struct {
 type sceneRoutineTriggerView struct {
 	ID               string   `json:"id"`
 	Kind             string   `json:"kind"`
+	RunAt            string   `json:"run_at,omitempty"`
+	Consumed         bool     `json:"consumed"`
 	Cron             string   `json:"cron,omitempty"`
 	Timezone         string   `json:"timezone,omitempty"`
 	NextRunAt        *string  `json:"next_run_at"`
@@ -248,16 +255,27 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 		return in, err
 	}
 	switch in.Trigger.Kind = strings.TrimSpace(in.Trigger.Kind); in.Trigger.Kind {
+	case sceneRoutineTriggerOnce:
+		if in.Trigger.Cron != "" {
+			return in, routineInvalid("cron is not valid for a one-shot")
+		}
+		in.Trigger.RunAt, in.Trigger.Timezone, err = normalizeRoutineOnce(in.Trigger.RunAt, in.Trigger.Timezone, time.Time{})
+		if err != nil {
+			return in, err
+		}
 	case sceneRoutineTriggerCron:
 		if len(in.Trigger.PayloadFields) > 0 {
 			return in, routineInvalid("payload_fields are only valid for a webhook")
+		}
+		if in.Trigger.RunAt != "" {
+			return in, routineInvalid("run_at is only valid for a one-shot")
 		}
 		in.Trigger.Cron, in.Trigger.Timezone, err = normalizeRoutineSchedule(in.Trigger.Cron, in.Trigger.Timezone)
 		if err != nil {
 			return in, err
 		}
 	case sceneRoutineTriggerHook:
-		if strings.TrimSpace(in.Trigger.Cron) != "" || strings.TrimSpace(in.Trigger.Timezone) != "" {
+		if strings.TrimSpace(in.Trigger.RunAt) != "" || strings.TrimSpace(in.Trigger.Cron) != "" || strings.TrimSpace(in.Trigger.Timezone) != "" {
 			return in, routineInvalid("cron and timezone are only valid for a schedule")
 		}
 		in.Trigger.Cron, in.Trigger.Timezone = "", ""
@@ -265,7 +283,7 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 			return in, routineInvalid(err.Error())
 		}
 	default:
-		return in, routineInvalid("trigger.kind must be schedule or webhook")
+		return in, routineInvalid("trigger.kind must be once, schedule or webhook")
 	}
 	if in.EmployeeExecution == contextcap.RoutineEmployeeDecide && in.Trigger.Kind != sceneRoutineTriggerCron {
 		return in, errRoutineDecideNeedsSchedule
@@ -303,6 +321,9 @@ func (h *Handler) routineDecisionAvailable(ctx context.Context, choice string) e
 }
 
 func routineDedupeKey(title string, trigger sceneRoutineTrigger) string {
+	if trigger.Kind == sceneRoutineTriggerOnce {
+		return contextcap.RoutineDedupeKey(title, trigger.Kind, "", "") + "|" + trigger.RunAt
+	}
 	return contextcap.RoutineDedupeKey(title, trigger.Kind, trigger.Cron, trigger.Timezone)
 }
 
@@ -442,7 +463,13 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	}
 	sceneID := util.UUIDToString(sc.ID)
 	key := routineDedupeKey(in.Title, in.Trigger)
+	if in.Trigger.Kind == sceneRoutineTriggerOnce && actor.TaskID.Valid {
+		key += "|source-task:" + util.UUIDToString(actor.TaskID)
+	}
 	if existing, err := contextcap.GetRoutineByDedupe(ctx, h.DB, sceneID, key); err == nil {
+		if in.Trigger.Kind == sceneRoutineTriggerOnce {
+			return h.replayOnceRoutine(ctx, existing)
+		}
 		result, err := h.refreshDuplicateRoutine(ctx, a, existing, actor, in)
 		if !isRoutineGone(err) {
 			return result, err
@@ -452,6 +479,12 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 		}
 	} else if !errors.Is(err, contextcap.ErrNotFound) {
 		return sceneRoutineResult{}, err
+	}
+	if in.Trigger.Kind == sceneRoutineTriggerOnce {
+		at, _ := time.Parse(time.RFC3339Nano, in.Trigger.RunAt)
+		if !at.After(time.Now()) {
+			return sceneRoutineResult{}, routineInvalid("run_at must be in the future")
+		}
 	}
 	if _, err := h.routineIdentity(ctx, h.Queries, sc.WorkspaceID, sc.AgentID, sc.TenantOrgID); err != nil {
 		return sceneRoutineResult{}, err
@@ -475,6 +508,18 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	agent, err := qtx.LockAgentForAutopilotAssignment(ctx, db.LockAgentForAutopilotAssignmentParams{ID: sc.AgentID, WorkspaceID: sc.WorkspaceID})
 	if err != nil {
 		return sceneRoutineResult{}, fmt.Errorf("lock agent: %w", err)
+	}
+	if in.Trigger.Kind == sceneRoutineTriggerOnce {
+		mode, err := employeeloopconfig.Load(ctx, tx, sc.WorkspaceID, sc.AgentID)
+		if err != nil {
+			return sceneRoutineResult{}, err
+		}
+		if mode.Mode != employeeloopconfig.Employee {
+			return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "once_requires_employee", "one-shot schedules require Employee mode")
+		}
+		if err := h.EmployeeRoutineReady(ctx); err != nil {
+			return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "once_unavailable", "one-shot schedule readers are not ready")
+		}
 	}
 	if !agent.RuntimeID.Valid {
 		return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "agent_runtime_required", "the agent has no runtime to run routines on")
@@ -509,7 +554,7 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, SceneID: sceneID, TenantOrgID: sc.TenantOrgID, SceneKind: sc.SceneKind,
 		AutopilotID: util.UUIDToString(ap.ID), DeliveryOpenDingTalkID: cp.OpenDingTalkID,
 		DedupeKey: key, CreatedByType: actor.Type, CreatedByID: util.UUIDToString(actor.id()),
-		CreatedTaskID: util.UUIDToString(actor.TaskID), EmployeeExecution: in.EmployeeExecution,
+		CreatedTaskID: util.UUIDToString(actor.TaskID), EmployeeExecution: in.EmployeeExecution, Source: in.Source,
 	})
 	if errors.Is(err, contextcap.ErrRoutineDuplicate) {
 		// A concurrent create of the same routine won; update that one.
@@ -517,6 +562,9 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 		existing, err := contextcap.GetRoutineByDedupe(ctx, h.DB, sceneID, key)
 		if err != nil {
 			return sceneRoutineResult{}, err
+		}
+		if in.Trigger.Kind == sceneRoutineTriggerOnce {
+			return h.replayOnceRoutine(ctx, existing)
 		}
 		return h.refreshDuplicateRoutine(ctx, a, existing, actor, in)
 	}
@@ -548,7 +596,15 @@ func (h *Handler) createRoutineTrigger(ctx context.Context, qtx *db.Queries, ap 
 		PublishedByType: pgtype.Text{String: actor.Type, Valid: true},
 		PublishedByID:   actor.id(),
 	}
-	if t.Kind == sceneRoutineTriggerCron {
+	if t.Kind == sceneRoutineTriggerOnce {
+		at, err := time.Parse(time.RFC3339Nano, t.RunAt)
+		if err != nil {
+			return db.AutopilotTrigger{}, "", routineInvalid("invalid run_at")
+		}
+		params.RunAt = pgtype.Timestamptz{Time: at, Valid: true}
+		params.NextRunAt = params.RunAt
+		params.Timezone = pgtype.Text{String: t.Timezone, Valid: true}
+	} else if t.Kind == sceneRoutineTriggerCron {
 		next, err := service.ComputeNextRun(t.Cron, t.Timezone)
 		if err != nil {
 			return db.AutopilotTrigger{}, "", routineInvalid(err.Error())
@@ -591,9 +647,35 @@ func (h *Handler) refreshDuplicateRoutine(ctx context.Context, a contextCapAgent
 // updateSceneRoutine edits a routine. Enabling, disabling, a new schedule or
 // new instructions republish the autopilot rule with the actor.
 func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, routine contextcap.Routine, actor sceneRoutineActor, patch sceneRoutinePatch) (sceneRoutineResult, error) {
-	ap, trigger, err := h.loadRoutineAutopilot(ctx, routine)
+	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return sceneRoutineResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	if err := lockRoutineMutation(ctx, tx, routine); err != nil {
+		return sceneRoutineResult{}, err
+	}
+	ap, err := qtx.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: parseUUID(routine.AutopilotID), WorkspaceID: parseUUID(routine.WorkspaceID)})
+	if err != nil {
+		return sceneRoutineResult{}, err
+	}
+	if ap.Status == "archived" {
+		return sceneRoutineResult{}, errRoutineGone
+	}
+	triggers, err := qtx.ListAutopilotTriggers(ctx, ap.ID)
+	if err != nil {
+		return sceneRoutineResult{}, err
+	}
+	if len(triggers) != 1 {
+		return sceneRoutineResult{}, errRoutineGone
+	}
+	trigger, err := qtx.GetAutopilotTriggerForUpdate(ctx, triggers[0].ID)
+	if err != nil {
+		return sceneRoutineResult{}, err
+	}
+	if trigger.Kind == sceneRoutineTriggerOnce && trigger.LastFiredAt.Valid {
+		return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "once_consumed", "this one-shot has already been admitted; create a new schedule instead")
 	}
 	title, instructions := ap.Title, ap.Description.String
 	if patch.Title != nil {
@@ -607,8 +689,30 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		}
 	}
 	schedule := sceneRoutineTrigger{Kind: trigger.Kind, Cron: trigger.CronExpression.String, Timezone: trigger.Timezone.String}
+	if trigger.RunAt.Valid {
+		schedule.RunAt = trigger.RunAt.Time.UTC().Format(time.RFC3339Nano)
+	}
 	scheduleChanged := false
-	if patch.Cron != nil || patch.Timezone != nil {
+	if trigger.Kind == sceneRoutineTriggerOnce {
+		if patch.Cron != nil {
+			return sceneRoutineResult{}, routineInvalid("one-shot schedules do not have a cron")
+		}
+		if patch.RunAt != nil {
+			schedule.RunAt = *patch.RunAt
+		}
+		if patch.Timezone != nil {
+			schedule.Timezone = *patch.Timezone
+		}
+		if patch.RunAt != nil || patch.Timezone != nil {
+			schedule.RunAt, schedule.Timezone, err = normalizeRoutineOnce(schedule.RunAt, schedule.Timezone, time.Now())
+			if err != nil {
+				return sceneRoutineResult{}, err
+			}
+			scheduleChanged = schedule.RunAt != trigger.RunAt.Time.UTC().Format(time.RFC3339Nano) || schedule.Timezone != trigger.Timezone.String
+		}
+	} else if patch.RunAt != nil {
+		return sceneRoutineResult{}, routineInvalid("run_at is only valid for a one-shot")
+	} else if patch.Cron != nil || patch.Timezone != nil {
 		if trigger.Kind != sceneRoutineTriggerCron {
 			return sceneRoutineResult{}, routineInvalid("only a schedule routine has a cron and timezone")
 		}
@@ -659,12 +763,6 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		}
 	}
 
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return sceneRoutineResult{}, err
-	}
-	defer tx.Rollback(ctx)
-	qtx := h.Queries.WithTx(tx)
 	params := db.UpdateAutopilotParams{ID: ap.ID, Title: pgtype.Text{String: title, Valid: true}, Description: pgtype.Text{String: instructions, Valid: true}}
 	if status != ap.Status {
 		params.Status = pgtype.Text{String: status, Valid: true}
@@ -674,13 +772,20 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		return sceneRoutineResult{}, fmt.Errorf("update autopilot: %w", err)
 	}
 	if scheduleChanged {
-		next, err := service.ComputeNextRun(schedule.Cron, schedule.Timezone)
+		var next time.Time
+		var runAt pgtype.Timestamptz
+		if trigger.Kind == sceneRoutineTriggerOnce {
+			next, err = time.Parse(time.RFC3339Nano, schedule.RunAt)
+			runAt = pgtype.Timestamptz{Time: next, Valid: true}
+		} else {
+			next, err = service.ComputeNextRun(schedule.Cron, schedule.Timezone)
+		}
 		if err != nil {
 			return sceneRoutineResult{}, routineInvalid(err.Error())
 		}
 		if trigger, err = qtx.UpdateAutopilotTrigger(ctx, db.UpdateAutopilotTriggerParams{
-			ID:             trigger.ID,
-			CronExpression: pgtype.Text{String: schedule.Cron, Valid: true},
+			ID: trigger.ID, RunAt: runAt,
+			CronExpression: pgtype.Text{String: schedule.Cron, Valid: trigger.Kind == sceneRoutineTriggerCron},
 			Timezone:       pgtype.Text{String: schedule.Timezone, Valid: true},
 			NextRunAt:      pgtype.Timestamptz{Time: next, Valid: true},
 		}); err != nil {
@@ -709,7 +814,11 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return sceneRoutineResult{}, err
 		}
 	}
-	if key := routineDedupeKey(title, schedule); key != routine.DedupeKey {
+	key := routineDedupeKey(title, schedule)
+	if trigger.Kind == sceneRoutineTriggerOnce && routine.CreatedTaskID != "" {
+		key += "|source-task:" + routine.CreatedTaskID
+	}
+	if trigger.Kind != sceneRoutineTriggerOnce && key != routine.DedupeKey {
 		if err := contextcap.SetRoutineDedupeKey(ctx, tx, routine.ID, key); err != nil {
 			if errors.Is(err, contextcap.ErrRoutineDuplicate) {
 				return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "routine_duplicate", "this scene already has a routine with the same purpose and schedule")
@@ -732,8 +841,9 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 // deleteSceneRoutine archives the routine's autopilot (its runs stay as
 // history) and removes the routine.
 func (h *Handler) deleteSceneRoutine(ctx context.Context, a contextCapAgent, routine contextcap.Routine, actor sceneRoutineActor) error {
-	ap, _, err := h.loadRoutineAutopilot(ctx, routine)
-	if err != nil && !isRoutineGone(err) {
+	ap, trigger, err := h.loadRoutineAutopilot(ctx, routine)
+	gone := isRoutineGone(err)
+	if err != nil && !gone {
 		return err
 	}
 	tx, err := h.TxStarter.Begin(ctx)
@@ -742,6 +852,31 @@ func (h *Handler) deleteSceneRoutine(ctx context.Context, a contextCapAgent, rou
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	if err := lockRoutineMutation(ctx, tx, routine); err != nil {
+		return err
+	}
+	// An already archived once still owns its cancellation tombstone. Repeated
+	// delete must not erase the identity and let a delayed creation revive it.
+	if gone {
+		triggers, loadErr := qtx.ListAutopilotTriggers(ctx, parseUUID(routine.AutopilotID))
+		if loadErr != nil {
+			return loadErr
+		}
+		for _, stored := range triggers {
+			if stored.Kind == sceneRoutineTriggerOnce {
+				return tx.Commit(ctx)
+			}
+		}
+	}
+	if trigger.Kind == sceneRoutineTriggerOnce {
+		trigger, err = qtx.GetAutopilotTriggerForUpdate(ctx, trigger.ID)
+		if err != nil {
+			return err
+		}
+		if trigger.LastFiredAt.Valid {
+			return routineRefusal(http.StatusConflict, "once_consumed", "this one-shot has already been admitted; cancel its execution instead")
+		}
+	}
 	if ap.ID.Valid && ap.Status != "archived" {
 		if err := qtx.ArchiveAutopilot(ctx, ap.ID); err != nil {
 			return fmt.Errorf("archive autopilot: %w", err)
@@ -751,8 +886,10 @@ func (h *Handler) deleteSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return err
 		}
 	}
-	if err := contextcap.DeleteRoutine(ctx, tx, routine.ID); err != nil {
-		return err
+	if trigger.Kind != sceneRoutineTriggerOnce {
+		if err := contextcap.DeleteRoutine(ctx, tx, routine.ID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -766,9 +903,12 @@ func (h *Handler) deleteSceneRoutine(ctx context.Context, a contextCapAgent, rou
 // runSceneRoutine runs a routine now (a manual run, attributed to the member
 // when a member asked).
 func (h *Handler) runSceneRoutine(ctx context.Context, routine contextcap.Routine, actor sceneRoutineActor) (*sceneRoutineRunView, error) {
-	ap, _, err := h.loadRoutineAutopilot(ctx, routine)
+	ap, trigger, err := h.loadRoutineAutopilot(ctx, routine)
 	if err != nil {
 		return nil, err
+	}
+	if trigger.Kind == sceneRoutineTriggerOnce {
+		return nil, routineRefusal(http.StatusConflict, "once_run_managed", "one-shot schedules run at their configured time; change run_at to reschedule")
 	}
 	if ap.Status != "active" {
 		return nil, routineRefusal(http.StatusConflict, "routine_paused", "enable the routine before running it")
@@ -909,7 +1049,7 @@ func (h *Handler) loadRoutineAutopilot(ctx context.Context, routine contextcap.R
 		return db.Autopilot{}, db.AutopilotTrigger{}, err
 	}
 	for _, trigger := range triggers {
-		if trigger.Kind == sceneRoutineTriggerCron || trigger.Kind == sceneRoutineTriggerHook {
+		if trigger.Kind == sceneRoutineTriggerOnce || trigger.Kind == sceneRoutineTriggerCron || trigger.Kind == sceneRoutineTriggerHook {
 			return ap, trigger, nil
 		}
 	}
@@ -931,7 +1071,16 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 		CreatedAt: routine.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: timestampToString(ap.UpdatedAt),
 		Trigger: sceneRoutineTriggerView{ID: util.UUIDToString(trigger.ID), Kind: trigger.Kind, NextRuns: []string{}},
 	}
-	if trigger.Kind == sceneRoutineTriggerCron {
+	if trigger.Kind == sceneRoutineTriggerOnce {
+		view.Trigger.RunAt = trigger.RunAt.Time.UTC().Format(time.RFC3339Nano)
+		view.Trigger.Timezone = trigger.Timezone.String
+		view.Trigger.Consumed = trigger.LastFiredAt.Valid
+		view.Enabled = view.Enabled && trigger.Enabled && !view.Trigger.Consumed
+		if view.Enabled {
+			view.Trigger.NextRunAt = timestampToPtr(trigger.NextRunAt)
+			view.Trigger.NextRuns = []string{view.Trigger.RunAt}
+		}
+	} else if trigger.Kind == sceneRoutineTriggerCron {
 		view.Trigger.Cron, view.Trigger.Timezone = trigger.CronExpression.String, trigger.Timezone.String
 		if view.Enabled {
 			view.Trigger.NextRunAt = timestampToPtr(trigger.NextRunAt)
@@ -1017,6 +1166,10 @@ func routineEnabledLabel(enabled bool) string {
 }
 
 func routineCreatedMessage(view sceneRoutineView) string {
+	if view.Trigger.Kind == sceneRoutineTriggerOnce {
+		at, _ := time.Parse(time.RFC3339Nano, view.Trigger.RunAt)
+		return fmt.Sprintf("已在这个场域设置一次性定时任务「%s」，将在 %s（%s）执行一次，结果仍回到这里。可随时查询、改期或取消。", view.Title, routineLocalTime(at, view.Trigger.Timezone), view.Trigger.Timezone)
+	}
 	if view.Trigger.Kind == sceneRoutineTriggerHook {
 		return fmt.Sprintf("已在这个场域创建例行任务「%s」，由 Webhook 触发。完整的 Webhook 地址不会发在会话里：请智能体管理员在配置页的「例行任务」里点「重新生成 Webhook 地址」获取并复制。", view.Title)
 	}
@@ -1215,7 +1368,26 @@ func (h *Handler) enqueueRoutineEndNotice(ctx context.Context, q *db.Queries, ex
 		return err
 	}
 	title := routineContextTitle(task.Context)
-	in, err := h.routineNoticeInput(ctx, q, routine, routineEndText(title, task, status, result, errMessage))
+	text := routineEndText(title, task, status, result, errMessage)
+	if run.TriggerID.Valid {
+		trigger, err := q.GetAutopilotTrigger(ctx, run.TriggerID)
+		if err != nil {
+			return err
+		}
+		if trigger.Kind == sceneRoutineTriggerOnce {
+			text = strings.ReplaceAll(text, "例行任务", "一次性定时任务")
+			if status == "completed" {
+				var payload protocol.TaskCompletedPayload
+				if json.Unmarshal(result, &payload) == nil && strings.TrimSpace(payload.Output) != "" {
+					text = strings.TrimSpace(redact.Text(util.UnescapeBackslashEscapes(payload.Output)))
+					if runes := []rune(text); len(runes) > sceneRoutineNoticeMax {
+						text = string(runes[:sceneRoutineNoticeMax]) + "\n\n（完整结果见定时任务的运行记录）"
+					}
+				}
+			}
+		}
+	}
+	in, err := h.routineNoticeInput(ctx, q, routine, text)
 	if err != nil {
 		slog.WarnContext(ctx, "scene routine end notice skipped", "run_id", util.UUIDToString(run.ID), "routine_id", routine.ID, "error", err)
 		return nil

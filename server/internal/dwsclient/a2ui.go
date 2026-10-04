@@ -27,6 +27,9 @@ type A2UISendRequest struct {
 type A2UIReceipt struct {
 	BizID          string `json:"bizId"`
 	CardInstanceID int64  `json:"cardInstanceId"`
+	MessageID      string `json:"messageId,omitempty"`
+	ConversationID string `json:"conversationId,omitempty"`
+	TaskID         string `json:"taskId,omitempty"`
 }
 
 // SendA2UI supplies stable tracing/business IDs. They are NOT evidence of send
@@ -54,14 +57,33 @@ func parseA2UIReceipt(raw []byte) (A2UIReceipt, error) {
 	var response struct {
 		OK     bool `json:"ok"`
 		Result struct {
-			Success bool        `json:"success"`
-			Result  A2UIReceipt `json:"result"`
+			Success bool `json:"success"`
+			Result  struct {
+				A2UIReceipt
+				OpenMessageID      string `json:"openMessageId"`
+				MsgID              string `json:"msgId"`
+				OpenConversationID string `json:"openConversationId"`
+				OpenTaskID         string `json:"openTaskId"`
+			} `json:"result"`
 		} `json:"result"`
 	}
 	if len(raw) > MaxResponseBytes || json.Unmarshal(raw, &response) != nil || !response.OK || !response.Result.Success || response.Result.Result.BizID == "" || response.Result.Result.CardInstanceID == 0 {
 		return A2UIReceipt{}, errors.New("A2UI send outcome is unconfirmed")
 	}
-	return response.Result.Result, nil
+	wire := response.Result.Result
+	receipt := wire.A2UIReceipt
+	if wire.OpenMessageID != "" {
+		receipt.MessageID = wire.OpenMessageID
+	} else if receipt.MessageID == "" {
+		receipt.MessageID = wire.MsgID
+	}
+	if wire.OpenConversationID != "" {
+		receipt.ConversationID = wire.OpenConversationID
+	}
+	if wire.OpenTaskID != "" {
+		receipt.TaskID = wire.OpenTaskID
+	}
+	return receipt, nil
 }
 func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages []string, annotations []A2UIAnnotation) error {
 	valid := map[string]bool{"INPUTTING": true, "CONFIRMING": true, "CONFIRMED": true, "EXECUTING": true, "FINISH": true, "ERROR": true, "ABORTED": true, "TIMEOUT": true}

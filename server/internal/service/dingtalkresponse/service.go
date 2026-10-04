@@ -20,13 +20,21 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ActionInput is a frozen dispatch snapshot. Credential material must never be
 // included here: this value is persisted before any external operation.
 type ActionInput struct {
-	ActionID string `json:"action_id,omitempty"`
+	// A2UICard is a Host-built question projection; callers cannot use Enqueue
+	// to bypass the dedicated question enqueue path.
+	A2UICard *A2UIQuestionCard `json:"a2ui_card,omitempty"`
+	// First feedback is a non-terminal foreground notice, never Task evidence.
+	EmployeeFirstFeedbackJobID     string `json:"employee_first_feedback_job_id,omitempty"`
+	EmployeeFirstFeedbackReceiptID string `json:"employee_first_feedback_receipt_id,omitempty"`
+	EmployeeFirstFeedbackSourceRef string `json:"employee_first_feedback_source_ref,omitempty"`
+	ActionID                       string `json:"action_id,omitempty"`
 	// EmployeeMessageJobID is set by the foreground Host, never an authority claim.
 	// BeforeSend verifies it against the exact completed message job and scope.
 	EmployeeMessageJobID string `json:"employee_message_job_id,omitempty"`
@@ -92,6 +100,9 @@ type DBTX interface {
 }
 
 type Service struct {
+	// OnA2UIAccepted persists card identity, independently of question outcome.
+	// Configure before Run; the Host must tolerate an early answer and retries.
+	OnA2UIAccepted func(context.Context, ActionInput, dwsclient.A2UIReceipt) error
 	// BeforeSend is an optional Host authority fence immediately before a new
 	// provider submission. Configure before Run; ordinary actions may return nil.
 	BeforeSend func(context.Context, ActionInput) error
@@ -158,8 +169,11 @@ func (s *Service) FindRoute(ctx context.Context, callbackURL string) (*Route, er
 // Enqueue is transaction-friendly. Call Notify only after the caller commits.
 // Reusing an action ID with different contents is rejected, never overwritten.
 func (s *Service) Enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
-	if in.CoordinatorWaitJobID != "" {
-		return "", errors.New("coordinator wait progress requires its Host enqueue path")
+	if in.A2UICard != nil {
+		return "", errors.New("A2UI question requires its Host enqueue path")
+	}
+	if in.CoordinatorWaitJobID != "" || in.EmployeeFirstFeedbackJobID != "" {
+		return "", errors.New("non-terminal progress requires its Host enqueue path")
 	}
 	return s.enqueue(ctx, tx, in)
 }
@@ -267,7 +281,7 @@ func (s *Service) enqueue(ctx context.Context, tx DBTX, in ActionInput) (string,
 		return "", err
 	}
 	kind := "message.send"
-	if in.Text == "" {
+	if in.Text == "" && in.A2UICard == nil {
 		kind = "reaction.clear"
 	}
 	if in.ActionID == "" {
@@ -436,6 +450,14 @@ func validateInput(in ActionInput) error {
 		}
 	}
 	switch {
+	case in.A2UICard != nil:
+		if err := validateA2UIQuestion(in); err != nil {
+			return err
+		}
+	case in.EmployeeFirstFeedbackJobID != "":
+		if err := validateFirstFeedbackInput(in); err != nil {
+			return err
+		}
 	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
 			return errors.New("coordinator wait job id is invalid")
@@ -471,14 +493,14 @@ func validateInput(in ActionInput) error {
 			}
 		}
 	}
-	if in.Text == "" {
+	if in.Text == "" && in.A2UICard == nil {
 		switch in.CloseState {
 		case "silent", "failed", "cancelled", "unknown":
 			return nil
 		}
 		return errors.New("response close state is invalid")
 	}
-	if strings.TrimSpace(in.Text) == "" || in.CloseState != "" {
+	if (strings.TrimSpace(in.Text) == "" && in.A2UICard == nil) || in.CloseState != "" {
 		return errors.New("response send content is invalid")
 	}
 	if in.InvitationActionID != "" && (in.ActionID != in.InvitationActionID || in.SceneNoticeID == "") {

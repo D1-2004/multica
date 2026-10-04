@@ -88,7 +88,7 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 		}
 	}
 	if a.State == "pending" {
-		if a.Input.Text == "" {
+		if a.Input.Text == "" && a.Input.A2UICard == nil {
 			err = s.saveState(ctx, a, a.Input.CloseState, "", "", "", "")
 		} else {
 			err = s.send(ctx, a)
@@ -108,7 +108,7 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 	// A revoked Host send has no delivery receipt to report. Keep receipt_state
 	// empty and stop instead of retrying an obsolete Router callback forever.
 	suppressed := a.State == "cancelled" && strings.HasPrefix(a.ErrorCode, suppressedSendCodePrefix)
-	noReceipt := progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != "" || suppressed
+	noReceipt := a.Input.EmployeeFirstFeedbackJobID != "" || progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != "" || suppressed
 	if !noReceipt && isReceiptState(a.State) && a.ReceiptState != a.State {
 		if s.receipts == nil {
 			return true, s.release(ctx, a, time.Now().Add(time.Minute))
@@ -164,8 +164,19 @@ func (s *Service) send(ctx context.Context, a *action) error {
 	}
 	// This commit must precede the external write. If we disappear after send,
 	// the next owner sees unknown and cannot automatically submit again.
-	if err := s.saveState(ctx, a, "unknown", "", "", "", "submission_interrupted"); err != nil {
+	if a.Input.EmployeeFirstFeedbackJobID != "" {
+		accepted, err := s.reserveFirstFeedbackSubmission(ctx, a)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil
+		}
+	} else if err := s.saveState(ctx, a, "unknown", "", "", "", "submission_interrupted"); err != nil {
 		return err
+	}
+	if a.Input.A2UICard != nil && a.State != "unknown" {
+		return nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, providerTimeout)
 	result, err := s.provider.Send(callCtx, a.Input, "multica-response:"+a.ID)
@@ -193,13 +204,26 @@ func (s *Service) send(ctx context.Context, a *action) error {
 			slog.Warn("response send result unknown", "event", "response_send_result_unknown", "action_id", a.ID,
 				"agent_id", a.Input.AgentID, "dws_environment", a.Input.DWSEnvironment, "error", msg)
 		}
+	} else if a.Input.A2UICard != nil {
+		state, code = a2uiSendState(a.Input, result)
 	} else if result.OpenTaskID == "" {
 		state, code = "unknown", "send_task_id_missing"
 	}
 	// Save the provider task even if shutdown cancelled the initiating request.
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer persistCancel()
-	return s.saveState(persistCtx, a, state, result.OpenTaskID, "", "", code)
+	conversationID, messageID := "", ""
+	if a.Input.A2UICard != nil {
+		conversationID, messageID = result.OpenConversationID, result.OpenMessageID
+		if result.A2UIReceipt != nil && s.OnA2UIAccepted != nil {
+			if receiptErr := s.OnA2UIAccepted(persistCtx, a.Input, *result.A2UIReceipt); receiptErr != nil {
+				// The provider has already accepted; never make a Host persistence failure
+				// eligible for another external submission.
+				state, code = "unknown", "a2ui_receipt_persistence_failed"
+			}
+		}
+	}
+	return s.saveState(persistCtx, a, state, result.OpenTaskID, conversationID, messageID, code)
 }
 
 func (s *Service) query(ctx context.Context, a *action) error {
@@ -244,16 +268,23 @@ func (s *Service) saveState(ctx context.Context, a *action, state, taskID, conve
 	now := time.Now().UTC()
 	previousState := a.State
 	var first pgtype.Timestamptz
-	err := s.pool.QueryRow(ctx, `UPDATE response_action SET state=$3,provider_task_id=$4,
-		provider_conversation_id=$5,provider_message_id=$6,error_code=$7,updated_at=$8,
-		first_attempt_at=COALESCE(first_attempt_at,$8)
-		WHERE id=$1 AND lease_token=$2::uuid RETURNING first_attempt_at`,
-		a.ID, a.LeaseToken, state, taskID, conversationID, messageID, code, now).Scan(&first)
+	// A card callback may record a terminal delivery fact while the provider
+	// submission is still returning. Preserve that stronger fact and its ids.
+	err := s.pool.QueryRow(ctx, `UPDATE response_action SET
+  state=CASE WHEN $9 AND state IN ('delivered','failed','silent','cancelled') THEN state ELSE $3 END,
+  provider_task_id=CASE WHEN $9 AND provider_task_id<>'' THEN provider_task_id ELSE $4 END,
+  provider_conversation_id=CASE WHEN $9 AND provider_conversation_id<>'' THEN provider_conversation_id ELSE $5 END,
+  provider_message_id=CASE WHEN $9 AND provider_message_id<>'' THEN provider_message_id ELSE $6 END,
+  error_code=CASE WHEN $9 AND state IN ('delivered','failed','silent','cancelled') THEN error_code ELSE $7 END,
+  updated_at=CASE WHEN $9 AND state IN ('delivered','failed','silent','cancelled') THEN updated_at ELSE $8 END,first_attempt_at=COALESCE(first_attempt_at,$8)
+  WHERE id=$1 AND lease_token=$2::uuid
+  RETURNING first_attempt_at,state,provider_task_id,provider_conversation_id,provider_message_id,error_code,updated_at`,
+		a.ID, a.LeaseToken, state, taskID, conversationID, messageID, code, now, a.Input.A2UICard != nil).Scan(&first, &a.State, &a.ProviderTaskID, &a.ProviderConversationID, &a.ProviderMessageID, &a.ErrorCode, &a.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("persist response delivery state: %w", err)
 	}
-	a.State, a.ProviderTaskID, a.ProviderConversationID, a.ProviderMessageID = state, taskID, conversationID, messageID
-	a.ErrorCode, a.UpdatedAt, a.FirstAttemptAt = code, now, first
+	a.FirstAttemptAt = first
+	state, code = a.State, a.ErrorCode
 	slog.Info("response action state changed", "event", "response_action_state_changed",
 		"action_id", a.ID, "request_id", a.Input.RequestID, "workspace_id", a.Input.WorkspaceID,
 		"agent_id", a.Input.AgentID, "previous_state", previousState, "delivery_state", state,
@@ -300,6 +331,9 @@ func nextAttempt(a *action, now time.Time) time.Time {
 	case "pending":
 		return now.Add(retryDelay(a.Attempts))
 	case "provider_accepted":
+		if a.Input.A2UICard != nil && a.ProviderTaskID == "" {
+			return time.Time{}
+		}
 		return now.Add(retryDelay(a.Attempts))
 	case "unknown":
 		if a.ProviderTaskID != "" && a.FirstAttemptAt.Valid && now.Sub(a.FirstAttemptAt.Time) < reconcileWindow {
@@ -307,4 +341,22 @@ func nextAttempt(a *action, now time.Time) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// A card business id identifies a card; only a real task id can be queried as
+// an IM send task. Provider acknowledgement alone is not delivery evidence.
+func a2uiSendState(in ActionInput, result dwsclient.SendResult) (string, string) {
+	if result.A2UIReceipt == nil || result.A2UIReceipt.BizID == "" || result.A2UIReceipt.CardInstanceID == 0 {
+		return "unknown", "a2ui_receipt_missing"
+	}
+	if result.OpenConversationID != "" && result.OpenConversationID != in.ConversationID {
+		return "unknown", "delivery_target_mismatch"
+	}
+	if result.OpenMessageID != "" && result.OpenConversationID != "" {
+		return "delivered", ""
+	}
+	if result.OpenTaskID != "" {
+		return "provider_accepted", ""
+	}
+	return "provider_accepted", "a2ui_delivery_unconfirmed"
 }

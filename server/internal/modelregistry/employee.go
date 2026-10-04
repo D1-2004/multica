@@ -106,3 +106,15 @@ func (a *preparedCoordinatorAttempt) Chat(ctx context.Context, params openai.Cha
 	}
 	return a.client.Chat(ctx, params)
 }
+
+// ChatStreamed keeps the same frozen provider/ref authorization and no-retry
+// contract as Chat. The stream observer never chooses a different provider.
+func (a *preparedCoordinatorAttempt) ChatStreamed(ctx context.Context, params openai.ChatCompletionNewParams, observe func(openai.ChatCompletionChunk) error) (*openai.ChatCompletion, error) {
+	if string(params.Model) != a.ref.Model {
+		return nil, errors.New("prepared coordinator request model differs from frozen selection")
+	}
+	if _, overridden := params.ExtraFields()["model"]; overridden {
+		return nil, errors.New("prepared coordinator request overrides frozen model")
+	}
+	return a.client.ChatStreamed(ctx, params, observe)
+}

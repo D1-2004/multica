@@ -167,7 +167,7 @@ type Support struct {
 
 // CurrentSupport is what this binary's scene worker executes.
 func CurrentSupport() Support {
-	return Support{Kinds: []string{KindMessage, KindTaskWake}, WakeKinds: TaskWakeKinds(), WakeSchemas: []string{strconv.Itoa(TaskWakeSchemaVersion)}}
+	return Support{Kinds: []string{KindMessage, KindTaskWake, KindHumanResponse}, WakeKinds: TaskWakeKinds(), WakeSchemas: []string{strconv.Itoa(TaskWakeSchemaVersion)}}
 }
 
 // Claim takes the workspace and scene locks before changing the candidate job.
@@ -176,12 +176,12 @@ func (s *Store) Claim(ctx context.Context) (Job, error) {
 	return s.ClaimSupported(ctx, CurrentSupport())
 }
 
-// openHumanInput is true while the scene has a message window that is not
-// completed. A Task wake never runs ahead of human input in its scene.
-const openHumanInput = `EXISTS(SELECT 1 FROM employee_scene_job human WHERE human.workspace_id=%[1]s AND human.agent_id=%[2]s AND human.tenant_org_id=%[3]s AND human.scene_id=%[4]s AND human.kind='message' AND human.state<>'completed')`
+// openHumanInput includes messages and typed human responses. Even a binary
+// that does not support human responses must not run a Task wake ahead of one.
+const openHumanInput = `EXISTS(SELECT 1 FROM employee_scene_job human WHERE human.workspace_id=%[1]s AND human.agent_id=%[2]s AND human.tenant_org_id=%[3]s AND human.scene_id=%[4]s AND human.kind IN ('message','human_response') AND human.state<>'completed')`
 
 // ClaimSupported claims the oldest available job of a supported kind. Within a
-// scene, pending human messages are claimed before Task wakes.
+// scene, pending human input is claimed before Task wakes.
 func (s *Store) ClaimSupported(ctx context.Context, support Support) (Job, error) {
 	if len(support.Kinds) == 0 {
 		return Job{}, ErrInvalid
@@ -197,7 +197,7 @@ func (s *Store) ClaimSupported(ctx context.Context, support Support) (Job, error
 	candidate, err := scanJob(s.db.QueryRow(ctx, `SELECT `+jobColumns+` FROM employee_scene_job j WHERE ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now()))
  AND j.kind=ANY($1::text[]) AND (j.kind<>'task_wake' OR (j.items->0->'payload'->>'kind'=ANY($2::text[]) AND j.items->0->'payload'->>'schema_version'=ANY($3::text[])))
  AND NOT EXISTS(SELECT 1 FROM employee_scene_job active WHERE active.workspace_id=j.workspace_id AND active.agent_id=j.agent_id AND active.tenant_org_id=j.tenant_org_id AND active.scene_id=j.scene_id AND active.state='running' AND active.lease_until>=now())
- AND (j.kind='message' OR NOT `+humanFirst+`) ORDER BY available_at,created_at LIMIT 1`, support.Kinds, wakeKinds, wakeSchemas))
+ AND (j.kind IN ('message','human_response') OR NOT `+humanFirst+`) ORDER BY available_at,created_at LIMIT 1`, support.Kinds, wakeKinds, wakeSchemas))
 	if errors.Is(err, ErrNotFound) {
 		return Job{}, ErrNoJob
 	}
@@ -222,7 +222,7 @@ func (s *Store) ClaimSupported(ctx context.Context, support Support) (Job, error
 	}
 	// Recheck human-first under the scene lock that message admission also takes.
 	humanFirst = fmt.Sprintf(openHumanInput, "$1::uuid", "$2::uuid", "$3", "$4::uuid")
-	job, err := scanJob(tx.QueryRow(ctx, `UPDATE employee_scene_job SET state='running',lease_token=gen_random_uuid(),lease_until=now()+interval '90 seconds',generation=generation+1,attempt_count=attempt_count+1,updated_at=now() WHERE `+scopeWhere+` AND id=$5::uuid AND ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) AND (kind='message' OR NOT `+humanFirst+`) RETURNING `+jobColumns, args...))
+	job, err := scanJob(tx.QueryRow(ctx, `UPDATE employee_scene_job SET state='running',lease_token=gen_random_uuid(),lease_until=now()+interval '90 seconds',generation=generation+1,attempt_count=attempt_count+1,updated_at=now() WHERE `+scopeWhere+` AND id=$5::uuid AND ((state='pending' AND available_at<=now()) OR (state='running' AND lease_until<now())) AND (kind IN ('message','human_response') OR NOT `+humanFirst+`) RETURNING `+jobColumns, args...))
 	if errors.Is(err, ErrNotFound) {
 		return Job{}, ErrNoJob
 	}

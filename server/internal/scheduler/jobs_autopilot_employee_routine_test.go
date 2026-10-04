@@ -179,4 +179,76 @@ func TestEmployeeRoutineSchedulerPauseResumeAndConfigError(t *testing.T) {
 	if next := fire(4); next.Result["run_status"] != "running" {
 		t.Fatalf("cadence after config error = %+v", next.Result)
 	}
+	t.Run("once exhausted probe recovers with current environment", func(t *testing.T) {
+		exec(`UPDATE agent_task_queue SET status='cancelled',completed_at=now() WHERE agent_id=$1::uuid AND status='queued'`, agent)
+		exec(`UPDATE employee_task_run SET state='cancelled',finished_at=now() WHERE workspace_id=$1::uuid AND state='running'`, ws)
+		now, err := dbNow(ctx, pool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := now.Add(-time.Minute).Truncate(time.Microsecond)
+		exec(`UPDATE autopilot_trigger SET kind='once',cron_expression=NULL,run_at=$2,next_run_at=$2,last_fired_at=NULL WHERE id=$1`, trigger.ID, at)
+		exec(`UPDATE agent SET coordination_mode='coordinator' WHERE id=$1::uuid`, agent)
+		scope := Scope{Kind: ScopeKindAutopilotTrigger, ID: util.UUIDToString(trigger.ID)}
+		job := AutopilotScheduleDispatchJob(pool, q, svc)
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM sys_cron_executions WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID)
+		})
+		m := NewManager(pool, Options{RunnerID: "once-recovery-test"})
+		for i := 0; i < 3; i++ {
+			if i > 0 {
+				exec(`UPDATE sys_cron_executions SET next_retry_at=now()-interval '1 second' WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID)
+			}
+			m.processPlan(ctx, &job, scope, at, now)
+		}
+		check := func(wantAttempt, wantMax int) {
+			t.Helper()
+			var a, max int
+			if err := pool.QueryRow(ctx, `SELECT attempt,max_attempts FROM sys_cron_executions WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID).Scan(&a, &max); err != nil {
+				t.Fatal(err)
+			}
+			if a != wantAttempt || max != wantMax {
+				t.Fatalf("attempt=%d max=%d want %d/%d", a, max, wantAttempt, wantMax)
+			}
+		}
+		recover := func() {
+			t.Helper()
+			if err := recoverPendingOnceAdmissions(ctx, pool, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		check(3, 3)
+		var code string
+		if err := pool.QueryRow(ctx, `SELECT error_code FROM sys_cron_executions WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID).Scan(&code); err != nil || code != "once_admission_pending" {
+			t.Fatalf("code=%s err=%v", code, err)
+		}
+		recover()
+		check(3, 3) // no rapid retry after exhaustion
+		exec(`UPDATE sys_cron_executions SET finished_at=now()-interval '16 minutes' WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID)
+		exec(`UPDATE autopilot_trigger SET run_at=$2 WHERE id=$1`, trigger.ID, at.Add(time.Hour))
+		recover()
+		check(3, 3) // superseded time never reopens
+		exec(`UPDATE autopilot_trigger SET run_at=$2,enabled=false WHERE id=$1`, trigger.ID, at)
+		recover()
+		check(3, 3) // cancellation fences recovery
+		exec(`UPDATE autopilot_trigger SET enabled=true WHERE id=$1`, trigger.ID)
+		exec(`UPDATE agent SET coordination_mode='employee' WHERE id=$1::uuid`, agent)
+		recover()
+		check(3, 4)
+		m.processPlan(ctx, &job, scope, at, now)
+		fresh, err := q.GetAutopilotTrigger(ctx, trigger.ID)
+		if err != nil || !fresh.LastFiredAt.Valid || fresh.NextRunAt.Valid {
+			t.Fatalf("not admitted: %+v %v", fresh, err)
+		}
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM sys_cron_executions WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID).Scan(&status); err != nil || status != "SUCCESS" {
+			t.Fatalf("status=%s err=%v", status, err)
+		}
+		// Even misleading pending state cannot reopen a committed receipt.
+		exec(`UPDATE sys_cron_executions SET status='FAILED',error_code='once_admission_pending',finished_at=now()-interval '16 minutes' WHERE job_name=$1 AND scope_id=$2`, job.Name, scope.ID)
+		exec(`UPDATE autopilot_trigger SET last_fired_at=NULL WHERE id=$1`, trigger.ID)
+		recover()
+		check(4, 4)
+	})
+
 }
