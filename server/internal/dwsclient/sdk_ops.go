@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/dws"
 	"github.com/multica-ai/multica/server/pkg/dws/clicompat"
@@ -180,7 +181,38 @@ func sendA2UISDK(ctx context.Context, client *dws.Client, in A2UISendRequest) ([
 	if failure != nil {
 		return nil, sdkMessageError(failure, false)
 	}
-	return sdkBounded(clicompat.A2UISendOutput(payload))
+	raw, err := sdkBounded(clicompat.A2UISendOutput(payload))
+	if err != nil {
+		return nil, err
+	}
+	receipt, receiptErr := parseA2UIReceipt(raw)
+	if receiptErr != nil || receipt.MessageID != "" || receipt.TaskID == "" {
+		return raw, nil
+	}
+	// Send-status tasks belong to the token that created them. Query while
+	// this client's original credential is alive, never through another
+	// exchanged directory. Failure here cannot revoke a confirmed card send.
+	statusCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	statusRaw, statusErr := querySendStatusSDK(statusCtx, client, receipt.TaskID)
+	if statusErr != nil {
+		return raw, nil
+	}
+	status, statusErr := ParseSendStatus(statusRaw)
+	if statusErr != nil || status.State != "delivered" ||
+		(in.ConversationID != "" && status.OpenConversationID != in.ConversationID) ||
+		(receipt.ConversationID != "" && status.OpenConversationID != receipt.ConversationID) {
+		return raw, nil
+	}
+	receipt.MessageID = status.OpenMessageID
+	receipt.ConversationID = status.OpenConversationID
+	enriched, marshalErr := json.Marshal(map[string]any{"ok": true, "result": map[string]any{
+		"success": true, "result": receipt,
+	}})
+	if marshalErr != nil {
+		return raw, nil
+	}
+	return sdkBounded(enriched)
 }
 
 // updateA2UISDK is `chat message update-a2ui-card`.

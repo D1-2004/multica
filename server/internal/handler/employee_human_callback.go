@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
@@ -76,6 +77,9 @@ func (h *Handler) OnEmployeeHumanCardAccepted(ctx context.Context, in dingtalkre
 	if in.A2UICard == nil {
 		return nil
 	}
+	if strings.TrimSpace(receipt.BizID) == "" {
+		return humanquestion.ErrInvalid
+	}
 	database, ok := employeeEntryDB(h)
 	if !ok {
 		return humanquestion.ErrInvalid
@@ -91,6 +95,15 @@ func (h *Handler) OnEmployeeHumanCardAccepted(ctx context.Context, in dingtalkre
 	if receipt.ConversationID != "" && receipt.ConversationID != in.ConversationID {
 		return humanquestion.ErrForbidden
 	}
-	_, err = database.Exec(ctx, `UPDATE a2ui_interaction SET card_biz_id=$2,message_id=CASE WHEN $3<>'' THEN $3 ELSE message_id END WHERE id=$1::uuid AND agent_id=$4::uuid AND sender_org_id=$5`, q.ID, receipt.BizID, receipt.MessageID, q.Scope.AgentID, q.Scope.TenantOrgID)
-	return err
+	tag, err := database.Exec(ctx, `UPDATE a2ui_interaction SET card_biz_id=$2,message_id=CASE WHEN $3<>'' THEN $3 ELSE message_id END
+ WHERE id=$1::uuid AND agent_id=$4::uuid AND sender_org_id=$5
+ AND (card_biz_id='' OR card_biz_id=$2)
+ AND ($3='' OR message_id='' OR message_id=$3)`, q.ID, receipt.BizID, receipt.MessageID, q.Scope.AgentID, q.Scope.TenantOrgID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return humanquestion.ErrConflict
+	}
+	return nil
 }

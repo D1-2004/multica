@@ -460,3 +460,5 @@ conclusion in short sentences. Explicit detail, verbatim evidence and exact-form
 requests take precedence over brevity. Evidence is separated from the brief lead,
 not rewritten or clipped; existing credential/privacy restrictions remain. This
 is prompt guidance only, with no extra composer pass or protocol change.
+
+Quoted-human-card authority is frozen per source by employee_human_quote.go, using exact provider message ids plus verified outer/quoted provider reads. Human marker 3 gates this snapshot and its effect checks; missing ids remain unresolved. The production router installs the card-receipt callback after response-service construction. dwsclient queries delivery ids on the original SDK client/token only; CLI and missing historical business ids remain explicit verification limits.
