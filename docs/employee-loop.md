@@ -63,7 +63,7 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 ## 纠正在途任务（steer）
 
-`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务：Host 选目标，只有请求者恰好一个候选（运行中，或 30 分钟内 ready/成功）时才直接作用于它；有多个候选时把候选列表交回模型，由模型带 `task_id` 再调用或追问请求者，不新建 Task。被人工停止或失败的任务不作为隐式目标，纠正也不会重启被人工停止的任务。
+`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务。自然对话目标使用当前 wake 的 `task_ref`（如 `t1`），Host 按冻结的 source/requester 候选映射解析真实 Task ID，并重新校验来源和任务归属；两种目标字段不能同时提供。旧 `task_id` UUID 与省略目标的唯一候选路径保留；旧冻结调用中的 `task_id=t1` 也只能通过同一 source 绑定解析，不能把短引用当 UUID 或跨消息复用。有多个候选时需明确目标或追问，不新建 Task。被人工停止或失败的任务不作为隐式目标，纠正不会重启被人工停止的任务。
 
 完整纠正在任何取消或合并写入前读取，最多一百条、总六十四 KiB；读取失败或加上本次后超限就回滚，不静默丢弃旧约束。执行中的 Run 被取消并挂上退出门闩，进程确认退出后续跑才能被认领；续跑带着全部纠正和原工作包，在同一 runtime 上接回原 provider session 与 workdir。尚未认领的 Run 直接吸收纠正。纠正只带来自己的身份令牌，续跑的结果仍作为原请求的回复送达；被替换的旧 Run 不发取消通知。前台调用预算不变，一次模型调用即可完成纠正与接单回复。
 

@@ -2,8 +2,9 @@
 name: inspect-langfuse
 description: >
   用 Langfuse 查预发 Coordinator / 沙箱 LLM 轨迹：inbound_coordinator、
-  agent_task、generation I/O、coord_trace_id。用户说「Langfuse」「LLM 轨迹」
-  「沙箱里模型看到了什么」「generation」或要补 SLS 闭环时必须用。
+  agent_task、generation I/O。用于按原话、智能体、时间窗定位模型调用；
+  已有精确业务/trace id 优先用 inspect-langfuse-trace，不重复加载两套入口。
+  普通工作 session 的执行轨迹不属于 Langfuse 查询。
   凭证在 ~/.grok/langfuse.env，走 scripts/query-langfuse.sh；不要用
   langfuse-cli observations（v2，对本机 3.x 会 404）。
 compatibility: Requires ~/.grok/langfuse.env (pk/sk + unify-aipilot host).
@@ -16,6 +17,12 @@ compatibility: Requires ~/.grok/langfuse.env (pk/sk + unify-aipilot host).
 Trace `name=inbound_coordinator`，metadata 里有 `loop`（`inbound_coordinator` 或 `agent_task`）、`coord_trace_id`、`issue_id`、`agent_id`。
 
 凭证只读 `~/.grok/langfuse.env`（mode 600）。不要把 key 写进仓库、SKILL、聊天。
+
+## 查询范围与停止
+
+先写本次要回答的一个问题，复用已有trace与当波manifest；有精确ID则直接详情，无ID才做一次有界搜索。补查只为未回答的问题扩大窗口/分页，不为“补闭环”默认扫描全日或所有agent。不可读、超时、截断明确限制结论，不自动扩展为Runtime修复、部署或新真实用例；用户截止时交付现有证据和未证明项。
+
+Employee分别用 `--name employee_loop`、`--name agent_task`、`--name employee_scene_digest`；只看Coordinator才用下面旧Coordinator例子。证据面按当前合同选择，不要求每条查询都补齐IM/API/SLS/LF。零事件等否定结论仍需完整窗口。
 
 代理会挡内网。每条命令先：
 

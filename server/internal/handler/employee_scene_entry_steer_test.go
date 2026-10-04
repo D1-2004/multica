@@ -11,17 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/service/employeeloop"
 	openai "github.com/openai/openai-go/v3"
 )
 
 type employeeSteerModel struct {
 	calls     int
 	sourceRef string
+	targetKey string
 }
 
 func (m *employeeSteerModel) Chat(ctx context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	m.calls++
-	args, _ := json.Marshal(map[string]any{"source_ref": m.sourceRef, "correction": "不对，只统计已签约客户", "reply": "收到，已按新要求调整正在进行的任务。"})
+	fields := map[string]any{"source_ref": m.sourceRef, "correction": "不对，只统计已签约客户", "reply": "收到，已按新要求调整正在进行的任务。"}
+	if m.targetKey != "" {
+		if m.calls == 1 {
+			args, _ := json.Marshal(map[string]any{"source_ref": m.sourceRef, "task_ref": "t1"})
+			raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "task-read", "type": "function", "function": map[string]any{"name": "read_task", "arguments": string(args)}}}}}}})
+			var result openai.ChatCompletion
+			return &result, json.Unmarshal(raw, &result)
+		}
+		fields[m.targetKey] = "t1"
+	}
+	args, _ := json.Marshal(fields)
 	raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "call-steer", "type": "function", "function": map[string]any{"name": "steer_task", "arguments": string(args)}}}}}}})
 	var result openai.ChatCompletion
 	err := json.Unmarshal(raw, &result)
@@ -32,6 +44,16 @@ func (m *employeeSteerModel) Chat(ctx context.Context, p openai.ChatCompletionNe
 // through EmployeeLoop: one model call, no new EmployeeTask, the old run is
 // exit-fenced and the successor answers the correction message.
 func TestEmployeeLoopSteerTaskToolInterruptsRequesterTask(t *testing.T) {
+	for _, key := range []string{"", "task_ref", "task_id"} {
+		name := key
+		if name == "" {
+			name = "implicit"
+		}
+		t.Run(name, func(t *testing.T) { employeeLoopSteerTaskInterruptsRequesterTask(t, key) })
+	}
+}
+
+func employeeLoopSteerTaskInterruptsRequesterTask(t *testing.T, targetKey string) {
 	f := employeeNoticeDatabase(t, "running", false, false)
 	ctx := context.Background()
 	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET status='online' WHERE id=(SELECT runtime_id FROM agent_task_queue WHERE id=$1::uuid)`, f.queueID); err != nil {
@@ -43,7 +65,7 @@ func TestEmployeeLoopSteerTaskToolInterruptsRequesterTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	dc := agentDispatchContext{EndpointID: endpointID, EndpointNamespaceID: namespaceID, UserID: parseUUID(testUserID), WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(f.agentID)}
-	model := &employeeSteerModel{}
+	model := &employeeSteerModel{targetKey: targetKey}
 	f.h.EmployeeSceneWorker = NewEmployeeSceneWorker(f.h, model)
 	f.h.EmployeeSceneWorker.ReplicaReady = func(context.Context) error { return nil }
 	f.command.Event.Data.Messages = []DispatchMessage{{OpenMsgID: "message-2", Text: "不对，只统计已签约客户"}}
@@ -59,7 +81,11 @@ func TestEmployeeLoopSteerTaskToolInterruptsRequesterTask(t *testing.T) {
 	if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); err != nil || !worked {
 		t.Fatal(worked, err)
 	}
-	if model.calls != 1 {
+	wantCalls := 1
+	if targetKey != "" {
+		wantCalls = 2
+	}
+	if model.calls != wantCalls {
 		t.Fatalf("model calls=%d", model.calls)
 	}
 	old, err := f.h.Queries.GetAgentTask(ctx, parseUUID(f.queueID))
@@ -185,5 +211,87 @@ func TestEmployeeSteerTargetIncludesWaitingGoal(t *testing.T) {
 	only, candidates, err := host.steerTarget(ctx, task.RequesterRef, "")
 	if err != nil || only.ID != goal.ID || candidates != nil {
 		t.Fatalf("waiting goal is not an active candidate: %+v %+v %v", only, candidates, err)
+	}
+}
+
+// The alias is data scoped to one admitted source. Invalid target selection
+// must leave the running writer untouched, even when the alias is familiar.
+func TestEmployeeSteerReferenceRejectsUnboundTargetsBeforeEffects(t *testing.T) {
+	for _, fault := range []string{"unknown", "both", "other_source", "other_requester"} {
+		t.Run(fault, func(t *testing.T) {
+			f, host, identity, source := employeeCurrentTaskHost(t, "running", "好的 补充下，我不想吃海鲜了，在平潭这里海鲜吃太多了")
+			ctx := context.Background()
+			args := map[string]any{"source_ref": source.SourceRef, "task_ref": "t1", "correction": "不要推荐海鲜", "reply": "收到，按非海鲜推荐。"}
+			switch fault {
+			case "unknown":
+				args["task_ref"] = "t999"
+			case "both":
+				args["task_id"] = employeeNoticeTask(t, f).ID
+			default:
+				var raw []byte
+				if err := testPool.QueryRow(ctx, `SELECT input_snapshot FROM employee_scene_job WHERE id=$1`, host.job.ID).Scan(&raw); err != nil {
+					t.Fatal(err)
+				}
+				var saved employeeSavedInput
+				if err := json.Unmarshal(raw, &saved); err != nil {
+					t.Fatal(err)
+				}
+				for i := range saved.CurrentTasks {
+					if fault == "other_source" {
+						saved.CurrentTasks[i].SourceRef = "another-receipt/message"
+					} else {
+						saved.CurrentTasks[i].RequesterRef = "another-requester"
+					}
+				}
+				raw, _ = json.Marshal(saved)
+				if _, err := testPool.Exec(ctx, `UPDATE employee_scene_job SET input_snapshot=$2 WHERE id=$1`, host.job.ID, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := host.Execute(ctx, identity, employeeloop.ToolCall{Name: "steer_task", NativeToolCallID: "invalid-steer", Arguments: args})
+			if err == nil || result.Receipt != "" {
+				t.Fatalf("unbound target accepted: %+v %v", result, err)
+			}
+			var runs, corrections int
+			if err := testPool.QueryRow(ctx, `SELECT (SELECT count(*) FROM employee_task_run WHERE agent_id=$1),(SELECT count(*) FROM employee_task_entry WHERE agent_id=$1 AND kind='steer')`, f.agentID).Scan(&runs, &corrections); err != nil {
+				t.Fatal(err)
+			}
+			old, err := f.h.Queries.GetAgentTask(ctx, parseUUID(f.queueID))
+			if err != nil || old.Status != "running" || runs != 1 || corrections != 0 {
+				t.Fatalf("refusal changed writer: state=%s runs=%d corrections=%d err=%v", old.Status, runs, corrections, err)
+			}
+		})
+	}
+}
+
+func TestEmployeeSteerReferenceReplayKeepsOneSuccessor(t *testing.T) {
+	for _, key := range []string{"task_ref", "task_id"} {
+		t.Run(key, func(t *testing.T) {
+			f, host, identity, source := employeeCurrentTaskHost(t, "running", "好的 补充下，我不想吃海鲜了，在平潭这里海鲜吃太多了")
+			ctx := context.Background()
+			if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET status='online' WHERE id=(SELECT runtime_id FROM agent_task_queue WHERE id=$1::uuid)`, f.queueID); err != nil {
+				t.Fatal(err)
+			}
+			call := employeeloop.ToolCall{Name: "steer_task", NativeToolCallID: "seafood-steer", Arguments: map[string]any{"source_ref": source.SourceRef, key: "t1", "correction": "以非海鲜为主，不要推荐海鲜，宁德地标照旧", "reply": "收到，按非海鲜推荐。"}}
+			first, err := host.Execute(ctx, identity, call)
+			if err != nil || first.Receipt == "" {
+				t.Fatalf("correction refused: %+v %v", first, err)
+			}
+			replay, err := host.Execute(ctx, identity, call)
+			if err != nil || replay.Receipt != first.Receipt {
+				t.Fatalf("replay differs: %+v %v", replay, err)
+			}
+			call.Arguments["correction"] = "different correction"
+			if _, err := host.Execute(ctx, identity, call); err == nil {
+				t.Fatal("changed replay payload accepted")
+			}
+			var tasks, runs, corrections int
+			if err := testPool.QueryRow(ctx, `SELECT (SELECT count(*) FROM employee_task WHERE agent_id=$1),(SELECT count(*) FROM employee_task_run WHERE agent_id=$1),(SELECT count(*) FROM employee_task_entry WHERE agent_id=$1 AND kind='steer')`, f.agentID).Scan(&tasks, &runs, &corrections); err != nil {
+				t.Fatal(err)
+			}
+			if tasks != 1 || runs != 2 || corrections != 1 {
+				t.Fatalf("replay duplicated work: tasks=%d runs=%d corrections=%d", tasks, runs, corrections)
+			}
+		})
 	}
 }

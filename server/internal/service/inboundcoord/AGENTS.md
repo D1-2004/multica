@@ -1,6 +1,6 @@
 # Coordinator changes
 
-Read the root `CLAUDE.md`, then `docs/inbound-coordinator-loop.md` before changing this package. The current behavior contract also applies to Coordinator-related handler, assoc, scenememory, dispatch, callback and trace changes.
+Read the root `CLAUDE.md` and `docs/development-delivery.md`, then `docs/inbound-coordinator-loop.md` before changing this package. Define the relevant E2E acceptance, environment and delivery boundary in the current task/Plan. The current behavior contract also applies to Coordinator-related handler, assoc, scenememory, dispatch, callback and trace changes.
 
 Policy text lives only in `policy/*.md`; register its version, obligations, selection conditions and effect dependencies in `policy/registry.json`. Preserve source provenance in `docs/plans/2026-09-07-coordinator-progressive-context-inventory.json`. Do not append an unregistered monolithic system prompt or restore superseded incident workarounds from an old Plan.
 

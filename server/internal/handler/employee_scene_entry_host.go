@@ -195,6 +195,11 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			return h.currentTaskReplay(ctx, tx, source, call, raw)
 		}
 	}
+	if call.Name == "steer_task" {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.steerReplay(ctx, tx, source, call, raw)
+		}
+	}
 	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, revalidate, func(tx pgx.Tx) (json.RawMessage, error) {
 		observation := employeeTraceTool(ctx, h.job, call)
 		var result employeeloop.ToolResult
@@ -245,7 +250,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, tx, source, env, call)
 		case "steer_task":
-			result, err = h.steer(ctx, source, env, call)
+			result, err = h.steer(ctx, tx, source, env, call)
 		case "read_task", "read_task_history":
 			if call.Arguments["task_ref"] != nil {
 				result, taskRead, err = h.readCurrentTask(ctx, tx, source, call)
