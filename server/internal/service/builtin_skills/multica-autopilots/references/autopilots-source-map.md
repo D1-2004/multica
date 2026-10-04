@@ -90,9 +90,9 @@
 
 - Scene-only one-shot `autopilot_trigger.kind=once,run_at` is created through `handler/scene_routines.go` / `scene_config_mcp.go`, not the generic CLI. `scheduler/jobs_autopilot.go` plans its exact instant; `service/employee_routine_task.go` consumes it transactionally with the occurrence and fresh task. Migration 10060 adds the time/shape constraint; 10061–10062 preserve immutable source context.
 
-## Employee Webhook result delivery
+## Employee routine result delivery
 
-- `handler/employee_routine_origin.go::EnqueueRoutineStartNoticeTx`: Employee webhook admission skips a start announcement.
+- `handler/employee_routine_origin.go::EnqueueRoutineStartNoticeTx`: Employee routine admission skips a start announcement.
 - `service/employee_webhook_task.go::compileWebhookRoutinePacket` and `handler/employee_run_claim.go::employeeRoutineOutputInstruction`: frozen work packet and claim-time business-result guidance; Host owns delivery.
-- `handler/scene_routines.go::enqueueRoutineEndNotice`, `employeeWebhookResultText`: frozen Employee automation origin selects a result-only reply; failure/cancel/empty output retain explicit explanation. Routine outbox IDs and terminal savepoints stay unchanged.
-- `handler/employee_webhook_task_test.go`, `employee_webhook_notice_test.go`: PG admission/claim/completion/replay and result-format boundaries; `office-hook-result-only-delivery` / G16 defines real IM acceptance, not claimed by local tests.
+- `handler/scene_routines.go::enqueueRoutineEndNotice`, `employeeRoutineResultText`: frozen Employee automation origin selects a result-only reply; failure/cancel/empty output retain explicit explanation. Routine outbox IDs and terminal savepoints stay unchanged.
+- `handler/employee_webhook_task_test.go`, `employee_routine_notice_test.go`: PG admission/claim/completion/replay and result-format boundaries; `office-hook-result-only-delivery` / G16 and `office-cron-result-only-delivery` / G15 defines real IM acceptance, not claimed by local tests.

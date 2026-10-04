@@ -9,7 +9,7 @@ import (
 )
 
 // Result-only delivery must not turn empty output or failure into success.
-func TestEmployeeWebhookResultDelivery(t *testing.T) {
+func TestEmployeeRoutineResultDelivery(t *testing.T) {
 	encode := func(output string) []byte {
 		raw, err := json.Marshal(protocol.TaskCompletedPayload{Output: output})
 		if err != nil {
@@ -29,12 +29,12 @@ func TestEmployeeWebhookResultDelivery(t *testing.T) {
 		{"cancelled", "cancelled", nil, "", "「部署检查」已取消。"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := employeeWebhookResultText("部署检查", tc.status, tc.result, tc.failure); got != tc.want {
+			if got := employeeRoutineResultText("部署检查", tc.status, tc.result, tc.failure); got != tc.want {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
 	}
-	long := employeeWebhookResultText("部署检查", "completed", encode(strings.Repeat("好", sceneRoutineNoticeMax+10)), "")
+	long := employeeRoutineResultText("部署检查", "completed", encode(strings.Repeat("好", sceneRoutineNoticeMax+10)), "")
 	if !strings.HasPrefix(long, strings.Repeat("好", sceneRoutineNoticeMax)+"\n") || !strings.Contains(long, "完整结果见") {
 		t.Fatal("long output did not preserve the clipped result and history link")
 	}

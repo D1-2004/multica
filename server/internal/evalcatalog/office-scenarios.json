@@ -2902,6 +2902,31 @@
           "sourceCases": [
             "office-cron-once-source-context"
           ]
+        },
+        {
+          "id": "office-cron-result-only-delivery",
+          "title": "定时工作直接交付结果，无开始或耗时播报",
+          "roles": [
+            "配置者：授权测试成员，配置Employee场域定时任务",
+            "执行者：Employee模式测试员工，使用真实执行器",
+            "观察者：获准读取该场域消息、计划/occurrence/Task/Run与模型轨迹"
+          ],
+          "verifies": [
+            "到点受理不播报开始，终态只交付业务结果，执行耗时留在运行记录；失败和空结果明确说明。",
+            "周期、once和手动运行保持其唯一执行与结束投递，取消/重放不能重新播报开始或产生额外结果。"
+          ],
+          "method": [
+            "设置短可验的one-shot及获准窗口内周期任务，记录计划时刻与完整IM观察窗口；核真实发生的occurrence、执行器工具与唯一最终业务结果，无start或系统耗时前缀。",
+            "在相同occurrence重放与隔离失败/取消/空结果反例中联合API/outbox及IM计数；后台状态可查而不广播，不能用ACK或没看到消息当成功。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04/scene-webhook-ux.md",
+            "server/internal/handler/employee_routine_origin_test.go",
+            "server/internal/handler/employee_routine_notice_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "collaboration"
@@ -3158,7 +3183,7 @@
             "docs/context-capabilities.md",
             "docs/plans/2026-10-04/scene-webhook-ux.md",
             "server/internal/handler/employee_webhook_task_test.go",
-            "server/internal/handler/employee_webhook_notice_test.go"
+            "server/internal/handler/employee_routine_notice_test.go"
           ],
           "origin": "defined",
           "sourceCases": []

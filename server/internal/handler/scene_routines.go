@@ -1369,8 +1369,8 @@ func (h *Handler) enqueueRoutineEndNotice(ctx context.Context, q *db.Queries, ex
 	}
 	title := routineContextTitle(task.Context)
 	text := routineEndText(title, task, status, result, errMessage)
-	if direct, ok := service.ParseDirectTaskContext(task); ok && direct.AutomationOrigin != nil && direct.AutomationOrigin.Kind == service.AutomationOriginSceneRoutineWebhook {
-		text = employeeWebhookResultText(title, status, result, errMessage)
+	if direct, ok := service.ParseDirectTaskContext(task); ok && direct.AutomationOrigin != nil && (direct.AutomationOrigin.Kind == service.AutomationOriginSceneRoutineWebhook || direct.AutomationOrigin.Kind == service.AutomationOriginSceneRoutine) {
+		text = employeeRoutineResultText(title, status, result, errMessage)
 	}
 	if run.TriggerID.Valid {
 		trigger, err := q.GetAutopilotTrigger(ctx, run.TriggerID)
@@ -1462,9 +1462,9 @@ func routineContextTitle(raw []byte) string {
 	return "例行任务"
 }
 
-// employeeWebhookResultText separates the business reply from run telemetry.
-// Only the frozen Employee webhook origin selects this presentation.
-func employeeWebhookResultText(title, status string, result []byte, errMessage string) string {
+// employeeRoutineResultText separates the business reply from run telemetry.
+// Only a frozen Employee routine origin selects this presentation.
+func employeeRoutineResultText(title, status string, result []byte, errMessage string) string {
 	switch status {
 	case "completed":
 		var payload protocol.TaskCompletedPayload

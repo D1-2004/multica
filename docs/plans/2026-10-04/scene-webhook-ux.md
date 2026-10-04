@@ -2,9 +2,9 @@
 
 ## 目标、Why 与边界
 
-Webhook 自动事件不是人在群里主动询问状态。固定开始播报与耗时结尾会淹没事件的业务结果。Employee Webhook 改为结果优先：不发送开始通知；结束只发执行器的最终业务结果，失败/取消仍有明确说明；空结果明确未取得可交付结果，不冒称成功。不增加模型请求、关键词识别或第二套 outbox。
+Webhook 自动事件不是人在群里主动询问状态。固定开始播报与耗时结尾会淹没事件的业务结果。Employee所有例行任务（定时、一次性、Webhook与手动运行）改为结果优先：不发送开始通知；结束只发执行器的最终业务结果，失败/取消仍有明确说明；空结果明确未取得可交付结果，不冒称成功。不增加模型请求、关键词识别或第二套 outbox。
 
-参考 GawkBot 固定提交 71e82a1809565281cbd0bf8185d3c125b715d934 的 internal/team/scheduler.go::processBotJob：自动化工作进入员工事件，调度轨迹/OutputSummary保留在schedulerRun；借鉴业务回复与运行记录分离，不复制其向频道发布自动化输入的具体传输。原消息只读取证（2026-10-03至本次查询，369条），私有证据完整性complete=true、hasMore=false；已见定时任务同模板，此次范围限 frozen scene_routine_webhook Employee origin，不扩大改周期任务、旧Coordinator或混版回退路径。
+参考 GawkBot 固定提交 71e82a1809565281cbd0bf8185d3c125b715d934 的 internal/team/scheduler.go::processBotJob：自动化工作进入员工事件，调度轨迹/OutputSummary保留在schedulerRun；借鉴业务回复与运行记录分离，不复制其向频道发布自动化输入的具体传输。原消息只读取证（2026-10-03至本次查询，369条），私有证据完整性complete=true、hasMore=false；已见定时任务同模板，用户补充要求定时任务一并修复并部署，当前范围包括冻结scene_routine与scene_routine_webhook Employee origin；旧Coordinator与混版回退路径保持。
 
 MCP删除入口从配置弹窗底部移到列表行，继续使用场域授权与确认框；只移除本场域配置项。Webhook复制弹窗须在窄屏容纳完整链接，完整复制且默认掩码。
 
@@ -14,7 +14,7 @@ MCP删除入口从配置弹窗底部移到列表行，继续使用场域授权�
 - 实现前更新docs/context-capabilities.md及稳定case；实现后进行现有Webhook admission→claim→CompleteTask→routine outbox合同测试，确认重放唯一Run、零start、一条end、结果原文及异常保留。模型和DWS替身与PG集成分开报告。
 - 前端定向行为检查MCP确认/取消/其他配置保留；布局在发布后以真实320/375px配置页验证，不用class断言冒充视觉验收。
 - 环境：本地独立PG数据库scene_webhook_ux_1004；私有读聊天使用冬翔profile，DWS线上网关保持原状。共享预发、Runtime、Agent定义与场域不写。
-- 发布流程：提交源分支CR到feat/tag-multitenant，精确SHA/稳定case/验证边界交给「发布协调」；等待明确通知才进入部署验证。此批不自行合目标、部署或发测试IM。
+- 发布流程：提交源分支CR到feat/tag-multitenant，精确SHA/稳定case/验证边界交给「发布协调」；等待明确通知才进入部署验证。用户已补充授权修复后部署，由发布协调统一合目标与部署，收到其通知后进入验证。
 - 真实验收：Webhook带可识别业务数据和同event id重投→IM只见一条业务结果，API唯一delivery/occurrence/task/run，失败一次可解释；SLS/LF证明冻结来源与执行器实际工具。MCP删除后重新打开及API回读；其他场域配置不变；长URL完整复制且无横向溢出。
 
 ## 状态
@@ -28,3 +28,15 @@ MCP删除入口从配置弹窗底部移到列表行，继续使用场域授权�
 - 新稳定case office-hook-result-only-delivery / spec-communication、spec-delivery / webhook-office / G16；149定义结构与稳定ID检查通过，不代表真实执行。配置页两项的独立视觉/API验收步骤见上方计划。
 - 证据保存在私有SCENE-WEBHOOK-UX-20261004目录；没有共享配置/Runtime修改。本地独立数据库检查结束后清理。
 - CR、部署及真实验收分别由本次交接和后续发布通知签收，未收到通知之前不进行共享验证。
+
+
+## 范围更新：定时任务与部署
+
+用户要求定时任务的同类问题一并修复后部署。将零start、业务结果直接交付策略扩至Employee所有routine Direct origin，不改变原Coordinator路径。新增office-cron-result-only-delivery/G15，复验schedule claim→CompleteTask→唯一end及原once合同；部署由发布协调执行，真实验证仍等待其版本通知。此前29/99为Webhook切片本地结果，扩展后的检查另记录，不能复用为定时行为已证。
+
+
+## 扩展实现检查与交接
+
+- Employee schedule整链独立PG检查1项通过；Webhook、条件判断、结果异常边界独立批30项通过；once3项通过，最终各批0fail/skip。合批时schedule claim发生一次queued却未取得的夹具竞争，原失败日志保留；单独进程原链通过，不修改生产claim门。
+- decision guidance、run_routine描述与tool result同步取消start/end承诺；quiet/reply/wait语义保留，源码审查确认所有冻结routine origin均适用。服务构建通过，150定义检查通过；前端仍使用已通过99项证据，无新增前端变化。
+- CR：Code Review 30323103，目标feat/tag-multitenant；提交后由发布协调统一合入部署，按新源码和live reader通知启动真实验收。尚未将本地PG/替身结果签成真实IM通过。

@@ -12,14 +12,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // The Host side of scene routine occurrences that run as EmployeeTask Direct
 // executions (service/employee_routine_task.go). The routine outbox stays
-// the only sender; this file adds the in-transaction start
-// notice, the delivery-target check, the replica gate and the recovery of a
+// the only sender; this file provides the silent admission hook,
+// delivery-target check, replica gate and recovery of a
 // terminal execution whose AutopilotRun was never settled.
 
 var _ service.EmployeeRoutineHost = (*Handler)(nil)
@@ -77,35 +76,13 @@ func classifyRoutineDeliveryError(err error) error {
 	return err
 }
 
-// EnqueueRoutineStartNoticeTx records the start notice of an accepted
-// occurrence in the admission transaction. It is idempotent on the run id.
+// EnqueueRoutineStartNoticeTx deliberately has no chat effect for Employee
+// routine work. Admission and progress remain observable in run history;
+// the routine outbox delivers the terminal business result exactly once.
 func (h *Handler) EnqueueRoutineStartNoticeTx(ctx context.Context, tx pgx.Tx, notice service.RoutineStartNotice) error {
-	// Automatic webhook work delivers a result, not an admission announcement.
-	// This Host method is used only by Employee Direct admission.
-	if notice.Run.Source == "webhook" {
-		return nil
-	}
-	if h.DingTalkResponses == nil {
-		return errors.New("routine notices are unavailable")
-	}
-	if notice.Run.TriggerID.Valid {
-		trigger, err := h.Queries.WithTx(tx).GetAutopilotTrigger(ctx, notice.Run.TriggerID)
-		if err != nil {
-			return err
-		}
-		if trigger.Kind == sceneRoutineTriggerOnce {
-			return nil
-		}
-	}
-	in, err := h.routineNoticeInput(ctx, h.Queries.WithTx(tx), notice.Routine, routineStartText(notice.Title, notice.Run, notice.Timezone))
-	if err != nil {
-		return classifyRoutineDeliveryError(err)
-	}
-	_, err = h.DingTalkResponses.EnqueueRoutineNotice(ctx, tx, in, util.UUIDToString(notice.Run.ID), dingtalkresponse.RoutineNoticeStart)
-	return err
+	return nil
 }
 
-// NotifyRoutineNotices wakes the response outbox after a commit.
 func (h *Handler) NotifyRoutineNotices() {
 	if h != nil && h.DingTalkResponses != nil {
 		h.DingTalkResponses.Notify()
