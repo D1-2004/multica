@@ -163,7 +163,8 @@ func AcceptTx(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, r Respo
 			return q, r, e
 		}
 		want, _ := responseBody(r)
-		if string(want) != string(old) {
+		canonical, _ := responseBody(stored)
+		if string(want) != string(canonical) {
 			return q, r, ErrConflict
 		}
 		return q, stored, nil
@@ -174,8 +175,10 @@ func AcceptTx(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, r Respo
 	if q.State != "open" && q.State != "deferred" {
 		return q, r, ErrStale
 	}
-	if err = CurrentTargetTx(ctx, tx, q); err != nil {
-		return q, r, err
+	if r.Intent != "dismiss" {
+		if err = CurrentTargetTx(ctx, tx, q); err != nil {
+			return q, r, err
+		}
 	}
 	if hook == nil {
 		return q, r, ErrInvalid

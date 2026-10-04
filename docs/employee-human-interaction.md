@@ -1,6 +1,6 @@
 # Employee 人工选择与文字答复
 
-本能力在当前分支接入，尚未发布或真实IM验收。生产者须等待所有副本具备 `[employee-human:1]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
+本页描述当前源码行为；部署与真实IM验收分别以当波交付记录为准。生产者须等待所有副本具备 `[employee-human:2]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
 
 ## 询问与索引
 
@@ -16,7 +16,7 @@ Run的来源与退出事实经原Execution Event验证后，结果通知物化�
 
 原生 `user_card_action_triggered` 的 `sourceTurnId=ask:<uuid>` 精确查问题；原生订阅的sender/agent/org、原提问者operator、版本和展示选项均检查。事件payload的actor/scene/Task不授予权限。非法选项或无权点击不消耗合法机会。
 
-普通文字仍是message job。新快照显式提供当前请求者本scene的pending_human_questions，既有Loop可调用 `accept_human_response` 选择对应question_ref，必须引用当前外层原话；完整原文与附加限制保存。无引用的明确回复可推进，多问歧义先追问，新话题/感谢不自动关闭旧题。取消任务继续走现有source-bound stop_task，不被答题工具吞掉。没有被摄入的群消息不会从历史中制造新授权。
+普通文字仍是message job。新快照显式提供当前请求者本scene的pending_human_questions，既有Loop可调用 `accept_human_response` 选择对应question_ref，必须引用当前外层原话；完整原文与附加限制保存。无引用的明确回复可推进，多问歧义先追问，新话题/感谢不自动算作旧题答案；模型可按当前原话明确将不再适用的旧卡失效。取消任务继续走现有source-bound stop_task，不被答题工具吞掉。没有被摄入的群消息不会从历史中制造新授权。
 
 答案CAS与类型化 `human_response` receipt/consumption/job在同一事务，重投返回原工作；同事件不同内容冲突，按钮/文字首个合法答案胜出。skip只让问题deferred，不满足必需等待、不授权下一轮。后续明确文字纠正已受理工作继续使用现有任务控制，不让旧卡覆盖。
 
@@ -54,8 +54,26 @@ human reader就绪的新message snapshot无论是否已有pending question，都
 
 ## 卡片呈现与关闭
 
-Employee专用compact投影只展示一条短问句与候选，卡内引用可信原消息（现有创建接口无原生引用参数）。单选/冻结选人用现有submit事件和静态选项ID点选即答，无额外提交及大TextField；多选一次确认，generic原生UserPicker/approval不改。候选说明只在该选项内部显示，重名部门/角色不能丢。普通文字仍是正式输入。
+Employee专用compact投影按用户确认的模板选择，卡内不拼原消息引用。当前CLI/SDK未暴露quoted A2UI发送参数；原生历史引用回复＋独立卡是两条消息，不能冒称同条引用卡。
+
+| 模型声明/状态 | 模板与交互 |
+| --- | --- |
+| single/person、allow_custom=false | 06文字按钮单选，点选即答 |
+| multiple、allow_custom=false | 08多选列表，一次确认 |
+| allow_custom=true | 17选项＋输入框，一次确认合并所选和补充原文 |
+| 已回答 | 09/10保留原题干，只显示所选项、右侧勾，无操作控件 |
+| 已失效 | 原题干＋“已失效”，无按钮、选择器或输入框 |
+
+模型用选项可选emphasis(primary/secondary/none)声明强调，映射已发布Button primary/default/borderless；不根据label关键词猜确认/取消。模型按风险选择强调，但样式不授予审批或执行权限。冻结候选短说明合成文字，重名部门/角色不能丢。Button child只用已真机验证Text，不能嵌套Row/Column；Row在静态完成态仍可用。基础目录未提供width/radius参数，当前native按钮仍为胶囊；较宽小圆角模板属于尚待客户端能力，不添加猜造字段。普通聊天仍是正式输入。
 
 合法答复与唯一typed job同事务保存原卡关闭意图；独立PG lease更新消费者尽快将原bizId替换为FINISH、仅保留冻结的所选标签/摘要和右侧勾、无可操作控件。原native和普通文字两种路径均覆盖。旧已受理问卡有限回填；skip仍是deferred，不占最终答案。早答/晚send回执等待真实bizId；unknown不发送新卡，更新可重试，明确未发送被suppressed则无需锁不存在的卡。更新前复验当前tenant、principal、scene、endpoint、员工UID和原来源，不因Task已完成而放弃关闭已受理卡。
 
 单聊发卡目标使用Host冻结来源的员工视角senderOpenDingTalkId；群使用场域目录CID。两者不可混用，模型不提供目标参数。
+
+## 模型与工程共同处理整体失效
+
+`disable_human_question(source_ref,question_ref,evidence_quote,reason)`只操作当前请求者、本场域的精确旧问题。reason为chat_continued/request_changed/cancelled/not_needed；证据必须来自当前可信消息外层原话。工具非终结，关卡后模型可继续回复或处理新事项。明确回答走accept_human_response并正常续接；文字已推进到不同要求、新话题或取消询问时可明确disable旧卡。感谢/闲聊不自动当答案，也不能批量关掉别人/其他场域的问题。
+
+禁用复用scope/question锁和question answered终态，response intent=dismiss只是关闭审计，不创建typed human_response wake/Task，不释放必需等待或停止后台Task。原Task停止仍用stop_task。native点击与dismiss竞争只一个终态；重复disable不覆盖先前答案，旧卡迟点拒绝。a2ui存储status沿用answered，result.outcome=disabled区分显示，持久原卡projection outbox按原bizId更新FINISH；模型不能指定bizId/场域或人员权限。发送尚未完成时先关闭状态，晚回执后补锁卡；未知投递不重发新卡。
+
+新dismiss/disabled生产者须等待全部live副本支持human:2；混版1/2双方暂停新人工生产者，避免旧关闭reader将disabled更新永久标blocked。旧native submit协议不变；工具snapshot仍冻结，不热改旧journal。

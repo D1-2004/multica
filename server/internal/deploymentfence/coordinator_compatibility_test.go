@@ -56,11 +56,16 @@ func TestCoordinatorReplicaCompatibilityUsesEveryLiveHeartbeat(t *testing.T) {
 	svc.snapshot.Store(&Snapshot{State: StateNormal, Revision: 1})
 	for _, tc := range []struct {
 		name       string
+		marker     string
 		builds     []string
 		expiredOld bool
 		want       bool
 	}{
 		{name: "no live replicas", want: false},
+		{name: "human disable old readers", marker: "[employee-human:2]", builds: []string{"a [employee-human:1]", "b [employee-human:1]"}, want: false},
+		{name: "human disable mixed readers", marker: "[employee-human:2]", builds: []string{"a [employee-human:1]", "b [employee-human:2]"}, want: false},
+		{name: "human disable all new readers", marker: "[employee-human:2]", builds: []string{"a [employee-human:2]", "b [employee-human:2]"}, want: true},
+		{name: "old producer sees new readers", marker: "[employee-human:1]", builds: []string{"a [employee-human:1]", "b [employee-human:2]"}, want: false},
 		{name: "mixed old and new", builds: []string{"old-build", "new-build " + inboundcoord.ReplicaPlanMarker}, want: false},
 		{name: "every live replica supports plan", builds: []string{"build-a " + inboundcoord.ReplicaPlanMarker, "build-b " + inboundcoord.ReplicaPlanMarker}, want: true},
 		{name: "expired old replica is ignored", builds: []string{"new-build " + inboundcoord.ReplicaPlanMarker}, expiredOld: true, want: true},
@@ -79,7 +84,11 @@ func TestCoordinatorReplicaCompatibilityUsesEveryLiveHeartbeat(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := svc.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
+			marker := tc.marker
+			if marker == "" {
+				marker = inboundcoord.ReplicaPlanMarker
+			}
+			got, err := svc.AllLiveReplicasSupport(ctx, marker)
 			if err != nil || got != tc.want {
 				t.Fatalf("ready=%v want=%v err=%v", got, tc.want, err)
 			}
