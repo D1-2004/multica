@@ -112,3 +112,8 @@ for newly compiled work: short verified lead, actionable failures, and a separat
 verbatim evidence section when requested. Exact-format and verbatim-only requests
 override the default lead. No output envelope, report parser, sender, additional
 model call or rewrite of frozen packets is introduced.
+
+The 2026-10-05 real IM canary found the new voice in the actual model input,
+but the failure explanation remained long. The default prose is now one or two
+natural sentences; requested raw evidence does not request a diagnostic narrative.
+Explicit detail and exact-format exceptions remain unchanged.

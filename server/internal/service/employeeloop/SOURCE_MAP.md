@@ -460,3 +460,8 @@ conclusion in short sentences. Explicit detail, verbatim evidence and exact-form
 requests take precedence over brevity. Evidence is separated from the brief lead,
 not rewritten or clipped; existing credential/privacy restrictions remain. This
 is prompt guidance only, with no extra composer pass or protocol change.
+
+The 2026-10-05 real IM canary found the new voice in the actual model input,
+but the failure explanation remained long. The default prose is now one or two
+natural sentences; requested raw evidence does not request a diagnostic narrative.
+Explicit detail and exact-format exceptions remain unchanged.
