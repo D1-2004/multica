@@ -66,6 +66,7 @@
 | `office-approval-vs-closing` | 短肯定按原对话解释 | existing |
 | `office-json-only` | 指定 JSON 格式 | existing |
 | `office-quoted-question-negation` | 疑问中的否定表述 | existing |
+| `office-questions-stay-separate` | 明确不要合并的两问分开回报 | defined |
 
 ### 群内授权与可信来源
 
@@ -169,6 +170,7 @@
 | `office-collection-pending-dm-scene` | 首次联系对象建立单聊场域 | defined |
 | `office-collection-uninvited-answer` | 未受邀成员不计入人数 | defined |
 | `office-collection-answer-not-learning` | 参与者答案不自动变共享记忆 | defined |
+| `office-collection-cancel-no-recount` | 取消后不复述已作废人数 | defined |
 
 ### 跨群、单聊与组织边界
 
@@ -242,6 +244,7 @@ scene.Ref、当前租户和身份桥限定工作资料及效果范围。
 | `office-memory-source-outer-only` | 引文和工具结果不伪装记忆来源 | defined |
 | `office-memory-withdrawn-history` | 遗忘内容不借近期历史复活 | existing |
 | `office-memory-mixed-requesters` | 多人窗口不聚合私有记忆 | defined |
+| `office-same-chat-drink-recall` | 同一对话里刚确认的饮品不被推翻 | defined |
 
 ### 验证经验、复用与治理
 

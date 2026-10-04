@@ -42,13 +42,13 @@
 
 - 需要什么角色：请求者、数字员工、独立验证者
 
-- 测试验证的是什么：保留旧冲突历史后使用最近明确口径；指代正确，单项更正不污染其他对象。
+- 测试验证的是什么：保留旧冲突历史后使用最近明确口径；指代正确，单项更正不污染其他对象。请求者明确说不要合并的两个问题，各自的答案留在各自的回复里。
 
-- 怎么验证：群内先给两人旧颜色，再重设蓝/绿；问“后者”，仅更正其中一人为紫，再问两人当前值。逐轮核可见回答、模型输入和零不必要派发。
+- 怎么验证：群内先给两人旧颜色，再重设蓝/绿；问“后者”，仅更正其中一人为紫，再问两人当前值。逐轮核可见回答、模型输入和零不必要派发。另建一群，把完成数和退回数分成两条且明确不要合并，核对两份答案各自成条。
 
 - 场景引用：clarification-reference, continuation-steer
 
-- 用例引用：office-latest-reset, office-one-field-correction, office-ambiguous-reference
+- 用例引用：office-latest-reset, office-one-field-correction, office-ambiguous-reference, office-questions-stay-separate
 
 ## G05 格式约束与文件静音交付
 
@@ -138,13 +138,13 @@
 
 - 需要什么角色：两个请求者、同一参与者、数字员工、独立验证者
 
-- 测试验证的是什么：明确邀请引用绑定正确 Task；歧义澄清；取消或撤权后的迟答不复活任务。
+- 测试验证的是什么：明确邀请引用绑定正确 Task；歧义澄清；取消或撤权后的迟答不复活任务。发起者取消收集后，取消说明不再写出已作废的各方人数，也不再写出两者合计。
 
-- 怎么验证：同时建两项收集，令同人按不同 invite 引用乱序答复，再发无引用歧义消息；取消一项后补迟答。核输入归属、计数、澄清、授权和零错误推进。
+- 怎么验证：同时建两项收集，令同人按不同 invite 引用乱序答复，再发无引用歧义消息；取消一项后补迟答。核输入归属、计数、澄清、授权和零错误推进。另建一群，两人答完后由发起者取消收集，核对取消说明不再复述已作废人数。
 
 - 场景引用：collection-input, stop-control, group-authority
 
-- 用例引用：office-collection-two-task-person, office-collection-unreferenced-ambiguity, office-collection-late-after-close
+- 用例引用：office-collection-two-task-person, office-collection-unreferenced-ambiguity, office-collection-late-after-close, office-collection-cancel-no-recount
 
 ## G13 跨群与跨组织读取/发送边界
 

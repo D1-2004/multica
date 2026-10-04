@@ -443,6 +443,30 @@
             "proactive-generic-output-question"
           ],
           "liveReady": true
+        },
+        {
+          "id": "office-questions-stay-separate",
+          "title": "明确不要合并的两问分开回报",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹"
+          ],
+          "verifies": [
+            "请求者明确说不要合并的两个问题，各自的答案留在各自的回复里。"
+          ],
+          "method": [
+            "新建测试群。先 @ 员工问小乙这周完成了几份方案，并要求得到答复后再告诉发起者。紧接着另发一条：另外单独问这周退回了几份方案，不要和前一项合并。",
+            "小乙分别给出两个不同整数。核对员工回报给发起者时，完成数单独一条消息，退回数单独一条消息。同一条消息里同时写出两个答案，本条不成立。同一人按两条邀请引用作答另有专条，改交付约束时保留未改栏目另有专条。"
+          ],
+          "sources": [
+            "docs/employee-loop.md",
+            "docs/inbound-coordinator-loop.md",
+            "docs/agent-scene.md"
+          ],
+          "origin": "defined",
+          "sourceCases": [],
+          "liveReady": true
         }
       ],
       "categoryRef": "communication"
@@ -1053,8 +1077,8 @@
             "尚未到点的任务不能被描述为已运行。"
           ],
           "method": [
-            "设置专用 future occurrence 或等待时点，当前仍无 Run start。",
-            "询问状态并对照实际时间、等待事实与执行账本。"
+            "在新建测试群里约定一个尚未到点的提醒，当前还没有任何运行回复。",
+            "到点前在本群询问这项安排是否已经跑过。核对回复不能把它说成已经运行；口头状态就是核对点。"
           ],
           "sources": [
             "docs/employee-loop.md",
@@ -1063,7 +1087,8 @@
             "docs/evals/coordinator-collect-e2e.json"
           ],
           "origin": "defined",
-          "sourceCases": []
+          "sourceCases": [],
+          "liveReady": true
         },
         {
           "id": "office-stopping-not-stopped",
@@ -2084,6 +2109,31 @@
           ],
           "origin": "defined",
           "sourceCases": []
+        },
+        {
+          "id": "office-collection-cancel-no-recount",
+          "title": "取消后不复述已作废人数",
+          "roles": [
+            "发起者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试范围消息、任务与轨迹",
+            "参与者：授权测试对象小乙、小丙、小丁"
+          ],
+          "verifies": [
+            "发起者取消收集后，取消说明不再写出已作废的各方人数，也不再写出两者合计。"
+          ],
+          "method": [
+            "新建测试群，@ 员工请在本群分别询问小乙和小丙本周新增客户几家，两人都答完再汇总。小乙答 7，小丙答 4。",
+            "发起者接着 @ 员工取消这件事，明确不用再问，也不要继续汇总。核对随后的取消说明不出现 7、4，也不出现合计 11。核对对象是取消说明本身。迟到答复是否重新打开已关闭收集另有专条。"
+          ],
+          "sources": [
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/employee-collection-late-context.md"
+          ],
+          "origin": "defined",
+          "sourceCases": [],
+          "liveReady": true
         }
       ],
       "categoryRef": "collaboration"
@@ -3434,6 +3484,31 @@
           ],
           "origin": "defined",
           "sourceCases": []
+        },
+        {
+          "id": "office-same-chat-drink-recall",
+          "title": "同一对话里刚确认的饮品不被推翻",
+          "roles": [
+            "发起者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试范围消息、任务与轨迹",
+            "记忆 owner：小甲；其他测试发言者：小乙"
+          ],
+          "verifies": [
+            "员工刚在本对话确认过的饮品，几分钟后同一人再问，回答仍是那一杯。"
+          ],
+          "method": [
+            "新建测试群。发起者 @ 员工说：这轮联调我喝温柠檬水，请记住，只记饮品。等员工在本群确认这杯温柠檬水。",
+            "过几分钟，同一人在同一群再问：我这轮喝什么，只答饮品。核对回复仍是温柠檬水。改口说不知道、没有这条记录，或换成别的饮料，本条不成立。同 key 更正以记忆库审计为准另有专条。"
+          ],
+          "sources": [
+            "docs/employee-loop.md",
+            "docs/agent-scene.md",
+            "docs/plans/2026-10-03/employee-memory-capture.md"
+          ],
+          "origin": "defined",
+          "sourceCases": [],
+          "liveReady": true
         }
       ],
       "categoryRef": "learning-reliability"

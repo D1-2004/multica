@@ -63,9 +63,47 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 			readyCases[item.ID] = item.LiveReady
 		}
 	}
-	for _, id := range []string{"office-at-employee", "office-python-real", "office-cron-real-due", "office-file-native-delivery", "office-collection-two-task-person"} {
+	for _, id := range []string{
+		"office-at-employee",
+		"office-python-real",
+		"office-cron-real-due",
+		"office-file-native-delivery",
+		"office-collection-two-task-person",
+		"office-collection-cancel-no-recount",
+		"office-questions-stay-separate",
+		"office-same-chat-drink-recall",
+		"office-scheduled-wait-honesty",
+	} {
 		if !readyCases[id] {
 			t.Fatal("expected a conversation-checkable case", id)
+		}
+	}
+	behaviors := map[string]string{
+		"office-collection-cancel-no-recount": "已作废的各方人数",
+		"office-questions-stay-separate":      "不要合并",
+		"office-same-chat-drink-recall":       "温柠檬水",
+	}
+	for _, scenario := range h.data.Scenarios {
+		for _, item := range scenario.Cases {
+			phrase, ok := behaviors[item.ID]
+			if !ok {
+				continue
+			}
+			text := strings.Join(item.Verifies, "") + strings.Join(item.Method, "")
+			if !strings.Contains(text, phrase) {
+				t.Fatal("new behavior missing", item.ID)
+			}
+			at := strings.Index(body, `id="`+item.ID+`"`)
+			if at < 0 {
+				t.Fatal("new case missing from page", item.ID)
+			}
+			window := body[at:]
+			if len(window) > 500 {
+				window = window[:500]
+			}
+			if !strings.Contains(window, `class="ready-mark"`) {
+				t.Fatal("new case is not marked on the page", item.ID)
+			}
 		}
 	}
 	for _, id := range []string{"office-at-other", "office-json-only", "office-hook-signature", "office-memory-capture-private", "office-structured-completion-continue", "office-continue-success", "office-direct-without-issue"} {
@@ -85,11 +123,36 @@ func TestSinglePageHasGoldenAndExpandableScenarios(t *testing.T) {
 			t.Fatal("unexpected ready golden", id)
 		}
 	}
+	for _, id := range []string{"G04", "G12"} {
+		at := strings.Index(body, `id="`+id+`"`)
+		if at < 0 {
+			t.Fatal("golden missing", id)
+		}
+		window := body[at:]
+		if len(window) > 500 {
+			window = window[:500]
+		}
+		if !strings.Contains(window, `class="ready-mark"`) {
+			t.Fatal("golden is not marked on the page", id)
+		}
+	}
+	wantCases := 0
+	for _, ready := range readyCases {
+		if ready {
+			wantCases++
+		}
+	}
+	wantGolden := 0
+	for _, ready := range readyGolden {
+		if ready {
+			wantGolden++
+		}
+	}
 	readyMarks := strings.Count(body, `class="ready-mark"`)
-	if h.data.ReadyGolden != 2 || h.data.ReadyCases != 33 || readyMarks != h.data.ReadyGolden+h.data.ReadyCases {
+	if h.data.ReadyGolden != wantGolden || h.data.ReadyCases != wantCases || readyMarks != h.data.ReadyGolden+h.data.ReadyCases {
 		t.Fatalf("ready marks golden=%d cases=%d rendered=%d", h.data.ReadyGolden, h.data.ReadyCases, readyMarks)
 	}
-	if !strings.Contains(body, `id="G04"`) || !strings.Contains(body, "可跑可验证") {
+	if !strings.Contains(body, "可跑可验证") {
 		t.Fatal("ready mark missing")
 	}
 	for _, bad := range []string{"Markdown", "仓库资产", "评测工具", "评测运行时", "为什么", "<script", "<form", "<button", "<iframe", "<no value>", "ZgotmplZ"} {
