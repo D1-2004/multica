@@ -3137,6 +3137,31 @@
           "sourceCases": [
             "employee-hook-04"
           ]
+        },
+        {
+          "id": "office-hook-result-only-delivery",
+          "title": "Webhook只交业务结果，不播报开始与耗时",
+          "roles": [
+            "配置者：授权测试成员，创建专用场域Webhook例行任务",
+            "执行者：Employee模式测试员工，使用真实执行器",
+            "观察者：获准读取该场域消息及delivery/Task/Run/outbox与SLS/LF"
+          ],
+          "verifies": [
+            "已冻结Employee Webhook执行不发送开始通知；成功只发送最终业务结果，群里没有系统耗时或完成横幅。",
+            "同事件重投只产生一个执行和一条结果消息；失败/取消/空输出有明确说明，不能静默伪装完成。"
+          ],
+          "method": [
+            "固定发布源码与live reader、Employee模式和Webhook配置；提交带业务标识的合法事件，执行期间回读群消息，然后等待终态并独立回读最终结果。",
+            "以同event ID和相同原字节重投，联合delivery/occurrence/Task/Run与outbox数量证明幂等；隔离失败、取消和空结果，核无开始播报且结论准确。运行耗时应在运行记录，不从模型自述判执行成功。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04/scene-webhook-ux.md",
+            "server/internal/handler/employee_webhook_task_test.go",
+            "server/internal/handler/employee_webhook_notice_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "collaboration"

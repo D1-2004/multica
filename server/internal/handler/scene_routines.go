@@ -1369,6 +1369,9 @@ func (h *Handler) enqueueRoutineEndNotice(ctx context.Context, q *db.Queries, ex
 	}
 	title := routineContextTitle(task.Context)
 	text := routineEndText(title, task, status, result, errMessage)
+	if direct, ok := service.ParseDirectTaskContext(task); ok && direct.AutomationOrigin != nil && direct.AutomationOrigin.Kind == service.AutomationOriginSceneRoutineWebhook {
+		text = employeeWebhookResultText(title, status, result, errMessage)
+	}
 	if run.TriggerID.Valid {
 		trigger, err := q.GetAutopilotTrigger(ctx, run.TriggerID)
 		if err != nil {
@@ -1457,6 +1460,36 @@ func routineContextTitle(raw []byte) string {
 		return strings.TrimSpace(envelope.Routine.Title)
 	}
 	return "例行任务"
+}
+
+// employeeWebhookResultText separates the business reply from run telemetry.
+// Only the frozen Employee webhook origin selects this presentation.
+func employeeWebhookResultText(title, status string, result []byte, errMessage string) string {
+	switch status {
+	case "completed":
+		var payload protocol.TaskCompletedPayload
+		if json.Unmarshal(result, &payload) == nil {
+			output := strings.TrimSpace(redact.Text(util.UnescapeBackslashEscapes(payload.Output)))
+			if output != "" {
+				if runes := []rune(output); len(runes) > sceneRoutineNoticeMax {
+					output = string(runes[:sceneRoutineNoticeMax]) + "\n\n（完整结果见例行任务的运行记录）"
+				}
+				return output
+			}
+		}
+		return fmt.Sprintf("「%s」未返回可交付的结果，请检查运行记录。", title)
+	case "cancelled", "canceled":
+		return fmt.Sprintf("「%s」已取消。", title)
+	default:
+		reason := strings.TrimSpace(redact.Text(errMessage))
+		if reason == "" {
+			reason = "请检查运行记录后重试"
+		}
+		if runes := []rune(reason); len(runes) > 300 {
+			reason = string(runes[:300]) + "…"
+		}
+		return fmt.Sprintf("「%s」未能完成：%s", title, reason)
+	}
 }
 
 // routineStartText is the start notice: name and what started it, never the

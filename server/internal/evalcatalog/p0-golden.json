@@ -498,10 +498,12 @@
         "独立验证者"
       ],
       "verifies": [
-        "合法事件一次执行；同ID重投不重复，不同内容冲突拒绝；错签、伪造权限和禁用不扩权。"
+        "合法事件一次执行；同ID重投不重复，不同内容冲突拒绝；错签、伪造权限和禁用不扩权。",
+        "Employee Webhook不广播开始或耗时，唯一终态回复直接交付业务结果，异常结果有明确说明。"
       ],
       "method": [
-        "向专用endpoint发合法签名、同ID同内容、同ID改内容、错签、越权payload及禁用后事件。核 admission、冻结来源、Task/Run/action 数量和实际目标效果。"
+        "向专用endpoint发合法签名、同ID同内容、同ID改内容、错签、越权payload及禁用后事件。核 admission、冻结来源、Task/Run/action 数量和实际目标效果。",
+        "在专用Employee场域观察admission到terminal的完整IM窗口，核无start、单条end结果与实际Run绑定；失败及空输出不冒称成功。"
       ],
       "scenarioRefs": [
         "webhook-office",
@@ -513,7 +515,8 @@
         "office-hook-idempotent-replay",
         "office-hook-content-conflict",
         "office-hook-disabled",
-        "office-hook-payload-scene"
+        "office-hook-payload-scene",
+        "office-hook-result-only-delivery"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

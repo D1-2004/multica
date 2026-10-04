@@ -1355,7 +1355,12 @@ arrives. There are no org-level or person-level routines.
   webhook's payload allowlist (`trigger.payload_fields`: JSON pointers into
   the envelope, default `/event` and `/eventPayload`, frozen at acceptance,
   at most 32 KiB selected, else the occurrence fails) as untrusted data.
-  The routine's notices stay the only sender. A delivery frozen for this
+  The routine outbox stays the only sender. Employee webhook occurrences
+  have no start announcement; their terminal notice contains only the final
+  business result, or an explicit failure/cancellation/no-result explanation,
+  without a completion banner or elapsed time. Timing and execution status
+  remain in run history. The frozen automation origin, not a mutable agent
+  mode or user payload, selects this policy. A delivery frozen for this
   path never switches producer; while the marker is missing it waits.
   `payload_fields` is set on the routine create/PATCH body by managers,
   never from a chat.

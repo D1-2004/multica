@@ -17,8 +17,8 @@ import (
 )
 
 // The Host side of scene routine occurrences that run as EmployeeTask Direct
-// executions (service/employee_routine_task.go). The routine's own start and
-// end notices stay the only sender; this file adds the in-transaction start
+// executions (service/employee_routine_task.go). The routine outbox stays
+// the only sender; this file adds the in-transaction start
 // notice, the delivery-target check, the replica gate and the recovery of a
 // terminal execution whose AutopilotRun was never settled.
 
@@ -80,6 +80,11 @@ func classifyRoutineDeliveryError(err error) error {
 // EnqueueRoutineStartNoticeTx records the start notice of an accepted
 // occurrence in the admission transaction. It is idempotent on the run id.
 func (h *Handler) EnqueueRoutineStartNoticeTx(ctx context.Context, tx pgx.Tx, notice service.RoutineStartNotice) error {
+	// Automatic webhook work delivers a result, not an admission announcement.
+	// This Host method is used only by Employee Direct admission.
+	if notice.Run.Source == "webhook" {
+		return nil
+	}
 	if h.DingTalkResponses == nil {
 		return errors.New("routine notices are unavailable")
 	}

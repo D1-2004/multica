@@ -51,6 +51,8 @@ multica autopilot trigger-rotate-url <autopilot-id> <trigger-id> --yes --output 
 
 Use `trigger` only when the user explicitly asks for a manual run. Use `trigger-rotate-url` only when rotating a webhook URL; the old URL stops being valid.
 
+Scene-bound Employee Webhook runs deliver their final business result through the Host routine outbox. They do not announce start or append elapsed time to the chat reply; execution status and timing remain in run history. Failure, cancellation and missing output still get an explicit result notice. Return plain final text and do not send a duplicate reply yourself. This does not change legacy Coordinator or scheduled routine notices.
+
 Webhook trigger output can include a URL/token. Do not paste webhook tokens or signing material into comments, logs, docs, or PRs. Redact secrets.
 
 ## Debugging
