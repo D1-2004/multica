@@ -12,4 +12,4 @@ Host从可信queue→Run→Task→原receipt解析workspace/agent/tenant/scene.R
 
 后续真实E2E必须证明Runtime实际调用producer、Loop输入和决定、Task/Run不变、原会话一次真实投递、重投/版本/终态反例。局部fake模型/PG/HTTP与构建不替代语义或提供方真实效果。
 
-本轮local验证与真实待验入口：[implementation.md](plans/2026-10-04/employee-loop-gap-plan/implementation.md)。候选通用抽取/批量合并、首轮前台反馈、任意后台HumanQuestion均不在这次切片。Canonical reader采用loop19；集成其他新kind后必须重新确认综合reader能力，不能沿用较低marker冒称组合兼容。
+本轮local验证与真实待验入口：[implementation.md](plans/2026-10-04/employee-loop-gap-plan/implementation.md)。候选通用抽取/批量合并、首轮前台反馈、任意后台HumanQuestion均不在这次切片。源候选 reader 为 loop19；本次 release 集成保留已发布 loop19 的 source-bound steer_task / legacy alias 实现，将后台进展与纠正组合为唯一 canonical reader loop20。混版旧 loop19 不具备完整组合能力，新 producer、恢复和发送仍经既有 all-live reader 门控；不能沿用较低 marker 冒称组合兼容。迁移 10020–10023 与已发布场域参与、纠正迁移并存，不改变旧冻结快照。

@@ -33,7 +33,7 @@ LF查已知ID先详情，不扫描全项目最近列表。列表定位时Employe
 
 ## 判定与恢复
 
-真实case状态为pass/fail/invalid_env/waiting_actor/blocked/incomplete/known_limit，partial或无实际断言不计完整pass。重启/部署穿窗按该例受影响程度判invalid_env；保留原失败，不以清历史、换场域、改口径躲反例。
+真实case状态为pass/fail/invalid_env/waiting_actor/blocked/incomplete/known_limit，partial或无实际断言不计完整pass。重启/部署穿窗按该例受影响程度判invalid_env；发布允许与持续测试并行时保留run/segment检查点，仅恢复或重跑受影响例，不重置整个测试轮次；保留原失败，不以清历史、换场域、改口径躲反例。
 
 原失败复测只在该修复和部署属于本轮范围时执行；已过且未受影响例复用。LLM质量看事实、指代、连续性、必要执行及边界，不以速度/token或平均分抵消安全/归属失败。
 

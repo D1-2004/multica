@@ -34,6 +34,9 @@ func (h *employeeSceneHost) dispatchUpstream(ctx context.Context, tx pgx.Tx, sou
 		if err != nil {
 			return nil, nil, fmt.Errorf("builds_on %q is not a task candidate of this source", ref)
 		}
+		if binding.SharedReadOnly {
+			return nil, nil, errors.New("shared_read_only task cannot be used in builds_on")
+		}
 		if seen[binding.TaskID] {
 			return nil, nil, errors.New("builds_on lists the same task twice")
 		}

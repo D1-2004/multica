@@ -789,6 +789,7 @@ type AutopilotTrigger struct {
 	MergeIntervalMinutes pgtype.Int4        `json:"merge_interval_minutes"`
 	MessageRevision      int64              `json:"message_revision"`
 	MessageAcceptAfter   pgtype.Timestamptz `json:"message_accept_after"`
+	RunAt                pgtype.Timestamptz `json:"run_at"`
 }
 
 type ChannelBindingToken struct {

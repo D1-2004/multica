@@ -37,6 +37,28 @@ func (h *Handler) EmployeeRoutineReady(ctx context.Context) error {
 // CheckRoutineDeliveryTx validates, with database reads only, that the
 // routine's notices can be addressed in its scene as the agent's identity.
 func (h *Handler) CheckRoutineDeliveryTx(ctx context.Context, tx pgx.Tx, routine contextcap.Routine) error {
+	if source := routine.Source; source != nil {
+		if err := source.ValidateBinding(routine.WorkspaceID, routine.AgentID, routine.TenantOrgID, routine.SceneID); err != nil {
+			return fmt.Errorf("%w: source scope changed", service.ErrRoutineDeliveryTarget)
+		}
+		// Stored materials are provenance, not an enduring grant. Revalidate the
+		// source's exact scope and requester before compiling them into a new Run.
+		if source.EmployeeTaskID != "" {
+			var available bool
+			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task t
+ JOIN employee_task_run r ON r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id AND r.tenant_org_id=t.tenant_org_id
+ WHERE t.id=$1::uuid AND t.workspace_id=$2::uuid AND t.agent_id=$3::uuid AND t.tenant_org_id=$4 AND t.scene_id=$5::uuid
+ AND t.scope_kind='scene' AND t.requester_ref=$6 AND t.state <> 'cancelled' AND r.id=$7::uuid AND r.queue_task_id=$8::uuid)`,
+				source.EmployeeTaskID, routine.WorkspaceID, routine.AgentID, routine.TenantOrgID, routine.SceneID,
+				source.RequesterRef, source.EmployeeRunID, source.QueueTaskID).Scan(&available)
+			if err != nil {
+				return err
+			}
+			if !available {
+				return fmt.Errorf("%w: original task material is no longer available in this scene", service.ErrRoutineDeliveryTarget)
+			}
+		}
+	}
 	in, err := h.routineNoticeInput(ctx, h.Queries.WithTx(tx), routine, "check")
 	if err != nil {
 		return classifyRoutineDeliveryError(err)
@@ -60,6 +82,15 @@ func classifyRoutineDeliveryError(err error) error {
 func (h *Handler) EnqueueRoutineStartNoticeTx(ctx context.Context, tx pgx.Tx, notice service.RoutineStartNotice) error {
 	if h.DingTalkResponses == nil {
 		return errors.New("routine notices are unavailable")
+	}
+	if notice.Run.TriggerID.Valid {
+		trigger, err := h.Queries.WithTx(tx).GetAutopilotTrigger(ctx, notice.Run.TriggerID)
+		if err != nil {
+			return err
+		}
+		if trigger.Kind == sceneRoutineTriggerOnce {
+			return nil
+		}
 	}
 	in, err := h.routineNoticeInput(ctx, h.Queries.WithTx(tx), notice.Routine, routineStartText(notice.Title, notice.Run, notice.Timezone))
 	if err != nil {

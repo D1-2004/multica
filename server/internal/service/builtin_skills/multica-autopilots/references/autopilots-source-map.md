@@ -87,3 +87,5 @@
 - `server/migrations/9997_webhook_frozen_queue.up.sql`: exact v1 binding guard also isolates older producers' queued INSERT/binding UPDATE; rollback refuses pending frozen sources. `9998` builds the concurrent queue index and `9999` validates the widened status constraint.
 - `server/pkg/db/queries/webhook_delivery.sql`, `handler/webhook_delivery.go`: compatible claim/lease mutations retain isolated status; public status remains queued. `deploymentfence/fence.go` counts frozen leases for draining.
 - `docs/webhook-source-release-safety.md`, `handler/webhook_source_release_test.go`: rolling old/new producer/reader evidence, pre-migration leased-work limits and safe rollback.
+
+- Scene-only one-shot `autopilot_trigger.kind=once,run_at` is created through `handler/scene_routines.go` / `scene_config_mcp.go`, not the generic CLI. `scheduler/jobs_autopilot.go` plans its exact instant; `service/employee_routine_task.go` consumes it transactionally with the occurrence and fresh task. Migration 10060 adds the time/shape constraint; 10061–10062 preserve immutable source context.

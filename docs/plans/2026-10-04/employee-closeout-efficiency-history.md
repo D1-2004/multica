@@ -1,6 +1,6 @@
 # Employee 交付效率与收口纪律
 
-2026-10-04用户基于本次实际轨迹提出以下五项纠正。本文件限定Multica接续交付，不替换架构/权限合同；当前状态唯一入口为[执行表](employee-delivery-execution.md)，历史证据保留。
+2026-10-04用户基于本次实际轨迹提出以下五项纠正。本文件限定Multica接续交付，不替换架构/权限合同；当前状态唯一入口为[执行表](../../employee-delivery-execution.md)，历史证据保留。
 
 ## 1. 范围不断扩大
 
@@ -18,7 +18,7 @@
 
 轨迹：23报告草稿停第一次版，共享resume停第二版，实际epoch17第三版。接续者需重新拼多目录。
 
-执行规则：[employee-delivery-execution.md](employee-delivery-execution.md)是唯一当前表。每项写版本、状态、分面结论、证据、阻断和下一步；责任人状态变化立即更新，主代理里程碑批量核一致性。Plan/旧report/shared进度保留沿革但醒目指向唯一表；每次发布完成后同步源码/release/run/startup/配置，不能只追加历史而不改当前摘要。最终报告由表生成，不能独立漂移。
+执行规则：[employee-delivery-execution.md](../../employee-delivery-execution.md)是唯一当前表。每项写版本、状态、分面结论、证据、阻断和下一步；责任人状态变化立即更新，主代理里程碑批量核一致性。Plan/旧report/shared进度保留沿革但醒目指向唯一表；每次发布完成后同步源码/release/run/startup/配置，不能只追加历史而不改当前摘要。最终报告由表生成，不能独立漂移。
 
 ## 4. 按里程碑编排与批量读取
 

@@ -104,7 +104,7 @@ func employeeTraceTool(ctx context.Context, job employeeentry.Job, call employee
 }
 func employeeTraceToolResult(ctx context.Context, obs *langfuse.Observation, call employeeloop.ToolCall, result employeeloop.ToolResult, err error) {
 	obs.End(langfuse.EndOptions{Output: employeeTraceSafe(result), Err: employeeTraceError(err)})
-	if call.Name != "dispatch_task" || result.Receipt == "" {
+	if (call.Name != "dispatch_task" && call.Name != "continue_question_work") || result.Receipt == "" {
 		return
 	}
 	var ids map[string]string

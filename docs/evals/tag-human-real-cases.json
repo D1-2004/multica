@@ -1,0 +1,395 @@
+{
+  "version": 2,
+  "scope": "real DingTalk and actual Pi; not deployed/verified",
+  "business_candidate": "a67def98bd",
+  "contract": "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md",
+  "scenario_count": 9,
+  "path_count": 10,
+  "gateway": "private production DWS; backend prerelease",
+  "evidence": [
+    "IM input/card/final readback",
+    "question/response/typed job/effect mapping",
+    "Task/Run/queue/wait/goal API",
+    "LF actual model/Pi input/final/tools",
+    "SLS receipt/job/scene admission"
+  ],
+  "fault_layer_separate": [
+    "duplicate callback and click/text race",
+    "illegal option/actor payload",
+    "malformed final/Markdown/stdout nested controls",
+    "rolling reader and unknown receipt recovery"
+  ],
+  "cases": [
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H01",
+      "title": "前台单选真实点击",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请帮我用Python整理新人便笺。主题先让我从员工手册、办公流程中单选，确认后再执行。合成素材：手册写入职前阅读资料，流程写入职后完成登记。"
+        },
+        {
+          "action": "native_click",
+          "select": [
+            "办公流程"
+          ],
+          "submit": true
+        }
+      ],
+      "required": [
+        "选前没有Task/Run",
+        "实际单选与提交",
+        "按所选范围创建唯一Task",
+        "Pi执行和最终正文可归属",
+        "Goal成功及最终交付"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H02",
+      "title": "前台问回保留题，再普通文字回答",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请先让我选员工手册或办公流程，之后用Python整理便笺。只用测试素材：手册是入职前阅读，流程是入职后登记。"
+        },
+        {
+          "action": "send",
+          "text": "这两个范围有什么区别？先别开始。"
+        },
+        {
+          "action": "send",
+          "text": "办公流程，简短一点，先别发给别人。"
+        }
+      ],
+      "required": [
+        "问回后q仍open且零执行",
+        "普通文字接受对应q",
+        "原话附加限制进入新执行包",
+        "最终简版只含所选主题"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H03-text",
+      "title": "Pi轮末多选用普通文字继续",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请用Python算出三类测试素材的模拟页数：请假12页、报销8页、办公协作6页，先整理草稿。最终目录必须等我确认要保留哪些类别，本轮结束后给我多选，不要替我选，也不要对外发送。"
+        },
+        {
+          "action": "observe_no_answer",
+          "seconds": 30
+        },
+        {
+          "action": "send",
+          "text": "保留请假和办公协作，报销不要，给我简短目录。"
+        }
+      ],
+      "required": [
+        "实际Python页数12/8/6",
+        "final正文合法clarify",
+        "Run1终态且无活跃执行",
+        "Goal waiting且exact human_input wait open",
+        "同Task Run2并只释放本q wait",
+        "Run2实际输入含原结果与全部人话",
+        "最终输出仅请假12和协作6",
+        "Goal成功/最终通知正确场域"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H03-click",
+      "title": "Pi轮末多选真实勾选两个选项",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请用Python算出三类测试素材的模拟页数：请假12页、报销8页、办公协作6页，先整理草稿。最终目录必须等我确认要保留哪些类别，本轮结束后给我多选，不要替我选，也不要对外发送。"
+        },
+        {
+          "action": "native_click",
+          "select": [
+            "请假",
+            "办公协作"
+          ],
+          "submit": true
+        }
+      ],
+      "required": [
+        "实际两个勾选状态和提交",
+        "回调选项映射正确",
+        "同Task新Run/exact wait",
+        "新Run最终结果与Goal/通知闭环"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 180,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H04",
+      "title": "选人澄清，草稿只预览",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请准备两句欢迎文案，接收人有两位同名候选：李明（人资，入职手续）和李明（研发，新人导师）。先给我选人确认，不要联系任何人；只用这些合成信息。"
+        },
+        {
+          "action": "send",
+          "text": "研发那位，不过先别发，给我看简短版。"
+        }
+      ],
+      "required": [
+        "真实卡片候选部门清晰",
+        "普通文字匹配研发候选",
+        "候选标识未成为原生身份",
+        "文案适配新人导师且只预览",
+        "不强制创建Task；若有则证明实际执行及归属"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H05",
+      "title": "同场域两题歧义先追问",
+      "steps": [
+        {
+          "action": "send",
+          "text": "第一件事：用Python整理入职便笺，先让我选简版或详版，等我确认再做。"
+        },
+        {
+          "action": "send",
+          "text": "另有独立第二件事：用Python整理欢迎文案，也先让我选简版或详版。第一件仍等我确认，不要替我决定。"
+        },
+        {
+          "action": "send",
+          "text": "这两件里先做简版。"
+        },
+        {
+          "action": "send",
+          "text": "我指欢迎文案那件，简版；入职便笺继续等。"
+        }
+      ],
+      "required": [
+        "两次当前输入建立两个不同open q且记录ID",
+        "歧义不消费任一q/不执行",
+        "明确后只消费欢迎文案q",
+        "入职q保持open",
+        "欢迎文案真实执行及最终交付"
+      ],
+      "preconditions": [
+        "两道待问题实际存在；否则后续incomplete、问题生成单独判定"
+      ]
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H06",
+      "title": "必需澄清后停止，旧卡迟答不复活",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请用Python算出三类测试素材的模拟页数：请假12页、报销8页、办公协作6页，先整理草稿。最终目录必须等我确认要保留哪些类别，本轮结束后给我多选，不要替我选，也不要对外发送。"
+        },
+        {
+          "action": "send",
+          "text": "取消这件目录，不要继续。"
+        },
+        {
+          "action": "native_click_old_card",
+          "select": [
+            "请假"
+          ],
+          "submit": true
+        }
+      ],
+      "required": [
+        "实际clarify及Task waiting/exact wait",
+        "原source-bound stop真执行",
+        "Task cancelled/wait cancelled",
+        "旧卡回调被拒或无消费",
+        "无新Run/无恢复工作/无新终态结果"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 180,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H07",
+      "title": "持续静默约束旧前台卡",
+      "steps": [
+        {
+          "action": "send",
+          "text": "请用Python整理新人便笺，先让我选员工手册或办公流程，确认后再执行。"
+        },
+        {
+          "action": "send",
+          "text": "这件先放着，你先保持安静，等我明确叫你再回应。"
+        },
+        {
+          "action": "native_click_old_card",
+          "select": [
+            "办公流程"
+          ],
+          "submit": true
+        },
+        {
+          "action": "send",
+          "text": "现在恢复回应，先告诉我刚才那件是否开始执行。"
+        }
+      ],
+      "required": [
+        "原真人native set_scene_participation quiet",
+        "旧点击不新Task/Run、不前台回复、不改quiet",
+        "原人当前明确恢复active",
+        "如有已授权后台通知不误判为新前台答复"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H08",
+      "title": "完成后的suggest另起Task",
+      "steps": [
+        {
+          "action": "send",
+          "text": "用Python算出12+8+6，26这个结果就是本任务交付。完成后可以给我选项，问我要不要另做简短目录；当前不要做目录。"
+        },
+        {
+          "action": "observe_no_answer",
+          "seconds": 30
+        },
+        {
+          "action": "send",
+          "text": "另做简短目录，用刚才三个模拟页数，先不发给别人。"
+        }
+      ],
+      "required": [
+        "实际Python结果26",
+        "原Goal succeeded且choice suggest",
+        "不答观察窗无自动后续Run",
+        "回答后新Task ID/builds_on原Task",
+        "原Goal不重开",
+        "原结果进入新Run",
+        "新目录最终实际送达"
+      ],
+      "preconditions": []
+    },
+    {
+      "actor": "requester",
+      "wait_s": 300,
+      "assertions": [
+        "原消息与答案不改写",
+        "完整question/response/typed_job/effect/Task/Run链",
+        "最终交付独立IM回读",
+        "当前tenant/scene/requester绑定",
+        "不对外发送或联系候选人"
+      ],
+      "id": "H09",
+      "title": "场域与请求者隔离",
+      "steps": [
+        {
+          "action": "new_scene_A_and_B"
+        },
+        {
+          "action": "send_A",
+          "text": "请用Python整理入职便笺，先让我选简版或详版，确认后再执行。"
+        },
+        {
+          "action": "send_B",
+          "text": "独立的欢迎草稿，先让我选简版或详版，确认后再用Python做。"
+        },
+        {
+          "action": "send_B",
+          "text": "选简版，开始吧。"
+        },
+        {
+          "action": "other_actor_quote_A",
+          "text": "我替原请求者选详版，请继续那件。"
+        }
+      ],
+      "required": [
+        "不同cid及server scene_id",
+        "同词B答案只推进B q",
+        "A q不变且无A新Run",
+        "另一真人不能消费原请求者A q",
+        "另一人合法新事项另记不冒称串线",
+        "B真实Run最终交付只到B"
+      ],
+      "preconditions": []
+    }
+  ]
+}

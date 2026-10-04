@@ -64,6 +64,7 @@ import { ScheduleEditor } from "../autopilots/components/schedule-editor/schedul
 import { WebhookUrlField } from "../autopilots/components/webhook-url-field";
 import { formatInTimeZone } from "../common/format-in-time-zone";
 import { useT } from "../i18n";
+import { routineLocalDateTime, routineRunAt } from "./context-config-routine-time";
 import { ToggleControl } from "./context-config-ui";
 
 /** The default timezone of a new schedule, the one the server assumes. */
@@ -71,7 +72,7 @@ const ROUTINE_DEFAULT_TIMEZONE = "Asia/Shanghai";
 const ROUTINE_TITLE_MAX = 120;
 const ROUTINE_INSTRUCTIONS_MAX = 8000;
 
-type RoutineKind = "schedule" | "webhook";
+type RoutineKind = "schedule" | "once" | "webhook";
 
 /**
  * The routines (例行任务) of one group or 1:1 chat scene: what runs when,
@@ -233,9 +234,14 @@ function routineErrorMessage(t: AgentsT, error: unknown): string {
 
 /** A routine's rhythm in plain words: "工作日 09:00" or "收到 Webhook 请求时". */
 function useRoutineRhythm() {
-  const { t } = useT("agents");
+  const { t, i18n } = useT("agents");
   const describe = useDescribeSchedule();
   return (routine: ContextRoutine): string => {
+    if (routine.trigger.kind === "once") {
+      return routine.trigger.runAt
+        ? t(($) => $.context_config.routines.rhythm_once, { time: formatInTimeZone(routine.trigger.runAt, undefined, i18n.language) })
+        : t(($) => $.context_config.routines.rhythm_unknown);
+    }
     if (routine.trigger.kind === "webhook") return t(($) => $.context_config.routines.rhythm_webhook);
     if (routine.trigger.kind !== "schedule" || !routine.trigger.cron) {
       return t(($) => $.context_config.routines.rhythm_unknown);
@@ -272,7 +278,9 @@ function RoutineRow({
   const [confirm, setConfirm] = useState<"delete" | "rotate" | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const isWebhook = routine.trigger.kind === "webhook";
-  const timezone = routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
+  const isOnce = routine.trigger.kind === "once";
+  const consumed = isOnce && (routine.trigger.consumed === true || routine.lastRun != null);
+  const timezone = routine.trigger.kind === "once" ? undefined : routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
   const when = (iso: string) => formatInTimeZone(iso, timezone, i18n.language);
   const Icon = isWebhook ? Webhook : CalendarClock;
 
@@ -335,7 +343,9 @@ function RoutineRow({
           <span className="block text-body font-medium break-words">{routine.title}</span>
           <span className="block text-label text-foreground/90">{rhythm(routine)}</span>
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
-            {!routine.enabled ? (
+            {consumed ? (
+              <span>{t(($) => $.context_config.routines.once_triggered)}</span>
+            ) : !routine.enabled ? (
               <span className="font-medium text-warning">
                 {routine.pauseReason
                   ? t(($) => $.context_config.routines.system_paused, { reason: routine.pauseReason })
@@ -367,6 +377,7 @@ function RoutineRow({
         <div className="flex shrink-0 items-center gap-0.5 pt-1.5 sm:pt-2">
           <ToggleControl
             busy={update.isPending}
+            disabled={consumed}
             checked={routine.enabled}
             label={t(($) => $.context_config.routines.toggle, { name: routine.title })}
             onToggle={toggle}
@@ -389,11 +400,11 @@ function RoutineRow({
               }
             />
             <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled={!routine.enabled || run.isPending} onClick={runNow}>
+              <DropdownMenuItem disabled={!routine.enabled || run.isPending || isOnce} onClick={runNow}>
                 <Play className="size-4" />
                 {t(($) => $.context_config.routines.run_now)}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onEdit}>
+              <DropdownMenuItem disabled={consumed} onClick={onEdit}>
                 <Pencil className="size-4" />
                 {t(($) => $.context_config.routines.edit)}
               </DropdownMenuItem>
@@ -488,6 +499,8 @@ function useRunSourceLabel(): (run: ContextRoutineRun) => string {
     switch (run.source) {
       case "schedule":
         return t(($) => $.context_config.routines.source_schedule);
+      case "once":
+        return t(($) => $.context_config.routines.trigger_once);
       case "webhook":
         return t(($) => $.context_config.routines.source_webhook);
       case "manual":
@@ -537,7 +550,7 @@ function RoutineDetailDialog({
   const runsOptions = sceneRoutineRunsOptions(target, routine.id);
   // Fetched only while the detail is open.
   const runs = useQuery({ ...runsOptions, enabled: open && runsOptions.enabled !== false });
-  const timezone = routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
+  const timezone = routine.trigger.kind === "once" ? undefined : routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
   const when = (iso: string) => formatInTimeZone(iso, timezone, i18n.language);
   const upcoming = routine.enabled ? routine.trigger.nextRuns.slice(0, 3) : [];
 
@@ -649,7 +662,7 @@ function RoutineEditor({
   const create = useCreateSceneRoutine(target);
   const update = useUpdateSceneRoutine(target);
   const pending = create.isPending || update.isPending;
-  const initialKind: RoutineKind = routine?.trigger.kind === "webhook" ? "webhook" : "schedule";
+  const initialKind: RoutineKind = routine?.trigger.kind === "once" ? "once" : routine?.trigger.kind === "webhook" ? "webhook" : "schedule";
   const [title, setTitle] = useState(routine?.title ?? "");
   const [instructions, setInstructions] = useState(routine?.instructions ?? "");
   const [kind, setKind] = useState<RoutineKind>(initialKind);
@@ -658,6 +671,10 @@ function RoutineEditor({
       ? parseCron(routine.trigger.cron, routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE)
       : getDefaultScheduleConfig(ROUTINE_DEFAULT_TIMEZONE),
   );
+  const [localRunAt, setLocalRunAt] = useState(() => routineLocalDateTime(routine?.trigger.runAt ?? new Date(Date.now() + 15 * 60_000).toISOString()));
+  const runAt = routineRunAt(localRunAt);
+  const onceValid = runAt !== null && new Date(runAt).getTime() > Date.now();
+  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [scheduleValid, setScheduleValid] = useState(true);
   const [showErrors, setShowErrors] = useState(false);
   const titleMissing = title.trim() === "";
@@ -667,13 +684,15 @@ function RoutineEditor({
 
   const submit = () => {
     setShowErrors(true);
-    if (titleMissing || instructionsMissing || (kind === "schedule" && !scheduleValid)) return;
+    if (titleMissing || instructionsMissing || (kind === "schedule" && !scheduleValid) || (kind === "once" && (!runAt || new Date(runAt).getTime() <= Date.now()))) return;
     const cron = kind === "schedule" ? toCron(schedule) : "";
     if (routine) {
       const patch =
         kind === "schedule"
           ? { title: title.trim(), instructions: instructions.trim(), cron, timezone: schedule.timezone }
-          : { title: title.trim(), instructions: instructions.trim() };
+          : kind === "once"
+            ? { title: title.trim(), instructions: instructions.trim(), run_at: runAt! }
+            : { title: title.trim(), instructions: instructions.trim() };
       update.mutate(
         { routineId: routine.id, patch },
         { onSuccess: () => onClose(), onError },
@@ -683,7 +702,7 @@ function RoutineEditor({
     const input: ContextRoutineInput = {
       title: title.trim(),
       instructions: instructions.trim(),
-      trigger: kind === "schedule" ? { kind, cron, timezone: schedule.timezone } : { kind },
+      trigger: kind === "schedule" ? { kind, cron, timezone: schedule.timezone } : kind === "once" ? { kind, run_at: runAt! } : { kind },
     };
     create.mutate(input, {
       onSuccess: (result) => {
@@ -750,8 +769,12 @@ function RoutineEditor({
       <div className="space-y-2">
         <p className="text-label font-medium">{t(($) => $.context_config.routines.field_trigger)}</p>
         {routine ? null : (
-          <Tabs value={kind} onValueChange={(value) => setKind(value === "webhook" ? "webhook" : "schedule")}>
+          <Tabs value={kind} onValueChange={(value) => setKind(value === "once" ? "once" : value === "webhook" ? "webhook" : "schedule")}>
             <TabsList className="!h-10 w-full">
+              <TabsTrigger value="once">
+                <CalendarClock className="size-4" />
+                {t(($) => $.context_config.routines.trigger_once)}
+              </TabsTrigger>
               <TabsTrigger value="schedule">
                 <CalendarClock className="size-4" />
                 {t(($) => $.context_config.routines.trigger_schedule)}
@@ -763,7 +786,29 @@ function RoutineEditor({
             </TabsList>
           </Tabs>
         )}
-        {kind === "schedule" ? (
+        {kind === "once" ? (
+          <div className="space-y-1.5">
+            <label htmlFor={`${idPrefix}-run-at`} className="text-label font-medium">
+              {t(($) => $.context_config.routines.field_run_at)}
+            </label>
+            <Input
+              id={`${idPrefix}-run-at`}
+              type="datetime-local"
+              step={1}
+              value={localRunAt}
+              min={routineLocalDateTime(new Date().toISOString())}
+              disabled={pending}
+              aria-invalid={showErrors && !onceValid}
+              onChange={(event) => setLocalRunAt(event.target.value)}
+              className="h-10"
+            />
+            <p className={cn("text-caption", showErrors && !onceValid ? "text-destructive" : "text-muted-foreground")}>
+              {showErrors && !onceValid
+                ? t(($) => $.context_config.routines.field_run_at_invalid)
+                : t(($) => $.context_config.routines.once_hint, { timezone: localTimezone })}
+            </p>
+          </div>
+        ) : kind === "schedule" ? (
           <ScheduleEditor
             value={schedule}
             onChange={setSchedule}

@@ -978,6 +978,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.EmployeeMemory = employeememory.NewStore(pool)
 	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, legacyEmployeeModel)
 	h.EmployeeSceneWorker.ModelRoutes = h.Models
+	h.EmployeeSceneWorker.HumanQuestionsReady = func(ctx context.Context) (bool, error) {
+		if opts.DeploymentFence == nil {
+			return false, nil
+		}
+		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeHumanReplicaMarker)
+	}
+	if h.DingTalkResponses != nil {
+		h.DingTalkResponses.OnA2UIAccepted = h.OnEmployeeHumanCardAccepted
+	}
 	// Requester-authorized invitation reminders are recorded per invitation in
 	// the collection's creating transaction.
 	h.EmployeeSceneWorker.CollectionReminders = handler.RecordCollectionReminders
@@ -1004,6 +1013,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return false, nil
 		}
 		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryReplicaMarker)
+	}
+	// New task discovery and streamed feedback are frozen together only once
+	// every live reader can execute and safely send this protocol.
+	h.EmployeeSceneWorker.TaskDiscoveryReady = func(ctx context.Context) (bool, error) {
+		if opts.DeploymentFence == nil {
+			return false, nil
+		}
+		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeLoopReplicaMarker)
 	}
 	// Scene digest (memory M11): each newly persisted human transcript line
 	// marks its scene dirty in the insert transaction; the budgeted writer

@@ -13,10 +13,11 @@ const (
 	MaxWindowItems    = 16
 	MaxWindowMessages = 32
 
-	// KindMessage is a human message window; KindTaskWake is one internal,
-	// Host-derived Task wake. The kind is fixed when the job is created.
-	KindMessage  = "message"
-	KindTaskWake = "task_wake"
+	// Typed jobs never merge across kinds. Human responses carry references,
+	// not synthetic messages; Task wakes are derived from Host facts.
+	KindMessage       = "message"
+	KindTaskWake      = "task_wake"
+	KindHumanResponse = "human_response"
 )
 
 var (

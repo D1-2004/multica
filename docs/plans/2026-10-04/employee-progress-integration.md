@@ -26,3 +26,33 @@
 集成核对：共享规范9be0882fd8、feature93696eea86（源6e4af951）；业务接缝无冲突，5个缺少父规划的文档作为源资料保留，缺失大规划资源改指源远端，没有引入整支历史或主checkout WIP。窄独立审查未发现新P1/P2，真实新claim能力门尚待验证。独立本地库employee_progress_integration_1004创建、迁移及受影响检查进行中。
 
 受影响集成检查：12个顶层测试通过、0 skip（全部8个P测试，加冻结恢复/混版/currentTask续接/steer），source业务树与集成一致，源32项/race复用。server编译、handler/employeeentry vet通过；新空库完整migrate成功。原已发布18仍normal且Runtime461未变。候选提交将一次发布至app342160/pipeline66；当前最新部署需按pipeline-before.json占用核验后触发，不重跑别人实例。
+
+## 固定 release 组合检查点
+
+本地组合从已发布 `6a86b3101b54ec82144c691f8fe646c683f3e181` 开始，先语义合入 steer 证据源 `5357e67fb416ed4793a500f5f5f9f11a8f0f4064`，再合入冻结本批 P 源 `e5ef5adbea6f628efba623cf8c73d38f37d71381`，不从并行会话开发分支整支合入。保留最新 steer 与持久场域参与实现；两源 loop19 组合提升为唯一 canonical loop20，混版反例使用旧 loop19。迁移 10020–10023 无冲突。共享交付合同采用新 generic 入口，已发布历史证据移至沿革并保留有效引用。A2UI 与首轮 feedback WIP 未纳入。
+
+本轮仅准备本地可审查 release；主代理负责后续唯一发布与真实验收。验收标准为三源 ancestry 完整、P 接缝之外保留已发布业务、唯一 reader20、格式检查与 server 编译通过。`go test ./cmd/server -run '^$'` 只编译，不当行为测试；既有独立 PG 的 16 项顶层 PASS 日志位于 `/Users/yuanzhan/d1/employee-e2e-evidence/EMPLOYEE-PROGRESS-INTEGRATION-20261004/combined-tests.log`，按不受本次接缝影响的范围复用。本轮不使用共享 DB、不发消息、不做 Aone 或真实 canary 动作；未部署、真实 Runtime 工具调用与 IM/API/SLS/LF 验收仍由主代理接续。
+
+本地完成结果：指定 `MULTICA_HANDLER_UNIT_TESTS_ONLY=1 go -C server test ./cmd/server -run '^$'` 返回 exit0 / `[no tests to run]`（仅 server 编译）；全部受影响 Go 文件 gofmt 检查和 `git diff --check` 通过。已核对复用日志为 16 项顶层 PASS、0 skip。冻结 P 的业务实现与源一致；router 仅保留已发布 eval 路由并追加 progress 路由，worker 只组合注释与 marker20，两处 reader 混版夹具改为旧19/组合20。已发布 steer 的 task-ref/legacy alias 文件无业务差异。本轮未运行这些夹具，不把旧日志当 reader20 行为的新执行证据。
+
+13:05用户明确要求不再确认、直接预发。shared release已push f84，精确merge-task回读后执行CODE_MERGE_RESOLVE_CONFLICT恢复同run3110378343。没有重新submit/rerun新发布，没有改Runtime或发验收消息；等待部署成功/两个live20再做实际新claim。
+
+
+## 最终结果（13:30）
+
+预发最终构建f9a6d687、run3110378343于13:16:09成功，两live reader20/normal。真实新claim原生进展MCP两次调用同ID/正文返回同ref/replayed，Python/sleep60/文件650与最终IM完成；约6秒首轮ACK成立。阶段wake实际quiet，无阶段IM，因此展示验收未通过，不关闭总体门。终态旧报告/明确禁中间消息反例未跑。Runtime未改；三隔离DB已drop；Task终态且0 waits/Agent idle。原hourly于12:02:30已被归档，本批未暂停且不恢复他人变更。eval随平台并入已部署，10020–10023重复数字前缀记录维护风险，不追加发布。详见employee-progress-pre-report.md和唯一执行表。本批收口。
+
+## SPEC / EVALS职责接续（本次移交）
+
+已核对源会话human原话要求本session组织后续验证、维护SPEC+EVALS并确认代码完整。本次先完成收件回执与统一分支集成，不新增部署/镜像/真人测试；已发布版本的包含情况必须用精确ancestry/tree证明。
+
+冻结清单：fetch并核对34dc79f7（完整包）/78fffd467（功能）及完整序列；逐项核对交接、合同、贡献门禁、三份定义、report服务、CLI与迁移/hook；统一分支合入平台已构建f9a6d687及源文档，保留reader20/steer/progress和本session记录，主checkout其他WIP不动；运行make eval-check并核对关键文件tree等价。唯一执行表回填所有权、版本、定义检查、已发布/未验和下一步。
+
+验收边界：本次是代码接管与定义检查，不能签真实办公E2E或接口真实201/200/409。后续每次发布映射SPEC→稳定场景/case→受影响P0，优先原失败和受影响真实路径；结果按real_e2e/mock/definition_check分别保存，未执行例保留分母。统一publisher为本session，不主动删除旧CR/历史分支或重跑已成功流水线。
+
+接管结果：fetch源34dc与功能78ff核对；6个功能序列提交均已在发布f9祖先，22必需文件blob相等。统一分支rebase到已发布f9后摘取源交接文档，业务不再部署；make eval-check通过5/5/20/16/123，当前执行表已登记长期责任和第一批验证排序。新增维护入口，不改canonical行为ID/已有报告，不启动完整P0、真人或迁移修复。本次接管完成，真实协议/办公验收仍明确待验。
+
+
+## 持续收件与增量验证授权
+
+用户2026-10-04要求本session收到交付候选后统一预发，持续维护/运行有条件的E2E；发布不终止整轮或全量重启，保留检查点，缺环境标注、缺case向来源补件。规则已落verification-maintenance与operations；当前会话heartbeat multica-e2e每30分钟ACTIVE。已有候选转入统一队列，不用定时跟进代替当前可做的核对；每批发布/验证边界及证据仍独立冻结。

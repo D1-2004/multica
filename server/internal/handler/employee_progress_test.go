@@ -433,7 +433,7 @@ func TestEmployeeProgressPendingRechecksOriginAndMixedReaders(t *testing.T) {
 				t.Cleanup(func() {
 					_, _ = testPool.Exec(context.Background(), `DELETE FROM deployment_fence_replica_ack WHERE instance_id=ANY($1::text[])`, []string{current, old})
 				})
-				if _, err = testPool.Exec(ctx, `INSERT INTO deployment_fence_replica_ack(instance_id,build_id,state,revision,last_seen_at) VALUES($1,'old [employee-loop:18]','normal',1,now())`, old); err != nil {
+				if _, err = testPool.Exec(ctx, `INSERT INTO deployment_fence_replica_ack(instance_id,build_id,state,revision,last_seen_at) VALUES($1,'old [employee-loop:19]','normal',1,now())`, old); err != nil {
 					t.Fatal(err)
 				}
 				f.h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
@@ -447,7 +447,7 @@ func TestEmployeeProgressPendingRechecksOriginAndMixedReaders(t *testing.T) {
 					return nil
 				}
 				if err = f.h.BeforeEmployeeRunNoticeSend(ctx, in); err == nil {
-					t.Fatal("mixed 18/19 reader could send")
+					t.Fatal("mixed 19/20 reader could send")
 				}
 				if _, err = testPool.Exec(ctx, `UPDATE deployment_fence_replica_ack SET build_id=$2 WHERE instance_id=$1`, old, "upgraded "+EmployeeLoopReplicaMarker); err != nil {
 					t.Fatal(err)

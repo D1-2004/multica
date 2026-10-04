@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeeplan"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/employeeverification"
+	"github.com/multica-ai/multica/server/internal/humanquestion"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -26,6 +27,7 @@ type employeeToolRecord struct {
 	Failure       string                   `json:"failure,omitempty"`
 	DeliveryReply string                   `json:"delivery_reply,omitempty"`
 	TaskRead      *employeeCurrentTaskRead `json:"task_read,omitempty"`
+	TaskDiscovery *employeeTaskDiscovery   `json:"task_discovery,omitempty"`
 	// Refused marks a Failure the Host refused before any effect, inside the
 	// journal transaction; the model may correct it like a pre-journal refusal.
 	// Collection refusals (errEmployeeCollectionRefused) count as refused.
@@ -185,6 +187,16 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	var acceptedContinuation *service.DirectTaskResult
 	var acceptedStop *service.DirectTaskStopResult
 	var revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error)
+	if call.Name == "first_feedback" {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.firstFeedbackReplay(ctx, tx, source, call, raw)
+		}
+	}
+	if call.Name == "find_tasks" {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.discoveryReplay(ctx, tx, source, call, raw)
+		}
+	}
 	if isEmployeeMemoryTool(call.Name) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.memoryReplay(ctx, tx, call, raw)
@@ -205,8 +217,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		var result employeeloop.ToolResult
 		var deliveryReply string
 		var taskRead *employeeCurrentTaskRead
+		var taskDiscovery *employeeTaskDiscovery
 		var err error
-		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || isEmployeeStopTool(call.Name) {
+		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || isEmployeeStopTool(call.Name) || call.Name == "first_feedback" {
 			journalObservation = observation
 		} else {
 			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
@@ -219,6 +232,18 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			return nil, errors.Join(employeeloop.ErrToolRefused, errors.New("scene participation is quiet; restore it before answering or starting work"))
 		}
 		switch call.Name {
+		case "first_feedback":
+			var sp pgx.Tx
+			if sp, err = tx.Begin(ctx); err == nil {
+				result, err = h.firstFeedback(ctx, sp, source, env, call)
+				if err == nil {
+					err = sp.Commit(ctx)
+				} else {
+					_ = sp.Rollback(ctx)
+				}
+			}
+		case "find_tasks":
+			result, taskDiscovery, err = h.findTasks(ctx, tx, source, call)
 		case "set_scene_participation":
 			result, err = h.setParticipation(ctx, tx, source, env, call)
 		case "stay_quiet":
@@ -247,6 +272,10 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			}
 		case "memory_capture", "memory_lookup", "memory_forget":
 			result, err = h.memoryTool(ctx, tx, call)
+		case "a2ui_ask":
+			result, err = h.stageHumanQuestion(ctx, tx, source, env, call)
+		case "accept_human_response":
+			result, err = h.acceptHumanText(ctx, tx, source, call)
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, tx, source, env, call)
 		case "steer_task":
@@ -300,7 +329,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		default:
 			err = errors.New("employee tool is not registered")
 		}
-		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply, TaskRead: taskRead}
+		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply, TaskRead: taskRead, TaskDiscovery: taskDiscovery}
 		if err != nil {
 			if call.Name == "continue_task" {
 				record.Result = employeeContinuationRefusalResult(err)
@@ -348,7 +377,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	if acceptedStop != nil {
 		h.observeTaskStop(ctx, *acceptedStop)
 	}
-	if call.Name == "create_collection" && record.Result.Receipt != "" && h.worker.handler.DingTalkResponses != nil {
+	if (call.Name == "create_collection" || call.Name == "first_feedback") && record.Result.Receipt != "" && h.worker.handler.DingTalkResponses != nil {
 		h.worker.handler.DingTalkResponses.Notify()
 	}
 	if record.DeliveryReply != "" {
@@ -461,6 +490,11 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, tx pgx.Tx, source empl
 	if steps != nil {
 		create.Lifecycle, create.CompletionMode = employeetask.LifecycleV2, employeetask.CompletionExplicitGoal
 	}
+	roundResult := steps == nil && h.worker.humanQuestionsReady(ctx)
+	if roundResult {
+		create.Lifecycle, create.CompletionMode = employeetask.LifecycleV2, employeetask.CompletionExplicitGoal
+		packet.Text += "\n\n" + humanquestion.PromptContract
+	}
 	task, err := employeetask.NewStore(storeDB).Create(ctx, create)
 	if err != nil {
 		return employeeloop.ToolResult{}, err
@@ -493,6 +527,9 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, tx pgx.Tx, source empl
 	delete(taskContext, "execution_update_callback")
 	taskContext["employee_delivery_owner"] = "employee"
 	taskContext["employee_job_id"] = h.job.ID
+	if roundResult {
+		taskContext["employee_round_result_contract"] = humanquestion.Version
+	}
 	taskContext["employee_source_ref"] = source.SourceRef
 	taskContext["employee_context_used"] = packet.ContextUsed
 	if packet.CompletionNotice.Mode != employeetask.CompletionNoticeAlways {

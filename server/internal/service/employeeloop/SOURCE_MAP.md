@@ -416,3 +416,26 @@ and live reader compatibility are checked again before a new send. Only actual
 delivered reply text enters the already-shown context. Final delivery remains
 independent. See `docs/employee-progress.md` and its implementation/evidence
 entry; local scripted-model/provider checks do not prove live semantic quality.
+
+Human questions retain GawkBot 71e82a1809565281cbd0bf8185d3c125b715d934's common response mutation, human-priority queues and explicit follow-up, without its 30-minute interview polling or broad channel cancellation. Multica supplies the Host-owned question/response ledger, typed human_response jobs, ordinary-message answer tool, task goal/wait CAS, native A2UI response outbox and run proof. The copied kernel/prompt builder is unchanged; schemas and instruction framing are frozen by current Host adapters. See docs/employee-human-interaction.md and the current implementation Plan; local scripted-model checks are not live IM or model verification.
+
+Typed human-response Host tools export their actual journal callback results through the existing Employee LF observer. Source question/response/job/receipt IDs are Host-read lookup metadata; continue_question_work indexes the committed Task/Run/queue tuple. Journal replay emits no new tool observation or model request. See docs/langfuse-observability.md and the real acceptance contract.
+
+### On-demand task discovery and first-request public stream frame
+
+The fixed GawkBot RuleZero (`internal/team/prompt_builder.go`) puts work intent
+before persona and capabilities. New Multica inputs adopt this ordering through
+optional trusted DecisionRules and avoid unconditional old-report candidates.
+Native find_tasks binds current scene plus sender first; group fallback exposes
+metadata only, never control authority. Prior t/q snapshots retain their bytes.
+
+GawkBot's `headless_live_chat_relay.go` separates public content from tool syntax,
+but its text buffering and final suppression cannot prove a Multica final reply.
+The PRI-101 instance record documents intermediate public messages without proving
+first-model timing or backend cancellation. Multica therefore uses one explicit
+native first_feedback frame in the existing first provider stream, with a durable
+nonterminal notification and independent final delivery. Complete-frame parsing,
+whole business-batch validation, physical-request gating, source authorization and
+unknown reconciliation remain Host responsibilities. No extra display model is
+added. See docs/employee-loop.md and the 2026-10-04 implementation Plan; real-model
+intent and IM timing still require the release owner's original-scene verification.

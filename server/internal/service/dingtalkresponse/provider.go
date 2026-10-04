@@ -79,6 +79,16 @@ func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dws
 		return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
 	}
 	defer cleanup()
+	if in.A2UICard != nil {
+		if err := validateInput(in); err != nil {
+			return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
+		}
+		receipt, err := cli.SendA2UI(ctx, dir, dwsclient.A2UISendRequest{ConversationID: in.ConversationID, BizID: in.A2UICard.QuestionID, RequestID: key, Summary: in.Text, Messages: in.A2UICard.Messages})
+		if err != nil {
+			return dwsclient.SendResult{}, err
+		}
+		return dwsclient.SendResult{OpenTaskID: receipt.TaskID, OpenConversationID: receipt.ConversationID, OpenMessageID: receipt.MessageID, A2UIReceipt: &receipt}, nil
+	}
 	req := dwsclient.SendRequest{Content: in.Text, ShowAITag: in.ShowAITag, IdempotencyKey: key, ReplyToOpenMsgID: strings.TrimSpace(in.ReplyToOpenMsgID)}
 	if in.IsGroup || req.ReplyToOpenMsgID != "" {
 		req.ConversationID = in.ConversationID

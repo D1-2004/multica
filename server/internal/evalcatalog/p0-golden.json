@@ -161,10 +161,13 @@
         "独立验证者"
       ],
       "verifies": [
-        "实际工具计算有真实输出；运行中进度不编造、不重派；结束后结果只交付一次。"
+        "实际工具计算有真实输出；运行中进度不编造、不重派；结束后结果只交付一次。",
+        "明确同名新工作不复用旧结果；进度查找优先本人，首轮自然反馈不增加专用推理轮次，非法流式批次零业务效果。"
       ],
       "method": [
-        "群内委托受控等待后计算平方合计，运行中问两次进度。对照 read_task、Task/Run/queue、工具 transcript、最终正确合计及独立消息次数。"
+        "群内委托受控等待后计算平方合计，运行中问两次进度。对照 read_task、Task/Run/queue、工具 transcript、最终正确合计及独立消息次数。",
+        "保留成功历史并明确另开相同计算，核新Task及Python实跑；再在其他人较新的同名事项存在时查询本人工作，联合核首轮公开反馈、必要读取与最终答复。隔离provider演练截断和非法batch，核零业务调用。",
+        "本人目标未命中时检查本群共享摘要，尝试读取报告或控制应拒绝；对照单聊零跨人候选。"
       ],
       "scenarioRefs": [
         "work-planning",
@@ -173,7 +176,12 @@
       "caseRefs": [
         "office-python-real",
         "office-running-progress",
-        "office-accept-ack-state"
+        "office-accept-ack-state",
+        "office-independent-repeat-execution",
+        "office-task-lookup-owner-first",
+        "office-first-feedback-stream",
+        "office-first-feedback-incomplete-plan",
+        "office-task-shared-metadata-only"
       ],
       "sources": [
         "docs/evals/p0-golden.md",
@@ -462,7 +470,10 @@
         "office-cron-real-due",
         "office-cron-occurrence-replay",
         "office-cron-instruction-freeze",
-        "office-cron-pause-resume"
+        "office-cron-pause-resume",
+        "office-cron-once-short-due",
+        "office-cron-once-source-context",
+        "office-cron-once-cancel-pending"
       ],
       "sources": [
         "docs/evals/p0-golden.md",
@@ -611,10 +622,12 @@
         "独立验证者"
       ],
       "verifies": [
-        "PG保留Task事实，缓存和通知故障可恢复；两消费者只领取一次，同源不产生重复执行和外发。"
+        "PG保留Task事实，缓存和通知故障可恢复；两消费者只领取一次，同源不产生重复执行和外发。",
+        "首请求重发不新建首句，已入账首句不重复；最终答复取消pending且不被unknown首句阻塞。"
       ],
       "method": [
-        "在专用PG/Redis/Runtime上制造commit-before-notify丢通知，分别重投原来源、删本fixture缓存/到期和重启消费者。并发领取并观察完整poll/TTL/重试窗口，核唯一Task/Run/queue、账本、输出和通知。"
+        "在专用PG/Redis/Runtime上制造commit-before-notify丢通知，分别重投原来源、删本fixture缓存/到期和重启消费者。并发领取并观察完整poll/TTL/重试窗口，核唯一Task/Run/queue、账本、输出和通知。",
+        "在隔离fixture中演练首模型响应未保存的恢复、反馈已入账重放和pending发送与final竞态；回读请求次数、稳定key与发送状态，区分已外部提交的迟到限制。"
       ],
       "scenarioRefs": [
         "office-recovery",
@@ -625,7 +638,8 @@
         "office-commit-before-notify",
         "office-cache-expiry-eviction",
         "office-consumer-restart",
-        "office-source-replay-vs-message"
+        "office-source-replay-vs-message",
+        "office-first-feedback-recovery-final"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

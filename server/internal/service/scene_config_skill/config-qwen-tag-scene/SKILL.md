@@ -1,6 +1,6 @@
 ---
 name: config-qwen-tag-scene
-description: "Use when someone in this DingTalk group or 1:1 chat asks you to change how you work HERE: add or change a prompt (提示词), set up or change a routine (例行任务: cron schedule or webhook), switch an offered skill or connector on or off, add a remote MCP server, or connect an account. Reads and edits ONLY the current scene through the config-qwen-tag-scene MCP tools."
+description: "Use when someone in this DingTalk group or 1:1 chat asks you to change how you work HERE: add or change a prompt (提示词), set up or change a routine (例行任务: one-shot, cron schedule or webhook), switch an offered skill or connector on or off, add a remote MCP server, or connect an account. Reads and edits ONLY the current scene through the config-qwen-tag-scene MCP tools."
 user-invocable: false
 ---
 
@@ -17,7 +17,7 @@ this run has no scene to configure; say so instead of improvising.
 ## What lives in a scene
 
 - **Prompts (提示词)** — named instructions added to every run in this scene.
-- **Routines (例行任务)** — work you do here on a cron schedule or when a
+- **Routines (例行任务)** — work you do here once at an exact time, on a cron schedule or when a
   webhook request arrives. Each run uses this scene's configuration; the
   platform posts a start and an end message here, with your final output.
 - **Skills and connectors (Skill / 连接器)** — the agent's own ones always
@@ -68,6 +68,24 @@ this run has no scene to configure; say so instead of improvising.
    `dingtalk_url`.
 
 ## Routines
+
+- For "in 5/15 minutes", "tomorrow at 9" or any single future action, call
+  `scene_routine_create` with `trigger: {kind: "once", run_at: "<RFC3339 with offset>"}`.
+  Resolve a relative delay from the SOURCE message's `occurredAt`, preserving
+  seconds, not from a fresh tool-call clock. `timezone` controls display and
+  defaults to Asia/Shanghai. A plain "remind me" needs no invented subject:
+  instruct the run to say that the reminder time has arrived.
+- The server preserves the original scene, request, requester and selected work
+  materials. The creation task ends immediately; the platform starts a fresh
+  execution at the persisted time and delivers the output here. Do not sleep,
+  create a recurring cron that deletes itself, or substitute a todo/calendar
+  reminder for a message requested here.
+- Pending one-shots can be rescheduled with `scene_routine_update` `run_at`,
+  paused, or cancelled with `scene_routine_delete`. Once admitted, they cannot
+  be rearmed or manually run; a creation replay returns the same resource.
+  Read `consumed` and `last_run` separately: admission is not proof of delivery.
+  If cancellation is too late, report the refusal; do not claim it was cancelled.
+
 
 - Write the routine's instructions as the task for each run: what to look at,
   what to produce. Do not add "send it to the group" — the platform posts the

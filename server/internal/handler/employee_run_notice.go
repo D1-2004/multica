@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/humanquestion"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
@@ -99,7 +100,15 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	if err := tx.QueryRow(ctx, `SELECT id::text FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, workspaceID).Scan(&locked); err != nil {
 		return b, err
 	}
-	err := tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text,t.id::text,t.requester_ref,r.id::text,r.queue_task_id::text,r.state,r.result,t.goal_revision,r.goal_revision
+	var sourceScope employeeentry.Scope
+	err := tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.workspace_id=$1::uuid AND r.id=$2::uuid AND t.owner_loop='employee' AND t.scope_kind='scene'`, workspaceID, runID).Scan(&sourceScope.WorkspaceID, &sourceScope.AgentID, &sourceScope.TenantOrgID, &sourceScope.SceneID)
+	if err != nil {
+		return b, err
+	}
+	if err = humanquestion.LockScope(ctx, tx, sourceScope); err != nil {
+		return b, err
+	}
+	err = tx.QueryRow(ctx, `SELECT t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text,t.id::text,t.requester_ref,r.id::text,r.queue_task_id::text,r.state,r.result,t.goal_revision,r.goal_revision
  FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id AND r.tenant_org_id=t.tenant_org_id
  WHERE t.workspace_id=$1::uuid AND r.id=$2::uuid AND t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene'
  AND r.state IN ('succeeded','failed','cancelled') FOR UPDATE OF t,r`, workspaceID, runID).Scan(&b.Scope.WorkspaceID, &b.Scope.AgentID, &b.Scope.TenantOrgID, &b.Scope.Scene.SceneID, &b.TaskID, &b.Requester, &b.RunID, &b.QueueID, &b.ResultState, &b.Result, &b.TaskGoalRevision, &b.RunGoalRevision)
@@ -181,7 +190,7 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding) (dingtalkresponse.ActionInput, bool, error) {
 	var in dingtalkresponse.ActionInput
 	job := employeeentry.Job{ID: b.JobID}
-	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State)
+	err := tx.QueryRow(ctx, `SELECT workspace_id::text,agent_id::text,tenant_org_id,scene_id::text,principal_id::text,items,state,kind FROM employee_scene_job WHERE id=$1::uuid`, b.JobID).Scan(&job.Scope.WorkspaceID, &job.Scope.AgentID, &job.Scope.TenantOrgID, &job.Scope.SceneID, &job.PrincipalID, &job.Items, &job.State, &job.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return in, false, holdEmployeeNotice("source_job_missing")
 	}
@@ -196,6 +205,22 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	}
 	if job.State != "completed" {
 		return in, false, holdEmployeeNotice("source_job_not_completed")
+	}
+	effectJob := job
+	if job.Kind == employeeentry.KindHumanResponse {
+		actual := job
+		actual.ID = b.JobID
+		resolved, e := readEmployeeHumanBinding(ctx, tx, actual)
+		if e != nil {
+			return in, false, holdEmployeeNotice("human_response_binding_revoked")
+		}
+		var meta struct {
+			ResponseID string `json:"employee_human_response_id"`
+		}
+		if json.Unmarshal(b.Queue.Context, &meta) != nil || meta.ResponseID != resolved.Response.ID || b.SourceRef != resolved.Question.SourceRef {
+			return in, false, holdEmployeeNotice("human_response_queue_binding_mismatch")
+		}
+		job = resolved.OriginJob
 	}
 	var env employeeDispatchEnvelope
 	var source employeeSourceMessage
@@ -219,7 +244,7 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 				return in, false, holdEmployeeNotice("invalid_source_receipt")
 			}
 			var admitted bool
-			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1::uuid AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7::uuid AND owner_loop='employee')`, item.ReceiptID, b.JobID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.Scope.Scene.SceneID, item.PrincipalID).Scan(&admitted)
+			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_event_consumption WHERE receipt_id=$1::uuid AND job_id=$2::uuid AND workspace_id=$3::uuid AND agent_id=$4::uuid AND tenant_org_id=$5 AND scene_id=$6::uuid AND principal_id=$7::uuid AND owner_loop='employee')`, item.ReceiptID, job.ID, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.Scope.Scene.SceneID, item.PrincipalID).Scan(&admitted)
 			if err != nil {
 				return in, false, err
 			}
@@ -242,7 +267,16 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 		Scope:                     employeeentry.Scope{WorkspaceID: b.Scope.WorkspaceID, AgentID: b.Scope.AgentID, TenantOrgID: b.Scope.TenantOrgID, SceneID: b.Scope.Scene.SceneID},
 		Requester:                 b.Requester, Queue: b.Queue, SourceRef: b.SourceRef, Source: source,
 	}
-	reason, err := employeeExecutionDispatchProof(ctx, tx, &proof)
+	// The original message proves authority; the typed answer job proves the
+	// new execution. A steered successor still uses its own replacement proof.
+	var reason string
+	if _, steered, e := employeeExecutionSteerInput(ctx, tx, &proof); e != nil {
+		return in, false, e
+	} else if effectJob.Kind == employeeentry.KindHumanResponse && !steered {
+		reason, err = employeeHumanExecutionProof(ctx, tx, &proof, effectJob)
+	} else {
+		reason, err = employeeExecutionDispatchProof(ctx, tx, &proof)
+	}
 	if err != nil {
 		return in, false, err
 	}
@@ -470,11 +504,24 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 			artifactsLoaded = true
 			continue
 		}
+		// Delivery suppression is not goal suppression. Only a verified native
+		// file may suppress the message while materializing this Run's outcome.
+		roundBody, roundHandled := "", false
+		if held == nil || held.reason == "native_file_delivered" {
+			var roundErr error
+			roundBody, roundHandled, roundErr = h.materializeEmployeeRoundResultTx(ctx, tx, b, in, deliveryDecision != "suppress")
+			if roundErr != nil {
+				return false, roundErr
+			}
+		}
 		state, reason, body, actionID := "enqueued", "", "", ""
 		if held != nil {
 			state, reason = "suppressed", held.reason
 		} else {
 			body = employeeNoticeDeliveryBody(deliveryDecision, b.Result)
+			if roundHandled {
+				body = roundBody
+			}
 			if body == "" {
 				body = employeeNoticeBody(b)
 			}
@@ -517,6 +564,15 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 // notice. It fences a fresh submission; provider-accepted/unknown actions never
 // call it and continue the existing query/receipt reconciliation path.
 func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkresponse.ActionInput) error {
+	if in.A2UICard != nil {
+		return h.BeforeEmployeeHumanQuestionSend(ctx, in)
+	}
+	if handled, err := h.beforeEmployeeHumanResponseSend(ctx, in); handled || err != nil {
+		return err
+	}
+	if in.EmployeeFirstFeedbackJobID != "" {
+		return h.beforeEmployeeFirstFeedbackSend(ctx, in)
+	}
 	if in.EmployeeMessageJobID != "" {
 		return h.beforeEmployeeParticipationSend(ctx, in)
 	}

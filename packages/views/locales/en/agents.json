@@ -2510,6 +2510,12 @@
     "mcp_url_invalid": "Enter an address starting with http:// or https://.",
     "mcp_header_invalid": "A header name is invalid or repeated.",
     "routines": {
+      "trigger_once": "Once",
+      "rhythm_once": "Once at {{time}}",
+      "once_triggered": "Triggered once",
+      "field_run_at": "Run at",
+      "field_run_at_invalid": "Choose a valid future date and time",
+      "once_hint": "Uses your local time ({{timezone}}). Runs once and posts the result in this chat.",
       "title": "Routines",
       "subtitle": "Have the agent do something here on a schedule or when a webhook request arrives. Each run posts a start and an end message in this chat.",
       "read_only": "Only agent managers can change routines here. You can also ask the agent to set one up in the chat.",

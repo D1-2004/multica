@@ -86,7 +86,7 @@ individual message speaker or a human sender.
   emit `tool_batch_rejected`. A committed reply produces root state
   `outbox_committed`; this is not proof that DingTalk delivered the message.
   Confirm delivery using the outbound receipt and actual IM readback.
-- `dispatch_task` indexes `employee_task_id`, `employee_run_id`, and
+- `dispatch_task` and typed-answer `continue_question_work` index `employee_task_id`, `employee_run_id`, and
   `queue_task_id`. Use the queue ID to inspect the separate `agent_task` trace
   and its `llm.call.N` generations. Background tool names and schemas follow
   the explicit capture limitations below; frontend schema export does not
@@ -94,6 +94,15 @@ individual message speaker or a human sender.
 - Capability bearer links and recognized credentials are redacted. The trace
   retains sensitive conversation context and is intended for authorized
   debugging, not as a public transcript.
+
+A typed `human_response` wake adds Host-read `question_id`, `response_id`,
+`source_job_id`, and `source_receipt_id` lookup metadata. The source message
+remains its authority anchor; the current typed job is the effect owner.
+`continue_question_work` emits arguments and the committed Host result only
+when its tool journal callback actually runs. Replaying that journal does not
+create another tool observation or manufacture another execution receipt.
+These observations share the existing redaction and asynchronous exporter;
+no extra model call is made and a tool receipt is still not delivery proof.
 
 For an exact job or queue UUID, use `langfuse_lookup.py trace <uuid> --json`.
 For discovery, use `recent employee_loop 20 --environment pre` or the canonical

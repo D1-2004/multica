@@ -870,6 +870,75 @@
           "sourceCases": [
             "proactive-generic-same-marker-different-work"
           ]
+        },
+        {
+          "id": "office-independent-repeat-execution",
+          "title": "相同目标明确另开新事项",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "执行资源：专用候选Runtime及实际Python"
+          ],
+          "verifies": [
+            "当前本人明确要求独立新工作，即使与旧成功工作的目标和数值相同，也新建Task和Run并继承本次实际执行要求；不复述旧报告。"
+          ],
+          "method": [
+            "保留原场域、原请求人和已成功的Python计算历史，再用原失败台词要求另开新工作，实际sleep后计算同一输入。不得清历史或换群。",
+            "独立核current source绑定的新Task/Run、Python实跑和等待事实；旧Task版本不变。答案数值正确但无新执行判失败。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-task-lookup-owner-first",
+          "title": "优先查当前请求人在本群发起的事项",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "其他发言者：测试真人小乙"
+          ],
+          "verifies": [
+            "旧事项查找先在本场域匹配当前发言者；其他人更近的同名事项不能挤掉本人的匹配。独立新工作不先查旧事项去重。"
+          ],
+          "method": [
+            "同群准备小甲较早的匹配事项、小乙更近的同名事项和小甲无关事项；小甲询问该事项进度，再明确另开同名工作。",
+            "核原生查找的来源和候选层、后续读取及Task归属：进度绑定小甲的匹配；新工作产生新Run，无旧报告候选默认注入。用错源或按时间选小乙判失败。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-task-shared-metadata-only",
+          "title": "本人未命中时只读本群共享摘要",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "其他发言者：测试真人小乙"
+          ],
+          "verifies": [
+            "本人没有匹配才查本群其他人事项的目标、状态和时间；不展示执行指令、结果、历史或私有资料，也不取得修改权。单聊不跨人查询。"
+          ],
+          "method": [
+            "在同群让小乙建立相关事项并放入专用私有标记，小甲只有无关事项；小甲查询相关目标，再尝试续接、停止、调整、查完整历史或依赖其结果。",
+            "核共享层仅返回安全元数据，所有控制和执行材料读取被拒且Task/Run不变；单聊同样查询零跨人候选。对照工具journal、API和消息正文检查私有标记零泄露。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_task_discovery_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "delivery"
@@ -1056,6 +1125,79 @@
             "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md",
             "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md",
             "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-stream",
+          "title": "必要查找时首轮自然反馈和最终答复",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹"
+          ],
+          "verifies": [
+            "首轮模型在必要查找前生成一条自然公开首句，完整帧可在模型流结束前入队；同一请求完成必要工具和最终答复，不新增反馈专用模型轮次。",
+            "首句只表达准备核对，不能代替执行、接单或最终结果；直答、严格数字或JSON、安静和直接受理不额外反馈。"
+          ],
+          "method": [
+            "单一真人在已知工作存在的会话询问需查找的进度，用真实模型和可观测的流式provider；另测直答、严格格式、quiet和直接受理。",
+            "核首个generation、完整first_feedback帧和首句投递、后续工具及最终消息的独立账本；首句在流结束前可入队，业务读取只在整批完成后执行。HTTP SSE夹具只证明时序，不代替真实IM自然表达通过。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/service/employeeloop/stream_test.go",
+            "server/internal/handler/employee_stream_integration_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-incomplete-plan",
+          "title": "流截断或非法计划不提前执行业务",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "故障资源：隔离SSE provider"
+          ],
+          "verifies": [
+            "仅完整、明确来源的公开反馈帧可早接收；半个参数、普通正文和推理不外发。之后的截断、length或非法业务批次零业务调用，最终如实说明未完成。"
+          ],
+          "method": [
+            "隔离provider依次返回半个反馈参数、有效反馈后截断读取、length、错误字段和终结工具混批。保留已提交公开意图与整轮失败的分别记录。",
+            "逐例联合读模型journal、native调用与业务变化：未完成帧零发送，非法整批零业务效果，已完整接收的首句不冒充执行成功。对照最终回复和剩余预算。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/service/employeeloop/stream_test.go",
+            "server/pkg/llm/stream_collect_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-first-feedback-recovery-final",
+          "title": "重启与最终答复竞态不重复首句",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取测试场域的消息、任务与轨迹",
+            "故障执行者：隔离环境owner"
+          ],
+          "verifies": [
+            "仅第一次实际模型请求可新建首句；重发未完成首请求不能再首次创建。已入账首句可幂等重放，最终答复独立完成且取消尚未提交的首句。",
+            "发送状态不明或已接受只查询不重发，不关闭原请求callback；已经外部提交的首句可能迟到，应保留这一限制。"
+          ],
+          "method": [
+            "隔离环境分别在首响应保存前重启、反馈事务提交后重放、发送门通过但尚未reserve时完成最终答复；再模拟unknown或已接受。",
+            "联合核model_attempts、稳定反馈key、native journal、response_action状态及真实发送次数；pending被final取消且不复活，unknown不重发，final可发送一次且不被首句阻塞。本地provider替身不证明第三方到达次序。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-intent-stream-implementation.md",
+            "server/internal/handler/employee_first_feedback_test.go",
+            "server/internal/service/dingtalkresponse/first_feedback_test.go"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -2325,7 +2467,7 @@
     {
       "id": "cron-office",
       "title": "定时事项",
-      "description": "按时间和最新有效规则执行，暂停期间不补跑。",
+      "description": "周期与一次性定时工作在原场域准时受理、唯一执行，并保留必要来源和当前权限。",
       "cases": [
         {
           "id": "office-cron-real-due",
@@ -2535,6 +2677,149 @@
             "docs/employee-loop.md",
             "docs/agent-scene.md",
             "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-short-due",
+          "title": "三分钟后只提醒一次",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "一次性请求可低于周期15分钟间隔；创建任务在到点前结束，等待期间不持有沙箱。",
+            "按原消息时间+180秒持久化；结果仅回原单聊一次，trigger.kind=once且无重复cron规则，不替换为待办、不发开始通知。"
+          ],
+          "method": [
+            "在无其他写入者的测试单聊发送“3分钟后提醒我喝水，只提醒一次，在这里回复”。",
+            "读创建资源确认kind=once及准确run_at；核原创建queue/Run在计划时间前终结，等待期无sleep或持续运行的新沙箱。",
+            "跨过目标时间及冻结lateness窗口，独立回读原单聊和账本；关联一次新occurrence/Task/Run/结果outbox与一条真实结果，ACK单独计数。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-source-context",
+          "title": "五分钟后继续原报告语境",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "原任务/沙箱结束后仍保留请求人、原场域、原消息时间和上游报告材料。",
+            "到点遵循原报告的限定输出要求；不重新问“提醒什么”、编造内容或向别的会话发。"
+          ],
+          "method": [
+            "先在同一测试单聊形成带明确结论和格式约束的可验证小报告，例如三条待处理事项。",
+            "发送“5分钟后提醒我处理刚才报告中的第二项，只写事项名称和截止时间，不要重新统计”。记录原来源refs，不把预期答案再塞进未来提示。",
+            "原创建Run结束后回读source快照；到点核新Run实际packet包含原报告/引用和约束，独立比对单聊真实结果、目标和一次效果。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-cancel-pending",
+          "title": "取消尚未到期的提醒",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "取消在受理前阻止未来执行；重复取消及迟到创建重放不能复活。"
+          ],
+          "method": [
+            "建3分钟后的一次性提醒；确认资源后在到点前说取消刚才那个提醒，并再查询一次。",
+            "跨过原时间及完整观察窗口，核取消/归档tombstone、scheduler扫描与零新执行/结果；受控回放原创建请求后仍无新资源或执行。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-reschedule-pending",
+          "title": "改期后旧时间不提醒",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "待触发任务从3分钟改为5分钟后只按新时间执行，原上下文与目标不变。",
+            "编辑不破坏原创建幂等身份，原请求重放不会多建。"
+          ],
+          "method": [
+            "在测试单聊创建3分钟后提醒；用明确绝对时间改为原请求时间+300秒，避免“再过5分钟”时间歧义。",
+            "原计划时间回读旧slot零受理；新时间回读一次结果，新Run仍使用原source。",
+            "受控重放原创建请求，核同一资源已改期状态未重置、无第二次安排。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-subminute-owner",
+          "title": "一分钟内等待保持单一交付归属",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "45秒延迟可被处理，不误判为周期频率过短。",
+            "采用持久调度或原Run有界等待均只能有一个发送owner，不同时注册timer又sleep发送。"
+          ],
+          "method": [
+            "发送“45秒后在这里提醒我，只提醒一次”，固定原occurredAt和实际执行策略。",
+            "核平台once与运行轨迹：持久路径提前释放Run；短等待路径总等待<60秒、Run托管且取消有效，不遗留后台进程。",
+            "独立回读一次结果；记录实际扫描/FC启动排队延迟，按事前冻结的短延迟SLO签收，不承诺无环境条件的精确秒送达。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-admission-load",
+          "title": "同刻到期排队与资源上限",
+          "roles": [
+            "发起者：获准测试真人",
+            "执行者：测试数字员工",
+            "独立验证者：仅可读测试场域、任务与轨迹"
+          ],
+          "verifies": [
+            "等待期的资源占用不随定时延迟增长；到期突发按既有容量限制排队，不重复创建沙箱/执行。",
+            "负载不能让普通交互或其他scheduler job无限饥饿；没有排队容量实证不能签负载通过。"
+          ],
+          "method": [
+            "仅在专用本地/候选隔离环境，准备多个获准场域并固定Agent/Runtime并发上限；先验证低负载基线。",
+            "阶梯设置5、20个同刻到期once，观测DB scan/锁等待/队列深度、活跃sandbox与claim并发、后台其他job和一个普通交互进度。",
+            "核planned/admitted/start/delivered各段延迟、每slot唯一ledger及真实输出；容量不足保留queued并恢复，不能通过超额sandbox绕上限。",
+            "失败最小化后由发布负责人决定准入/批量预算，不对共享预发直接灌压。"
+          ],
+          "sources": [
+            "docs/context-capabilities.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
           ],
           "origin": "defined",
           "sourceCases": []
@@ -3373,6 +3658,272 @@
         }
       ],
       "categoryRef": "learning-reliability"
+    },
+    {
+      "id": "human-clarification",
+      "categoryRef": "communication",
+      "title": "直接回应确认问题",
+      "description": "按钮是快捷输入，也可用自然语言补充要求。",
+      "cases": [
+        {
+          "id": "human-front-question-no-task",
+          "title": "前台问句不创建后台任务",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "询问落盘、卡片投递意图唯一；未选择前没有Task/Run。"
+          ],
+          "method": [
+            "让员工询问两类可选资料，原场域读回真实卡片。",
+            "检查receipt→question→response_action与Task/Run计数；本地fake验证不能替代真实卡片。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-text-preserves-constraints",
+          "title": "不点按钮，直接补充要求",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "文字匹配对应问题，完整原话与简短/不外发约束进入新执行包。"
+          ],
+          "method": [
+            "已送达问句后普通DWS发“办公流程，简短一点，先不要发给别人”。",
+            "读回IM、对应question/response/job及下一Run完整模型输入，确保非只保存选项ID。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-multiple-question-ambiguity",
+          "title": "两件事同时等待时不猜最近一件",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "短答目标不明应追问；明确提到某件时只推进该事项。"
+          ],
+          "method": [
+            "同请求者同场域用两次独立当前输入分别建立两件待确认事项，记录两个question ID；先发同时匹配两题的短答，再明确原事项。",
+            "结合真实模型语义judge核q_ref、Task/Run和实际效果，不能只看模型说收到。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-actor-and-option-fence",
+          "title": "其他人和非法选项不能抢答",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "无权人/非法值不消耗合法答复机会；同名选择标识不成为人员授权。"
+          ],
+          "method": [
+            "隔离客户端以其他账号提交、再由请求者合法提交；fault fixture提交未展示ID。",
+            "核身份、租户/scene/question绑定、问题状态与唯一效果；故障模拟单列。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "human-answer-race-once",
+          "title": "点击和文字重复时只推进一次",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "首个合法答案生成唯一消费job和执行意图；迟到旧卡不覆盖已接受的新输入。"
+          ],
+          "method": [
+            "隔离PG并发模拟点击/文字及网络重投；真实合法受理卡仅在客户端仍支持再次提交时观察，否则UI禁用不代替服务端幂等。",
+            "联合检查source/event、response、job、native effect journal、Task/Run及消息计数。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        }
+      ]
+    },
+    {
+      "id": "round-result-followup",
+      "categoryRef": "delivery",
+      "title": "任务这一轮结束后确认",
+      "description": "保存已有结果，让人决定需要确认的事项或可选下一步。",
+      "cases": [
+        {
+          "id": "round-clarification-waits-goal",
+          "title": "一轮结束，原事项等待确认",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "Run终态不宣称目标完成；只开放该问题的human_input wait；答后同Task新Run。"
+          ],
+          "method": [
+            "真实Pi按结果契约返回澄清，独立回读summary和A2UI；人用文字答复。",
+            "核V2 goal、exact wait、两个不同Run/进程、实际输入和已有副作用未重做。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-amend-updates-goal",
+          "title": "文字改变原要求",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "目标版本先更新，再按完整新要求执行；旧卡不能覆盖新目标。"
+          ],
+          "method": [
+            "待确认时说“先别发，给我看简短版”；之后重投原卡回调。",
+            "核amendment原话、goal revision、fresh Run与对外发送零效果；跨旧完成时间观察。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-optional-followup-new-goal",
+          "title": "完成后的下一步可以不选择",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "原工作完成；不选不额外运行；选后新事项关联旧结果。"
+          ],
+          "method": [
+            "真实Pi完成后给可选清单/摘要；先不选，随后明确选择。",
+            "检查原goal终态、零自动Run、新Task builds_on、完整既有结果复用与实际交付。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-stale-question-suppressed",
+          "title": "停止后不再发送旧问题",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "发送前目标/版本变化抑制排队卡；迟到答复不复活工作。"
+          ],
+          "method": [
+            "已结束Run确有必需human_input wait时，由原真人source-bound停止事项，再在真实客户端提交旧卡；暂停发送的故障模拟另列。",
+            "验证BeforeSend、stop/goal事实、response_action及无新Run；实际客户端路径另验。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        },
+        {
+          "id": "round-unknown-card-send-no-resubmit",
+          "title": "发卡结果未知不重复发",
+          "roles": [
+            "请求者：测试真人小甲，仅控制本人事项",
+            "员工：使用待验版本的测试数字员工",
+            "观察者：获准读取测试场域IM、Task/Run、事件及模型轨迹"
+          ],
+          "verifies": [
+            "ACK不是人已收到；未知提交不盲重发；早答案不被晚发送回执覆盖。"
+          ],
+          "method": [
+            "隔离provider故障注入提交后断线及early callback；实际IM independently读回。",
+            "核response_action、question/answer与provider真实回执，缺消息ID时不算delivered。"
+          ],
+          "sources": [
+            "docs/employee-human-interaction.md",
+            "server/internal/handler/employee_human_question_test.go",
+            "server/internal/handler/employee_human_round_result_test.go",
+            "server/internal/handler/employee_human_response_worker_test.go",
+            "docs/plans/2026-10-04/tag-a2ui-human-acceptance.md"
+          ],
+          "origin": "defined",
+          "sourceCases": []
+        }
+      ]
     }
   ],
   "categories": [

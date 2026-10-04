@@ -65,6 +65,7 @@ type preMigrationHook func(ctx context.Context, pool *pgxpool.Pool) error
 // 259 does not know that fork-owned value and installs a NOT VALID constraint
 // without it; the hook widens the constraint before migration 260 validates it.
 var preMigrationHooks = map[string]preMigrationHook{
+	"10041_employee_first_feedback_identity_idx": cleanupInvalidConcurrentIndexHook("employee_first_feedback_identity_idx"),
 	// An interrupted build leaves an INVALID unique index that IF NOT EXISTS
 	// would accept as done.
 	"9461_agent_dws_native_subscription_account_idx": cleanupInvalidConcurrentIndexHook("idx_agent_dws_native_subscription_account"),
