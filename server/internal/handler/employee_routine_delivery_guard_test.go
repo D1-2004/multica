@@ -22,7 +22,7 @@ func routineDeliveryFixture(t *testing.T, status string) (*employeeRoutineHandle
 	if err != nil || run == nil || !run.TaskID.Valid {
 		t.Fatalf("dispatch: run=%+v err=%v", run, err)
 	}
-	if _, err = testPool.Exec(ctx, `UPDATE agent_task_queue SET status=$2,completed_at=now(),result='{"output":"已向一粟发出询问（送达状态 delivered）"}'::jsonb WHERE id=$1`, run.TaskID, status); err != nil {
+	if _, err = testPool.Exec(ctx, `UPDATE agent_task_queue SET status=$2,completed_at=now(),result='{"output":"已向测试成员发送目标消息（送达状态 delivered）"}'::jsonb WHERE id=$1`, run.TaskID, status); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := x.f.h.ReconcileEmployeeRoutineRuns(ctx, 100); err != nil || n != 1 {
