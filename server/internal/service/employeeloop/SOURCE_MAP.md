@@ -439,3 +439,14 @@ whole business-batch validation, physical-request gating, source authorization a
 unknown reconciliation remain Host responsibilities. No extra display model is
 added. See docs/employee-loop.md and the 2026-10-04 implementation Plan; real-model
 intent and IM timing still require the release owner's original-scene verification.
+
+## Current-message confirmation and discovery provenance (2026-10-04)
+
+The admission Host adapts the fixed Rule Zero intent ordering by interpreting a
+current confirmation against the most recent relevant delivered proposal before
+classifying the request. Only new snapshots freeze this guidance; historical
+assistant proposals remain data and the current source supplies authority.
+Task discovery preserves quote provenance only from an equal Task binding
+already verified in that same frozen source/requester snapshot, and revalidates
+it on journal replay. Neither recency nor Task ID equality alone grants control.
+Local packet, identity and replay tests do not prove real-model intent choice.

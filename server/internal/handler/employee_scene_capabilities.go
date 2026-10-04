@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,6 +77,7 @@ func employeeSceneCapabilitiesFor(ctx context.Context, h *Handler, job employeee
 		"Internal execution catalog. Skills/connectors/MCP, including DWS/dws-shortcuts, run in background tasks, not this foreground. Configured entries do not prove access; verify when executing. Missing entries do not prove absence.",
 		"For ordinary capability introductions or link-only requests, use this directory and call describe_capabilities on the first model call. Do not call scene_config_get merely for a more accurate introduction; it cannot verify runtime access. Host appends the link and how long it stays valid; never invent a URL or state its lifetime yourself. History shows earlier links only as " + employeeOmittedConfigLink + "; never copy or rewrite one: call describe_capabilities again for a fresh link.",
 		"Only use scene_config_get when the user explicitly asks for configuration details (exact switches, stored prompts, or existing routines) not already in context. For explicit configuration questions, preserve exact skill names, switch states, and stored prompt text as requested; answer fully, including when a link is also requested.",
+		"Configuration layers are distinct: scene_config_get's original fields describe only this scene; effective_context includes inherited global, org, scene and the admitted requester's person MCP configuration. An empty scene mcp_servers list does not mean personal MCP is absent. Configuration and HTTP 200 do not prove runtime access or tool authorization; use actual tool results and preserve uncertainty.",
 		"For ordinary introductions, reply like a colleague: normally 1–3 short sentences, not a configuration inventory. Describe useful work, not internal tool names, skill package names, Direct, or configuration fields. Say you can arrange executor work; never claim you can call DWS or shell here. Mention access uncertainty briefly only when material.",
 		employeeForegroundBoundary,
 		employeeSceneSelfManagement,
@@ -186,6 +188,12 @@ func (h *employeeSceneHost) sceneConfiguration(ctx context.Context, tx pgx.Tx) (
 	if err != nil {
 		return "", err
 	}
+	for _, env := range h.envelopes {
+		if err = employeePrincipalAllowed(ctx, &view, h.job.Scope, env.PrincipalID); err != nil {
+			return "", err
+		}
+	}
+	target.scope.PersonKey = employeeCapabilityPerson(h.job, h.envelopes)
 	result, err := view.sceneConfigGet(ctx, target)
 	if err != nil {
 		return "", err
@@ -195,6 +203,44 @@ func (h *employeeSceneHost) sceneConfiguration(ctx context.Context, tx pgx.Tx) (
 	// run; here it read as "this scene cannot be changed", so it is dropped.
 	value := result.(map[string]any)
 	delete(value, "read_only")
+	global, err := contextcap.LoadGlobalLayer(ctx, view.DB, h.job.Scope.WorkspaceID, h.job.Scope.AgentID)
+	if err != nil {
+		return "", err
+	}
+	layers, err := contextcap.LoadLayers(ctx, view.DB, h.job.Scope.WorkspaceID, h.job.Scope.AgentID, target.scope.Selection())
+	if err != nil {
+		return "", err
+	}
+	effective, reserved := mergeTaskContext(append([]contextcap.ContextLayer{global}, layers...)...)
+	personal := []employeeConfiguredMCP{}
+	for _, layer := range layers {
+		if layer.Layer != contextcap.LayerPerson {
+			continue
+		}
+		servers, e := contextcap.MCPServers(layer.MCPConfig)
+		if e != nil {
+			return "", e
+		}
+		for name, config := range servers {
+			personal = append(personal, employeeMCPConfiguration(name, layer.Layer, config))
+		}
+	}
+	sort.Slice(personal, func(i, j int) bool { return personal[i].Name < personal[j].Name })
+	configured := []employeeConfiguredMCP{}
+	for _, server := range effective.AppliedMCPServers() {
+		configured = append(configured, employeeMCPConfiguration(server.Name, server.Layer, server.Config))
+	}
+	personalScope := "not_selected"
+	if target.scope.PersonKey != "" {
+		personalScope = "selected"
+	}
+	value["effective_context"] = map[string]any{
+		"personal_scope": personalScope, "personal_mcp_servers": personal,
+		"mcp_servers": configured, "invalid_mcp_layers": effective.InvalidMCPLayers,
+		"reserved_mcp_servers": reserved,
+		"availability":         "configuration only; runtime mounting, tool authorization and execution remain unverified",
+	}
+	value["configuration_scope"] = "Original fields are scene-only; effective_context includes inherited MCP configuration. Empty scene mcp_servers does not imply no personal MCP."
 	value["how_to_change"] = "dispatch_task with the requester's exact request: the background executor changes this scene (routines, prompts, offered skill/connector switches, remote MCP servers) with config-qwen-tag-scene. This read changes nothing."
 	value["runtime_availability"] = "skill and connector switches are configuration; access is verified when a background task uses them"
 	if routines, ok := value["routines"].([]sceneRoutineView); ok {
@@ -204,6 +250,22 @@ func (h *employeeSceneHost) sceneConfiguration(ctx context.Context, tx pgx.Tx) (
 	}
 	raw, err := json.Marshal(value)
 	return string(raw), err
+}
+
+// Never copy raw MCP configuration into the inherited-capability projection:
+// URLs may themselves carry credentials, including in their path segments.
+type employeeConfiguredMCP struct {
+	Name    string `json:"name"`
+	Layer   string `json:"layer"`
+	Enabled bool   `json:"enabled"`
+}
+
+func employeeMCPConfiguration(name, layer string, raw json.RawMessage) employeeConfiguredMCP {
+	var config struct {
+		Disabled bool `json:"disabled"`
+	}
+	valid := json.Unmarshal(raw, &config) == nil
+	return employeeConfiguredMCP{Name: name, Layer: layer, Enabled: valid && !config.Disabled}
 }
 
 // A savepoint makes a failed link mint leave the original answer usable. The

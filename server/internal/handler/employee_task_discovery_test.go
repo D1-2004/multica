@@ -108,6 +108,92 @@ func TestEmployeeTaskDiscoveryQuotedOwnMetadata(t *testing.T) {
 	}
 }
 
+// Reproduce the real find -> read -> stop path after quoting an accepted task.
+// Rediscovery must retain the verified quote, without creating replacement work.
+func TestEmployeeTaskDiscoveryQuotedAcknowledgementStopsSameTask(t *testing.T) {
+	s, host, id, source := employeeQuoteHost(t, "running", "callback-ack", func(s *employeeQuoteSetup) {
+		s.notice.h.EmployeeSceneWorker.TaskDiscoveryReady = func(context.Context) (bool, error) { return true, nil }
+	})
+	ctx := context.Background()
+	find := employeeFindCall(source, "rediscover-quoted", "")
+	first, err := host.Execute(ctx, id, find)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := "rediscover-quoted:t1"
+	binding, err := host.currentTaskBinding(ctx, testPool, source, ref)
+	if err != nil || binding.Origin != employeeQuoteOrigin || binding.TaskID != employeeTaskOf(t, s) {
+		t.Fatal("rediscovery lost verified quoted source", binding, err)
+	}
+	replayed, err := host.Execute(ctx, id, find)
+	if err != nil || replayed.Content != first.Content {
+		t.Fatal("quote discovery replay changed frozen provenance", replayed, err)
+	}
+	if _, err := host.Execute(ctx, id, employeeQuoteCall("read_task", "rediscovered-read", source, ref, nil)); err != nil {
+		t.Fatal(err)
+	}
+	stop := employeeQuoteCall("stop_task", "rediscovered-stop", source, ref, map[string]any{"read_ref": "rediscovered-read", "instruction_quote": source.Message.Text})
+	stopped, err := host.Execute(ctx, id, stop)
+	if err != nil || stopped.Receipt == "" || stopped.Terminal == nil || !strings.Contains(stopped.Terminal.Reply, "请求停止") {
+		t.Fatal("rediscovered quote did not stop the actual task", stopped, err)
+	}
+	var state string
+	var tasks, runs int
+	if err := testPool.QueryRow(ctx, `SELECT t.state,(SELECT count(*) FROM employee_task WHERE agent_id=t.agent_id),(SELECT count(*) FROM employee_task_run WHERE task_id=t.id) FROM employee_task t WHERE t.id=$1`, binding.TaskID).Scan(&state, &tasks, &runs); err != nil || state != "cancelled" || tasks != 1 || runs != 1 {
+		t.Fatal("stop replaced work or did not cancel it", state, tasks, runs, err)
+	}
+}
+
+func TestEmployeeTaskDiscoveryQuoteOriginRequiresFrozenExactSource(t *testing.T) {
+	source := employeeSourceMessage{SourceRef: "receipt/message", RequesterRef: "requester", Message: DispatchMessage{ReferencedMessage: &DispatchReferencedMessage{OpenMsgID: "quoted"}}}
+	verified := employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, TaskID: "task", Origin: employeeQuoteOrigin}
+	for _, tc := range []struct {
+		name    string
+		binding employeeCurrentTaskBinding
+	}{
+		{"another task", employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, TaskID: "other", Origin: employeeQuoteOrigin}},
+		{"another source", employeeCurrentTaskBinding{SourceRef: "other/message", RequesterRef: source.RequesterRef, TaskID: "task", Origin: employeeQuoteOrigin}},
+		{"another requester", employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: "other", TaskID: "task", Origin: employeeQuoteOrigin}},
+		{"unverified own discovery", employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, TaskID: "task"}},
+		{"shared metadata", employeeCurrentTaskBinding{SourceRef: source.SourceRef, RequesterRef: source.RequesterRef, TaskID: "task", Origin: employeeQuoteOrigin, SharedReadOnly: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if origin := employeeDiscoveryQuoteOrigin([]employeeCurrentTaskBinding{tc.binding}, source, "task"); origin != "" {
+				t.Fatal("discovery granted unverified quote authority", origin)
+			}
+		})
+	}
+	if origin := employeeDiscoveryQuoteOrigin([]employeeCurrentTaskBinding{verified}, source, "task"); origin != employeeQuoteOrigin {
+		t.Fatal("verified source lost quote authority", origin)
+	}
+	source.Message.ReferencedMessage = nil
+	if origin := employeeDiscoveryQuoteOrigin([]employeeCurrentTaskBinding{verified}, source, "task"); origin != "" {
+		t.Fatal("ordinary message reused quote authority", origin)
+	}
+}
+
+func TestEmployeeTaskDiscoveryUnverifiedQuoteCannotStopOwnTask(t *testing.T) {
+	s, host, id, source := employeeQuoteHost(t, "running", "untracked-message", func(s *employeeQuoteSetup) {
+		s.notice.h.EmployeeSceneWorker.TaskDiscoveryReady = func(context.Context) (bool, error) { return true, nil }
+	})
+	ctx := context.Background()
+	if _, err := host.Execute(ctx, id, employeeFindCall(source, "find-unverified", "")); err != nil {
+		t.Fatal(err)
+	}
+	ref := "find-unverified:t1"
+	if _, err := host.Execute(ctx, id, employeeQuoteCall("read_task", "unverified-read", source, ref, nil)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := host.Execute(ctx, id, employeeQuoteCall("stop_task", "unverified-stop", source, ref, map[string]any{"read_ref": "unverified-read", "instruction_quote": source.Message.Text}))
+	if err == nil || result.Receipt != "" {
+		t.Fatal("own task discovery bypassed unverified quoted anchor", result, err)
+	}
+	var state string
+	if err := testPool.QueryRow(ctx, `SELECT state FROM employee_task WHERE id=$1`, employeeTaskOf(t, s)).Scan(&state); err != nil || state != "running" {
+		t.Fatal("unverified stop changed task", state, err)
+	}
+}
+
 func TestEmployeeTaskDiscoveryOwnRefAndReplay(t *testing.T) {
 	f, host, id, source := employeeDiscoveryHost(t)
 	ctx := context.Background()

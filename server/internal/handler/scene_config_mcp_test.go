@@ -17,6 +17,25 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func TestMaskMCPServerURLCapabilityPaths(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"agent_connection", "https://mcp.example/api/mcp/connect/mca2a_test-secret", "https://mcp.example/api/mcp/connect/[hidden]"},
+		{"workspace_connection", "https://mcp.example/api/mcp/workspaces/one/connect/wmcp_test-secret", "https://mcp.example/api/mcp/workspaces/one/connect/[hidden]"},
+		{"scene_token", "https://mcp.example/api/scene-config/mcp/sct_test-secret", "https://mcp.example/api/scene-config/mcp/[hidden]"},
+		{"encoded_prefix", "https://mcp.example/api/mcp/connect/%6dca2a_test-secret", "https://mcp.example/api/mcp/connect/[hidden]"},
+		{"encoded_secret_slash", "https://mcp.example/api/mcp/connect/wmcp_test%2Fsecret", "https://mcp.example/api/mcp/connect/[hidden]"},
+		{"userinfo_query_fragment", "https://user:pass@mcp.example/mcp?key=test-secret#test-secret", "https://mcp.example/mcp?…"},
+		{"ordinary_path", "https://mcp.example/api/v1/my%20tools/mcp", "https://mcp.example/api/v1/my%20tools/mcp"},
+		{"invalid", "https://mcp.example/%broken", "[hidden]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maskMCPServerURL(tc.raw); got != tc.want {
+				t.Fatalf("masked address = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // sceneConfigCall calls the config-qwen-tag-scene server at path as task
 // (headers as the auth middleware stamps them for its task token).
 func (f *ctxcapFixture) sceneConfigCall(t *testing.T, path string, task db.AgentTaskQueue, method string, params any) (int, map[string]any) {

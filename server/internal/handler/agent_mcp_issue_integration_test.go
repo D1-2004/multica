@@ -11,7 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type agentMCPIssueTestFixture struct {
@@ -110,6 +112,75 @@ func createSecondaryAgentMCPPrincipal(t *testing.T, fixture agentMCPIssueTestFix
 	principal.ClientID = clientID
 	principal.CredentialID = credentialID
 	return principal
+}
+
+func TestAgentMCPDescribeDoesNotRequireExecutionRuntime(t *testing.T) {
+	f := createAgentMCPIssueTestFixture(t)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET runtime_id=NULL WHERE id=$1`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := parseAgentMCPPrincipalIDs(f.principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := testHandler.describeAgentMCP(ctx, f.principal, ids)
+	if err != nil || profile["name"] != "Issue MCP Agent" {
+		t.Fatalf("active MCP profile with A2A unpublished and no execution runtime: %v %v", profile, err)
+	}
+	if _, err = testHandler.Queries.GetPublishedAgentA2AEndpointByPublicID(ctx, db.GetPublishedAgentA2AEndpointByPublicIDParams{PublicAgentID: f.principal.PublicAgentID, AllowDisabledEndpoint: true}); err == nil {
+		t.Fatal("execution admission was widened along with metadata read")
+	}
+	principal := f.principal
+	principal.AllowDisabledEndpoint = false
+	if _, err = testHandler.describeAgentMCP(ctx, principal, ids); err == nil {
+		t.Fatal("caller without MCP's explicit unpublished-endpoint allowance read disabled endpoint")
+	}
+}
+
+func TestAgentMCPDescribePreservesCurrentBindingGuards(t *testing.T) {
+	f := createAgentMCPIssueTestFixture(t)
+	ctx := context.Background()
+	ids, err := parseAgentMCPPrincipalIDs(f.principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, mutation string }{
+		{"archived_agent", `UPDATE agent SET archived_at=now() WHERE id=$1`},
+		{"rebound_owner", `UPDATE agent_a2a_endpoint SET delegated_by_user_id=$2 WHERE agent_id=$1`},
+		{"departed_owner", `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx, err := testPool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			args := []any{f.agentID}
+			if tc.name == "departed_owner" {
+				args = []any{testWorkspaceID, testUserID}
+			}
+			if tc.name == "rebound_owner" {
+				ownerID := uuid.NewString()
+				if _, err = tx.Exec(ctx, `INSERT INTO "user" (id,name,email) VALUES ($1,'Rebound MCP owner',$2)`, ownerID, ownerID+"@mcp-profile.test"); err != nil {
+					t.Fatal(err)
+				}
+				args = []any{f.agentID, ownerID}
+			}
+			if _, err = tx.Exec(ctx, tc.mutation, args...); err != nil {
+				t.Fatal(err)
+			}
+			h := *testHandler
+			h.Queries = db.New(tx)
+			if _, err = h.describeAgentMCP(ctx, f.principal, ids); err == nil {
+				t.Fatal("invalid current binding read profile")
+			}
+		})
+	}
+	ids.EndpointID = parseUUID(uuid.NewString())
+	if _, err = testHandler.describeAgentMCP(ctx, f.principal, ids); err == nil {
+		t.Fatal("another endpoint read profile")
+	}
 }
 
 func TestAgentMCPIssueDelegationCreatesOneNativeIssueAndContinuesIt(t *testing.T) {

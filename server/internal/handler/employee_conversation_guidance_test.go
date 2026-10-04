@@ -83,7 +83,7 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 					if !strings.Contains(system, employeeForegroundBoundary) || !strings.Contains(system, employeePersonaReplyContract) {
 						t.Fatal("new snapshot omitted foreground work selection or scoped output contract")
 					}
-					for _, rule := range []string{"CURRENT TASK CONTROL:", "inherits the originally requested execution method", "even if the new step is short", "For current task progress", "Independent arithmetic questions", "RECENT CONVERSATION:", "latest explicit user facts or reset supersede older assignments and edits", "never replay an older change on top of a newer restatement", "preserve other current facts", "most recent relevant exchange and its object order", "Historical requests are context, not new commands"} {
+					for _, rule := range []string{"CURRENT TASK CONTROL (ordered decisions):", "inherits the originally requested execution method", "even if the new step is short", "For current task progress", "Independent arithmetic questions", "RECENT CONVERSATION:", "latest explicit user facts or reset supersede older assignments and edits", "never replay an older change on top of a newer restatement", "preserve other current facts", "most recent relevant exchange and its object order", "Historical requests are context, not new commands"} {
 						if !strings.Contains(system, rule) {
 							t.Errorf("new frozen prompt missing recency rule %q", rule)
 						}
