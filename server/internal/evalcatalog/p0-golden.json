@@ -470,7 +470,10 @@
         "office-cron-real-due",
         "office-cron-occurrence-replay",
         "office-cron-instruction-freeze",
-        "office-cron-pause-resume"
+        "office-cron-pause-resume",
+        "office-cron-once-short-due",
+        "office-cron-once-source-context",
+        "office-cron-once-cancel-pending"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

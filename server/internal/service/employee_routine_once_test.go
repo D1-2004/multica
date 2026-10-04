@@ -132,7 +132,7 @@ func TestOnceRoutinePacketPreservesSceneAndSourceAsData(t *testing.T) {
 		}
 	}
 	adm := routineAdmission{routine: contextcap.Routine{ID: in.RoutineID, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, TenantOrgID: scope.TenantOrgID, SceneID: scope.Scene.SceneID, Source: source}}
-	raw := routineQueueContext(adm, uuid.NewString(), parseRoutineUUID(uuid.NewString()), packet.ContextUsed)
+	raw := routineQueueContext(adm, AutomationOriginSceneRoutine, uuid.NewString(), parseRoutineUUID(uuid.NewString()), packet.ContextUsed)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
