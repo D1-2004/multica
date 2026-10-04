@@ -346,13 +346,23 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		h.writeMulticaMCPError(w, request.ID, -32602, "invalid MCP parameters")
 		return
 	}
+	recoveredCall := request.Method == "tools/call" && params.Name == connectorRecoveredCallTool
+	if recoveredCall {
+		unwrapped, valid := connectorRecoveredParams(params.Arguments)
+		if !valid {
+			h.writeMulticaMCPError(w, request.ID, -32602, "invalid recovered tool name or arguments")
+			return
+		}
+		params = unwrapped
+	}
 	diagnostic := request.Method == "tools/call" && params.Name == connectorDiscoveryStatusTool
+	recovery := request.Method == "tools/call" && params.Name == connectorRecoverTool
 	if request.Method == "tools/call" {
 		if params.Name == "" || !internalMCPJSONObject(params.Arguments) {
 			h.writeMulticaMCPError(w, request.ID, -32602, "tool name or arguments are invalid")
 			return
 		}
-		if diagnostic {
+		if diagnostic || recovery {
 			if _, valid := connectorDiscoveryStatusResult(*c, params.Arguments); !valid {
 				h.writeMulticaMCPError(w, request.ID, -32602, "diagnostic accepts only empty object arguments")
 				return
@@ -369,7 +379,7 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 			if allowed {
 				params.Name = original
 			}
-		} else if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
+		} else if !recoveredCall && strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
 			// Resolve compact aliases against live metadata, never a saved allowlist.
 			names, listErr := h.discoverInternalConnectorTools(r.Context(), *c)
 			if listErr != nil {
@@ -400,7 +410,7 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	denied := ""
-	if request.Method == "tools/call" && c.CatalogSlug == "github" {
+	if request.Method == "tools/call" && !recovery && c.CatalogSlug == "github" {
 		access := h.githubGrantView(r.Context(), c)
 		denied = githubOwnerBlockReason(params.Name, params.Arguments, access)
 		if denied == "" {
@@ -420,6 +430,7 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	_ = http.NewResponseController(w).Flush()
 	var result any
 	upstreamStarted := time.Now()
+	var recoveryFailure error
 	agentRefusal := false
 	if denied != "" {
 		// Leave isError false. pi-mcp-extension discards isError text.
@@ -431,11 +442,20 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		result, refusal = h.githubDeleteBranchCall(r.Context(), c, params.Arguments)
 		err = nil
 		agentRefusal = refusal
+	} else if recovery {
+		result, recoveryFailure = h.recoverConnectorTools(r.Context(), *c, task, agent, ws)
+		err = nil // Returning availability is a successful status read, not business success.
+	} else if request.Method == "tools/list" {
+		result, err = h.callConnectorDiscovery(r.Context(), *c, params, connectorTaskDiscoveryTimeout)
 	} else {
 		result, err = h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
 	}
-	if err != nil {
-		class, status := connectorFailureClass(err)
+	loggedFailure := err
+	if recoveryFailure != nil {
+		loggedFailure = recoveryFailure
+	}
+	if loggedFailure != nil {
+		class, status := connectorFailureClass(loggedFailure)
 		slog.WarnContext(r.Context(), "internal connector upstream failed", "event", "internal_mcp_connector_upstream_failed",
 			"connector_id", c.ID, "workspace_id", ws, "agent_id", agent, "task_id", task,
 			"method", request.Method, "failure_class", class, "upstream_status", status,
@@ -448,6 +468,12 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		discoveryResult, discoveryUnavailable = connectorUnavailableDiscovery(r.Context(), *c, params.Cursor, err)
 	}
 	outcome := "ok"
+	if recovery {
+		outcome = "recovery_available"
+		if recoveryFailure != nil {
+			outcome = "recovery_unavailable"
+		}
+	}
 	failure := "Internal MCP tool list unavailable"
 	if errors.Is(err, errConnectorReconnectRequired) {
 		// The account behind this credential was disconnected or its grant
@@ -520,7 +546,11 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 	for _, item := range list["tools"].([]map[string]any) {
 		name, _ := item["name"].(string)
 		presented := connectorPresentedToolName(name)
-		if name == "" || name == connectorDiscoveryStatusTool || seen[presented] {
+		if connectorControlTool(name) {
+			return nil, connectorControlCollisionError{}
+		}
+		_, validSchema := item["inputSchema"].(map[string]any)
+		if !connectorValidPresentedToolName(presented) || seen[presented] || !validSchema {
 			return nil, connectorUpstreamProtocolError{}
 		}
 		seen[presented] = true
@@ -628,8 +658,8 @@ func connectorRPCResult(method string, result json.RawMessage) (any, error) {
 			return nil, connectorUpstreamProtocolError{}
 		}
 		for _, tool := range list.Tools {
-			if tool["name"] == connectorDiscoveryStatusTool {
-				return nil, connectorUpstreamProtocolError{}
+			if name, _ := tool["name"].(string); connectorControlTool(name) {
+				return nil, connectorControlCollisionError{}
 			}
 		}
 		value := map[string]any{"tools": list.Tools}

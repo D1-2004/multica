@@ -90,7 +90,7 @@ func TestInternalConnectorRelayPreservesToolsAndIsolatesHeaders(t *testing.T) {
 			if req.Params["cursor"] != "page2" {
 				t.Error("list cursor dropped")
 			}
-			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_knowledge","inputSchema":{"type":"object"}},{"name":"delete_knowledge"}],"nextCursor":"page3"}}`)
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_knowledge","inputSchema":{"type":"object"}},{"name":"delete_knowledge","inputSchema":{"type":"object"}}],"nextCursor":"page3"}}`)
 		} else {
 			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"real result"}]}}`)
 		}
