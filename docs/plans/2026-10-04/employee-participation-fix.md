@@ -11,3 +11,5 @@ quiet允许发起者当前消息进入模型识别恢复，只有set_scene_parti
 验证：pause ACK→另一账号引用→Quiet→发起者resume→恢复答复；精确scope隔离、冒充/历史quote、journal重放revision不增与投递前压制。独立DB/fake模型验证机制；真实模型选择和IM未验，不写E2E通过。
 
 实现与边界回填：新增ActionInput.employee_message_job_id由前台Host冻结；BeforeSend验证精确completed message job、scope和sceneNotice来源，并抑制尚未provider提交的旧回复。旧普通job UUID notice也受控。已accepted/unknown远端请求不能撤回。同步Router callback只在outbox入账时检查，没有后续provider提交门；旧多receipt hash且无新job字段的action亦不能保证覆盖。这些不冒称已修，原G08 native链已覆盖，callback扩展另列，不新增另一模块。后台Task通知不静音，routine配置不变。
+
+本轮补充批量原子前置检查：set_scene_participation声明Exclusive，Loop在任一Host调用前拒绝包含其他工具的batch，避免先派工作再暂停的部分效果。其他工具默认false，原多任务批量行为保留。控制Receipt使用scene-participation前缀，避免Job UUID被日志误当Run；ACK不虚构“后台已开始任务”。

@@ -94,6 +94,8 @@ type State struct {
 
 // Tool is a named capability supplied by the Host. Effect requires a durable receipt.
 type Tool struct {
+	// Exclusive control tools must be the only call in a native batch.
+	Exclusive   bool `json:"exclusive,omitempty"`
 	Name        string
 	Description string
 	Schema      map[string]any

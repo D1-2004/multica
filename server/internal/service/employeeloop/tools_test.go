@@ -169,3 +169,19 @@ func TestToolRegistryValidateTypedRequiredAndStableList(t *testing.T) {
 		t.Fatalf("tool order unstable: %+v", list)
 	}
 }
+
+// A control transition cannot share a batch with work: validation must reject
+// both orders before the Host can commit a task and then pause participation.
+func TestExclusiveControlRejectsOtherEffectsBeforeHost(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(Tool{Name: "control", Effect: true, Exclusive: true})
+	r.Register(Tool{Name: "work", Effect: true})
+	for _, calls := range [][]ToolCall{{{Name: "control"}, {Name: "work"}}, {{Name: "work"}, {Name: "control"}}} {
+		if r.ValidateBatch(calls) == nil {
+			t.Fatal("exclusive control allowed work batch", calls)
+		}
+	}
+	if err := r.ValidateBatch([]ToolCall{{Name: "control"}}); err != nil {
+		t.Fatal("control alone", err)
+	}
+}
