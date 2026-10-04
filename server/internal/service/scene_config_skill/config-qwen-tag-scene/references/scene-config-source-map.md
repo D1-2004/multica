@@ -22,3 +22,11 @@
 | The skill is injected at claim and resolved by the same check | `server/internal/handler/daemon.go` (claim and `ResolveTaskSkillBundles`), `server/internal/service/scene_config_skill.go` |
 | An explicit, complete request in the run's starting message is the confirmation; adding a remote MCP server or changing its address still waits for confirmation | this skill (step 2), `server/internal/handler/scene_config_mcp.go` (`scene_mcp_server_upsert` description) |
 | EmployeeLoop's foreground never changes a scene: it hands routine, prompt, switch and MCP server requests to a Direct task, which reaches this skill and server | `server/internal/handler/employee_scene_capabilities.go` (`employeeForegroundBoundary`, `employeeSceneSelfManagement`), `server/internal/handler/employee_scene_entry_host.go` (`dispatch_task` description) |
+
+## One-shot schedules
+
+- `scene_routine_create` adds `trigger.kind=once`, `run_at` (explicit RFC3339 offset), optional display `timezone`; `scene_routine_update.run_at` reschedules only pending resources.
+- `handler/scene_routine_once.go` validates time and serializes mutations with admission; `handler/scene_config_mcp.go` captures trusted source through `service.CaptureRoutineSource`.
+- `contextcap/routine_source.go`, `service/employee_routine_source.go`, migrations 10061–10062 retain immutable scoped provenance and selected material without runtime credentials.
+- `scheduler/jobs_autopilot.go` plans the absolute once timestamp without cron lateness suppression. `service/employee_routine_task.go` atomically consumes it with occurrence/Task/Run/outbox; old/create replay cannot rearm.
+- `handler/employee_routine_origin.go` rechecks source scope at use; the existing delivery outbox remains the sender. Views distinguish consumed admission from last-run outcome.

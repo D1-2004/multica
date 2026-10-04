@@ -396,6 +396,14 @@ func (s *AutopilotService) DispatchAutopilotForPlan(
 		}
 	}
 
+	trigger, err := s.Queries.GetAutopilotTrigger(ctx, triggerID)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch for plan: load trigger: %w", err)
+	}
+	if trigger.Kind == "once" {
+		return nil, errors.New("one-shot scene schedule requires ready Employee routine admission")
+	}
+
 	// Fast path: prior attempt already created a run for this exact
 	// occurrence. The partial unique index uq_autopilot_run_trigger_planned
 	// would also reject a duplicate INSERT, but doing the lookup up

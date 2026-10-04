@@ -60,7 +60,9 @@ import (
 // and their current-Run send fence.
 // Marker 21 adds source-bound task discovery and the explicit first-request
 // feedback frame, its running send fence and the frozen streaming request flag.
-const EmployeeLoopReplicaMarker = "[employee-loop:21]"
+// Marker 22 combines source-bound discovery/streaming and human:1 with
+// immutable routine source and atomic once admission; old 21 lacks once.
+const EmployeeLoopReplicaMarker = "[employee-loop:22]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

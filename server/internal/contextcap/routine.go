@@ -2,6 +2,7 @@ package contextcap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -31,6 +32,7 @@ type Routine struct {
 	DeliveryOpenDingTalkID string
 	// The person_staff_id column is no longer written or read: a routine
 	// never runs with anyone's personal layer.
+	Source        *RoutineSource
 	DedupeKey     string
 	CreatedByType string
 	CreatedByID   string
@@ -66,15 +68,21 @@ var ErrRoutineDuplicate = errors.New("a routine with the same purpose and schedu
 
 const routineColumns = `id::text, workspace_id::text, agent_id::text, scene_id::text, tenant_org_id, scene_kind,
 	autopilot_id::text, delivery_open_dingtalk_id, dedupe_key, created_by_type,
-	COALESCE(created_by_id::text, ''), COALESCE(created_task_id::text, ''), employee_execution, created_at, updated_at`
+	COALESCE(created_by_id::text, ''), COALESCE(created_task_id::text, ''), employee_execution, created_at, updated_at, source`
 
 func scanRoutine(row pgx.Row) (Routine, error) {
 	var r Routine
+	var source []byte
 	err := row.Scan(&r.ID, &r.WorkspaceID, &r.AgentID, &r.SceneID, &r.TenantOrgID, &r.SceneKind,
 		&r.AutopilotID, &r.DeliveryOpenDingTalkID, &r.DedupeKey, &r.CreatedByType,
-		&r.CreatedByID, &r.CreatedTaskID, &r.EmployeeExecution, &r.CreatedAt, &r.UpdatedAt)
+		&r.CreatedByID, &r.CreatedTaskID, &r.EmployeeExecution, &r.CreatedAt, &r.UpdatedAt, &source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Routine{}, ErrNotFound
+	}
+	if err == nil && len(source) > 0 && string(source) != "null" {
+		if err = json.Unmarshal(source, &r.Source); err == nil {
+			err = r.Source.ValidateBinding(r.WorkspaceID, r.AgentID, r.TenantOrgID, r.SceneID)
+		}
 	}
 	return r, err
 }
@@ -111,6 +119,20 @@ func InsertRoutine(ctx context.Context, db DBTX, r Routine) (Routine, error) {
 	if !ValidSceneID(r.SceneID) || strings.TrimSpace(r.TenantOrgID) == "" || r.DedupeKey == "" {
 		return Routine{}, ErrInvalidInput
 	}
+	if err := r.Source.ValidateBinding(r.WorkspaceID, r.AgentID, r.TenantOrgID, r.SceneID); err != nil {
+		return Routine{}, err
+	}
+	if r.Source != nil && r.CreatedTaskID != r.Source.QueueTaskID {
+		return Routine{}, ErrInvalidInput
+	}
+	var source any
+	if r.Source != nil {
+		raw, err := json.Marshal(r.Source)
+		if err != nil {
+			return Routine{}, err
+		}
+		source = raw
+	}
 	switch r.SceneKind {
 	case SceneKindGroup, SceneKindDM:
 	default:
@@ -129,12 +151,12 @@ func InsertRoutine(ctx context.Context, db DBTX, r Routine) (Routine, error) {
 	}
 	created, err := scanRoutine(db.QueryRow(ctx, `INSERT INTO context_scope_routine (
 			workspace_id, agent_id, scene_id, tenant_org_id, scene_kind, autopilot_id,
-			delivery_open_dingtalk_id, dedupe_key, created_by_type, created_by_id, created_task_id, employee_execution
-		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid, $12)
+			delivery_open_dingtalk_id, dedupe_key, created_by_type, created_by_id, created_task_id, employee_execution, source
+		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid, $12, $13::jsonb)
 		ON CONFLICT (scene_id, dedupe_key) DO NOTHING
 		RETURNING `+routineColumns,
 		r.WorkspaceID, r.AgentID, r.SceneID, strings.TrimSpace(r.TenantOrgID), r.SceneKind, r.AutopilotID,
-		r.DeliveryOpenDingTalkID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID, r.EmployeeExecution))
+		r.DeliveryOpenDingTalkID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID, r.EmployeeExecution, source))
 	if errors.Is(err, ErrNotFound) {
 		return Routine{}, ErrRoutineDuplicate
 	}

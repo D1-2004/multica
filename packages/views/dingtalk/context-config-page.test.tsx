@@ -2,7 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   ContextConfigAgentDetail,
@@ -2391,6 +2391,43 @@ describe("routines tab", () => {
     expect(
       await screen.findByRole("heading", { name: routineCopy.webhook_reveal_title.replace("{{name}}", "Deploy summary") }),
     ).toBeInTheDocument();
+  });
+
+  it("creates a one-shot in the same scene using an explicit instant", async () => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: { ...allRights, editRoutines: true } });
+    api.createSceneRoutine.mockResolvedValue({ updated: false, routine: standupRoutine });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+    await user.click(await screen.findByRole("button", { name: routineCopy.add }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(routineCopy.field_title), "Send the update");
+    await user.type(within(dialog).getByLabelText(routineCopy.field_instructions), "Summarize this discussion.");
+    await user.click(within(dialog).getByRole("tab", { name: routineCopy.trigger_once }));
+    const local = `${new Date().getFullYear() + 1}-01-15T14:30`;
+    fireEvent.change(within(dialog).getByLabelText(routineCopy.field_run_at), { target: { value: local } });
+    await user.click(within(dialog).getByRole("button", { name: routineCopy.create }));
+    await waitFor(() => expect(api.createSceneRoutine).toHaveBeenCalledWith(
+      { kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" },
+      { title: "Send the update", instructions: "Summarize this discussion.", trigger: { kind: "once", run_at: new Date(local).toISOString() } },
+    ));
+  });
+
+  it("shows a consumed one-shot without pause wording or rearming controls", async () => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: { ...allRights, editRoutines: true } });
+    api.listSceneRoutines.mockResolvedValue([{
+      ...standupRoutine,
+      enabled: false,
+      trigger: { ...standupRoutine.trigger, kind: "once", runAt: "2026-10-04T06:33:00Z", consumed: true, nextRunAt: null, nextRuns: [] },
+      lastRun: { id: "run-once", status: "completed", source: "schedule", createdAt: "2026-10-04T06:33:00Z", completedAt: "2026-10-04T06:34:00Z" },
+    }]);
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+    expect(await screen.findByText(routineCopy.once_triggered)).toBeInTheDocument();
+    expect(screen.queryByText(routineCopy.paused)).not.toBeInTheDocument();
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: routineCopy.actions.replace("{{name}}", "Weekday standup") }));
+    expect(await screen.findByRole("menuitem", { name: routineCopy.run_now })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: routineCopy.edit })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("pauses a routine through its switch", async () => {

@@ -60,6 +60,23 @@ describe("scene routine schemas", () => {
     });
   });
 
+  it("retains a one-shot instant, scene identity and consumption state without a cron", () => {
+    const [routine] = ContextRoutinesListSchema.parse({
+      routines: [{ ...wireRoutine, trigger: { kind: "once", run_at: "2026-10-04T14:33:00+08:00", consumed: true } }],
+    });
+    expect(routine).toMatchObject({
+      sceneId,
+      trigger: { kind: "once", runAt: "2026-10-04T14:33:00+08:00", consumed: true, cron: "", nextRunAt: null, nextRuns: [] },
+    });
+  });
+
+  it("tolerates omitted or malformed one-shot fields on older responses", () => {
+    const parse = (trigger: object) => ContextRoutineEnvelopeSchema.parse({ routine: { ...wireRoutine, trigger } });
+    expect(parse(wireRoutine.trigger)?.trigger).toMatchObject({ runAt: null, consumed: false });
+    expect(parse({ kind: "once", run_at: 7, consumed: "true" })?.trigger).toMatchObject({ runAt: null, consumed: false });
+    expect(parse({ kind: "once", run_at: "not-a-date" })?.trigger.runAt).toBeNull();
+  });
+
   it("is enabled only for a literal true and tolerates a malformed last run", () => {
     const [routine] = ContextRoutinesListSchema.parse({
       routines: [{ ...wireRoutine, enabled: "true", last_run: { status: 3 } }],

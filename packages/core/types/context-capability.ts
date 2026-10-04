@@ -823,18 +823,22 @@ export interface ConnectedAppDetail extends ConnectedApp {
 // chat scene. Each run uses the scene's configuration; the server posts a
 // start and an end notice into the scene.
 
-/** "schedule" or "webhook"; other values come from a newer backend and are
+/** "schedule", "once" or "webhook"; other values come from a newer backend and are
  * shown generically. */
-export type ContextRoutineTriggerKind = "schedule" | "webhook" | (string & {});
+export type ContextRoutineTriggerKind = "schedule" | "once" | "webhook" | (string & {});
 
 export interface ContextRoutineTrigger {
   id: string;
   kind: ContextRoutineTriggerKind;
-  /** Five-field cron expression; "" for a webhook. */
+  /** One-shot execution instant (RFC3339), null for other triggers. */
+  runAt: string | null;
+  /** True once a one-shot trigger has admitted its execution. */
+  consumed: boolean;
+  /** Five-field cron expression; "" for other triggers. */
   cron: string;
   /** IANA timezone of the schedule; "" for a webhook. */
   timezone: string;
-  /** Next scheduled run (ISO), null when paused or not a schedule. */
+  /** Next timed run (ISO), null when paused or consumed. */
   nextRunAt: string | null;
   /** The next few scheduled runs (ISO), empty when paused or a webhook. */
   nextRuns: string[];
@@ -886,20 +890,22 @@ export interface ContextRoutineInput {
   title: string;
   instructions: string;
   trigger: {
-    kind: "schedule" | "webhook";
+    kind: "schedule" | "once" | "webhook";
+    run_at?: string;
     cron?: string;
     timezone?: string;
   };
 }
 
 /** Fields of an edit; omitted ones stay. A schedule may change its cron and
- * timezone; the trigger kind never changes. */
+ * timezone; a one-shot may change its run_at before admission; the trigger kind never changes. */
 export interface ContextRoutinePatch {
   title?: string;
   instructions?: string;
   enabled?: boolean;
   cron?: string;
   timezone?: string;
+  run_at?: string;
 }
 
 /** Where a scene's routines are read and written: the configure page

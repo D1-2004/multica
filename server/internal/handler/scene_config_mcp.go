@@ -341,9 +341,10 @@ func sceneConfigToolDefinitions(kind string) []any {
 	trigger := map[string]any{
 		"type": "object", "additionalProperties": false,
 		"properties": map[string]any{
-			"kind":     map[string]any{"type": "string", "enum": []string{"schedule", "webhook"}},
+			"kind":     map[string]any{"type": "string", "enum": []string{"once", "schedule", "webhook"}},
 			"cron":     str(`Five-field cron for a schedule, e.g. "0 9 * * 1-5" (weekdays 09:00). At most every 15 minutes.`),
-			"timezone": str("IANA timezone of a schedule; default Asia/Shanghai."),
+			"timezone": str("IANA display timezone; default Asia/Shanghai."),
+			"run_at":   str("For once: exact future RFC3339 timestamp with offset. Resolve relative delays from the SOURCE message occurredAt, preserve seconds, never sleep or use a recurring cron."),
 		},
 		"required": []string{"kind"},
 	}
@@ -393,7 +394,7 @@ func sceneConfigToolDefinitions(kind string) []any {
 		sceneConfigTool(sceneConfigToolRoutineList, "List routines", "List the routines (例行任务) of "+where+" with their schedule, next run and last result.",
 			map[string]any{}, nil, true),
 		sceneConfigTool(sceneConfigToolRoutineCreate, "Create a routine",
-			"Create a routine in "+where+": work you do here on a cron schedule or when a webhook request arrives, with this scene's configuration. The platform posts a start and an end message here. The same purpose and schedule as an existing routine updates it instead and keeps its paused or running state.",
+			"Create scheduled work in "+where+" with this scene's configuration: once uses an exact run_at timestamp; schedule uses recurring cron; webhook waits for a request. For reminders or delayed work use once, never sleep, a repeating cron, or an unrelated todo. Resolve relative time from the original SOURCE message occurredAt. The platform preserves the source context and returns the result here. A replay of the same one-shot returns its existing resource without rearming it.",
 			map[string]any{
 				"title":              str("Short name of the routine."),
 				"instructions":       str("What to do on each run and what the result should contain. Do not ask to post it; the platform does. For employee_decide, state the condition and what to do when it holds."),
@@ -410,6 +411,7 @@ func sceneConfigToolDefinitions(kind string) []any {
 				"cron":               str("New five-field cron."),
 				"timezone":           str("New IANA timezone."),
 				"employee_execution": execution,
+				"run_at":             str("New exact future RFC3339 timestamp with offset for a pending once; consumed one-shots cannot be resumed or rescheduled."),
 			}, []string{"routine_id"}, false),
 		sceneConfigTool(sceneConfigToolRoutineDelete, "Delete a routine", "Delete a routine of "+where+"; its run history stays.",
 			map[string]any{"routine_id": routineID}, []string{"routine_id"}, false),
@@ -1061,6 +1063,12 @@ func (h *Handler) sceneConfigRoutineCreate(ctx context.Context, target sceneConf
 	if sc.SceneKind == scene.KindDM {
 		cp = sceneRoutineCounterpart{OpenDingTalkID: target.senderOpenDingTalkID}
 	}
+	if strings.TrimSpace(args.Trigger.Kind) == sceneRoutineTriggerOnce {
+		args.Source, err = service.CaptureRoutineSource(ctx, h.DB, target.task, target.agent.WorkspaceID, target.agent.ID, sc.TenantOrgID, target.scene.SceneID)
+		if err != nil {
+			return nil, "", err
+		}
+	}
 	result, err := h.createSceneRoutine(ctx, target.agent, sc, sceneConfigActor(target), cp, args)
 	if err != nil {
 		return nil, "", err
@@ -1092,7 +1100,7 @@ func (h *Handler) sceneConfigRoutineUpdate(ctx context.Context, target sceneConf
 	}
 	result.Routine = sceneConfigRoutineView(result.Routine)
 	change := "修改"
-	if args.Enabled != nil && args.Title == nil && args.Instructions == nil && args.Cron == nil && args.Timezone == nil {
+	if args.Enabled != nil && args.Title == nil && args.Instructions == nil && args.Cron == nil && args.Timezone == nil && args.RunAt == nil {
 		change = map[bool]string{true: "恢复", false: "暂停"}[*args.Enabled]
 	}
 	return result, fmt.Sprintf("%s例行任务「%s」", change, result.Routine.Title), nil

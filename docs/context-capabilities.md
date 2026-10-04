@@ -1295,6 +1295,13 @@ updated_by_name, updated_at}`:
 
 ## 9. Scene routines (例行任务)
 
+### One-shot schedules
+
+The same scene-managed resource accepts `trigger: {kind: "once", run_at: "<RFC3339 with offset>"}`. It needs no pre-existing routine. One-shot schedules require Employee mode and the routine-origin replica reader. The platform persists the absolute UTC instant, admits one existing routine occurrence with a fresh Task/Run, and consumes the trigger in that transaction. The worker catches overdue one-shots without the cron lateness cutoff. No sandbox sleep, periodic expression, or model-driven self-deletion implements the timer.
+
+A one-shot created from a bound task preserves a minimal source snapshot without execution credentials (recognizable credentials in text are redacted): trusted scene, original request/requester, source task references and relevant compiled work materials. These materials are data and provenance, never reusable credentials or personal-layer grants. Execution uses the current scene configuration and authorization and delivers through the existing scene routine outbox. Consumed schedules retain their run history and cannot be resumed, rescheduled or manually run. One-shot completion uses the existing scene outbox without a start-message announcement; admission is not delivery. All live replicas must advertise `[employee-loop:13]` before new admission. Temporary reader/mode unavailability retains an unadmitted occurrence with a 15-minute recovery probe after the short retry budget, never a new plan. Pending schedules may be rescheduled or cancelled under the same row locks used by admission.
+
+
 A routine is work the agent does in one Agent work scene — a group or a 1:1
 chat (`docs/agent-scene.md`) — on a cron schedule or when a webhook request
 arrives. There are no org-level or person-level routines.

@@ -124,6 +124,8 @@ func AutopilotScheduleDispatchJob(
 // planner hook needs (cron + timezone + bootstrap floor).
 type autopilotTriggerConfig struct {
 	TriggerID      string
+	Kind           string
+	RunAt          time.Time
 	CronExpression string
 	Timezone       string
 	CreatedAt      time.Time
@@ -171,8 +173,11 @@ func autopilotScopes(
 	queries *db.Queries,
 	cache *autopilotScheduleCache,
 ) ScopeProvider {
-	_ = pool // reserved for future tx-bounded reads
+
 	return func(ctx context.Context, now time.Time) ([]Scope, error) {
+		if err := recoverPendingOnceAdmissions(ctx, pool, now); err != nil {
+			return nil, err
+		}
 		rows, err := queries.ListSchedulableAutopilotTriggers(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("autopilot scope: list schedulable triggers: %w", err)
@@ -192,7 +197,7 @@ func autopilotScopes(
 			if r.CronExpression.Valid {
 				cron = r.CronExpression.String
 			}
-			if cron == "" {
+			if cron == "" && r.Kind != "once" {
 				continue
 			}
 			createdAt := time.Time{}
@@ -205,6 +210,8 @@ func autopilotScopes(
 			}
 			next[id] = autopilotTriggerConfig{
 				TriggerID:      id,
+				Kind:           r.Kind,
+				RunAt:          r.RunAt.Time.UTC(),
 				CronExpression: cron,
 				Timezone:       tz,
 				CreatedAt:      createdAt,
@@ -243,6 +250,24 @@ func autopilotPlansForScope(cache *autopilotScheduleCache) func(
 			// or was filtered out. Nothing to plan — silent no-op is
 			// correct.
 			return nil, nil
+		}
+
+		if cfg.Kind == "once" {
+			// The immutable absolute time is the only occurrence, even after
+			// an outage. A changed time supersedes a previously failed plan.
+			if cfg.RunAt.IsZero() || cfg.RunAt.After(now) {
+				return nil, nil
+			}
+			if latest.Found && latest.PlanTime.Equal(cfg.RunAt) {
+				if latest.RetryEligible(now) {
+					return []time.Time{cfg.RunAt}, nil
+				}
+				return nil, nil
+			}
+			if !cfg.LastFiredAt.IsZero() {
+				return nil, nil
+			}
+			return []time.Time{cfg.RunAt}, nil
 		}
 
 		// Retry path: the manager's stale-lease sweep has already
@@ -348,10 +373,14 @@ func autopilotHandler(
 			}
 			return HandlerResult{}, fmt.Errorf("load trigger: %w", err)
 		}
-		if !trigger.Enabled || trigger.Kind != "schedule" {
+		if !trigger.Enabled || (trigger.Kind != "schedule" && trigger.Kind != "once") {
 			return HandlerResult{RowsAffected: 0, Result: map[string]any{
 				"skipped_reason": "trigger_disabled",
 			}}, nil
+		}
+
+		if trigger.Kind == "once" && (!trigger.RunAt.Valid || !trigger.RunAt.Time.Equal(in.PlanTime)) {
+			return HandlerResult{Result: map[string]any{"skipped_reason": "plan_superseded"}}, nil
 		}
 
 		autopilot, err := queries.GetAutopilot(ctx, trigger.AutopilotID)
@@ -373,8 +402,18 @@ func autopilotHandler(
 		run, err := dispatcher.DispatchAutopilotForPlan(
 			ctx, autopilot, trigger.ID, "schedule", nil, in.PlanTime,
 		)
+		if errors.Is(err, service.ErrSchedulePlanSuperseded) {
+			return HandlerResult{Result: map[string]any{"skipped_reason": "plan_superseded"}}, nil
+		}
 		if err != nil {
 			return HandlerResult{}, fmt.Errorf("dispatch for plan: %w", err)
+		}
+		if trigger.Kind == "once" {
+			// Admission atomically consumed the one-shot trigger. Its durable
+			// run owns execution and delivery; never compute another slot.
+			return HandlerResult{RowsAffected: 1, Result: map[string]any{
+				"run_id": util.UUIDToString(run.ID), "run_status": run.Status,
+			}}, nil
 		}
 
 		// Advance the display-only next_run_at to the upcoming slot and
@@ -445,4 +484,28 @@ func parseScopeUUID(s string) (pgtype.UUID, error) {
 		return pgtype.UUID{}, errors.New("invalid uuid")
 	}
 	return u, nil
+}
+
+// recoverPendingOnceAdmissions extends only a not-yet-admitted one-shot probe
+// after a durable 15-minute cooling period. attempt remains monotonic for audit;
+// each extension grants exactly one probe, never a new occurrence or execution.
+// Explicit receipt/run guards exclude terminal refusals and post-commit crashes.
+func recoverPendingOnceAdmissions(ctx context.Context, pool *pgxpool.Pool, now time.Time) error {
+	if pool == nil {
+		return nil
+	}
+	_, err := pool.Exec(ctx, `UPDATE sys_cron_executions e
+ SET max_attempts=e.attempt+1, next_retry_at=$1, updated_at=$1
+ FROM autopilot_trigger t JOIN autopilot a ON a.id=t.autopilot_id
+ WHERE e.job_name=$2 AND e.scope_kind=$3 AND e.scope_id=t.id::text
+ AND e.status='FAILED' AND e.error_code='once_admission_pending'
+ AND e.attempt>=e.max_attempts AND e.finished_at <= $1::timestamptz-interval '15 minutes'
+ AND t.kind='once' AND t.enabled AND a.status='active'
+ AND t.last_fired_at IS NULL AND t.run_at=e.plan_time
+ AND NOT EXISTS (SELECT 1 FROM autopilot_run r WHERE r.trigger_id=t.id AND r.planned_at=e.plan_time)
+ AND NOT EXISTS (SELECT 1 FROM employee_routine_occurrence o WHERE o.trigger_id=t.id AND o.planned_at=e.plan_time)`, now, JobNameAutopilotScheduleDispatch, ScopeKindAutopilotTrigger)
+	if err != nil {
+		return fmt.Errorf("recover pending one-shot admissions: %w", err)
+	}
+	return nil
 }
