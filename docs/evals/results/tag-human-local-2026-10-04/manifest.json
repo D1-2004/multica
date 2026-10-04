@@ -1,0 +1,52 @@
+{
+  "mode": "isolated_local_scripted_model_provider",
+  "code_commit": "81d501962a6c8ae87c7e193fa00b25a3027bcbc1",
+  "integration_base": "5357e67fb416ed4793a500f5f5f9f11a8f0f4064",
+  "handler_checks": {
+    "top_level_pass": 32,
+    "named_pass": 81,
+    "fail": 0,
+    "skip": 0,
+    "source": "rebased handler risk tests"
+  },
+  "source_modules": [
+    "internal/humanquestion",
+    "internal/employeeentry",
+    "internal/service/a2ui",
+    "internal/service/dingtalkresponse",
+    "internal/dwsclient"
+  ],
+  "compile_only_server": "passed",
+  "review_fixes": [
+    "cancel stays on existing source-bound stop_task",
+    "workspace-scene-Task lock order",
+    "current target fence before card send",
+    "nil transport hook guard"
+  ],
+  "not_verified": [
+    "real DingTalk A2UI rendering/click",
+    "actual IM text end-to-end",
+    "real Pi interpretation/fresh process integration",
+    "real model ambiguity and unrelated-topic behavior",
+    "shared prerelease rolling canary"
+  ],
+  "baseline_failures": [
+    "migration lint historical duplicate numeric stems",
+    "workspace deletion manifest missing historical tables"
+  ],
+  "environment_correction": "TestMain was unexpectedly executed by go test -run empty; own synthetic default-local fixture narrowly cleaned by exact UUID and creation window; later checks used compile-only or explicit isolated DB",
+  "logs": {
+    "tag-hitl-rebased-handler-tests.jsonl": {
+      "sha256": "98e59d3361f209fa70ef3949060a456f7135eb03374057f89a448162d65b0acd",
+      "local_path": "/tmp/tag-hitl-rebased-handler-tests.jsonl"
+    },
+    "tag-hitl-modules-tests.log": {
+      "sha256": "8c057af5dae59035c19382698a95ef52e4d63c21b94371b33d043be84d8ea11f",
+      "local_path": "/tmp/tag-hitl-modules-tests.log"
+    },
+    "tag-hitl-human-response-worker-v2-fix.log": {
+      "sha256": "560e682224897542ae905c298303cb139ce6706ec1ef1a0bea51bb69df2e16ae",
+      "local_path": "/tmp/tag-hitl-human-response-worker-v2-fix.log"
+    }
+  }
+}

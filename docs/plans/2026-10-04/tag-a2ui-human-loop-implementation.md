@@ -26,11 +26,11 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 
 | 切片 | 用户效果 | 本地验收 | 状态 |
 | --- | --- | --- | --- |
-| R：结果契约与提示约束 | Pi轮末明确输出summary/choice，普通文本兼容 | 严格schema、非法选项/引用、不把stdout/Markdown误判为控制 | in_progress |
-| Q：问题与答复账本 | 每条答复明确原事项，按钮/文字统一去重 | 权限、场域、Task版本、竞态、事务重放 | design |
-| F：前台工具装配 | Employee发询问后释放本轮 | 冻结工具schema、Host来源、幂等发卡意图 | design |
-| C：回调与文字回流 | 两种输入进入对应Employee Loop | 两题隔离、无引用明确答复/歧义、不会伪造授权 | design |
-| S：轮末卡片与下一轮 | Run结果投影选项，人答后fresh Run | 精确Run/Task、停止/旧卡、已有副作用不重做 | design |
+| R：结果契约与提示约束 | Pi轮末明确输出summary/choice，普通文本兼容 | 严格schema、非法选项/引用、不把stdout/Markdown误判为控制 | implemented_local |
+| Q：问题与答复账本 | 每条答复明确原事项，按钮/文字统一去重 | 权限、场域、Task版本、竞态、事务重放 | implemented_local |
+| F：前台工具装配 | Employee发询问后释放本轮 | 冻结工具schema、Host来源、幂等发卡意图 | implemented_local |
+| C：回调与文字回流 | 两种输入进入对应Employee Loop | 两题隔离、无引用明确答复/歧义、不会伪造授权 | implemented_local |
+| S：轮末卡片与下一轮 | Run结果投影选项，人答后fresh Run | 精确Run/Task、停止/旧卡、已有副作用不重做 | implemented_local |
 
 ## 验证策略与停止条件
 
@@ -49,3 +49,5 @@ GawkBot固定来源 `71e82a1809565281cbd0bf8185d3c125b715d934`：按钮与引用
 规范更新：远端4674169c3d带入docs/development-delivery.md统一开发合同；“提示词入口”是开发指令AGENTS/CLAUDE入口，不新增产品提示词平台。本轮保持原kernel提示词与历史快照，只在Host冻结结果契约/工具。Eval候选按在线Eval分支8e7f4a447d的roles/verifies/method贡献规范编写，canonical集成待该分支落入集成基线。
 
 环境恢复：cmd/server默认测试库panic留下的本次合成fixture，仅按确切UUID和04:10:49 UTC创建窗口清理（workspace/member/agent/runtime/user）；没有按全局slug清理他人数据。compile-only `go test -c ./cmd/server`通过，不再执行未显式指定DB的TestMain。
+
+最终代码检查点：`81d501962a` 已rebase到最新集成基线 `5357e67fb4`，三处重叠文件自动合并后核对两边意图。受影响handler检查再次32顶层/81命名全部通过、零skip；server compile-only通过。代码仅本地提交，未推远端/部署；原型和先前设计材料保留为未跟踪session文件，不夹带进入核心实现提交。独立本地PG测试资源在本波结束停用，下一轮按manifest重启；无预发配置变更、无真实IM发送。证据索引为docs/evals/results/tag-human-local-2026-10-04/manifest.json。
