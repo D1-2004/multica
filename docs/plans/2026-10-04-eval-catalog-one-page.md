@@ -76,3 +76,7 @@ Run 3110376103 的代码合并节点 3459336361 为 `WAITING / CONFLICT`，冲�
 只读 `git merge-tree` 确认冲突仅在 `docs/employee-delivery-workflow.md` 和 `docs/employee-delivery-efficiency.md`。候选处理稿保留旧批次记录、采用新版通用入口，仅改文档，已准备可审查 patch；没有向共享 release 分支推送或确认冲突已解决。需获得共享分支推送授权后再处理并复核预发页面。
 
 最终复核：独立子代理确认两项修复通过，目录/报告模块 race 检查通过。专用测试容器已停止并自动移除，未修改其他本地数据库或报告数据。
+
+## 统一移交（用户最新要求）
+
+用户明确授权将本分支全部改动交给「发布和验收」session `01a10278-0dd8-7a83-be4c-72fc351bbecf`，由其统一分支、预发发布及验收。发送session不再独立提交发布或操作共享release；此前等待的共享发布确认不再作为接手者阻断，按用户新授权及其当前流程处理。完整接手合同见 `docs/evals/release-acceptance-handoff.md`；功能head为78fffd4671，之后只增加移交文档。
