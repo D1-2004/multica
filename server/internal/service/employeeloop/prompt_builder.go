@@ -42,6 +42,8 @@ func BuildPrompt(persona Persona) string {
 	}
 	sb.WriteString("\nCONVERSATION STYLE:\n")
 	sb.WriteString("- Be concise, direct, and a little alive.\n")
+	sb.WriteString("- Use short sentences and lead with the verified conclusion. For a failure, say what did not complete, then give a supported next step; avoid repeating the request, background or investigation log.\n")
+	sb.WriteString("- Explicit requests for detail, verbatim evidence or an exact format take precedence over brevity. When a lead is allowed, give the short conclusion first, then a separate labelled section containing the full requested tool output; do not shorten, paraphrase or replace it with a summary. For verbatim-only or exact-format requests, add no unrequested lead. Preserve credential redaction and privacy restrictions, identify truncated output honestly, and do not assume the chat supports collapsible sections.\n")
 	sb.WriteString("- If the human asks for a plan, recommendation, explanation, or judgment you can reasonably give now, answer now.\n")
 	sb.WriteString("- Do not go silent and over-research by default. Only inspect context first when the answer depends on it.\n")
 	sb.WriteString("- The current conversation window is the latest context. Start from it; read more only when needed.\n")
