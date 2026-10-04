@@ -2,15 +2,15 @@
 
 # EmployeeLoop 剩余能力与验收计划（最新远端）
 
-**当前执行方式已调整**：先从单会话、一个请求人、通常1–2小时的用户工作入手，用户已选B/C/D，先B+C再D，每小轮建议1–2项。请先看[六个短任务选项](short-task-picker.html)和[小步交付规则](short-task-rounds.md)。下文十项是全量能力池，未选项不自动展开。
+**当前执行方式已调整**：先从单会话、一个请求人、通常1–2小时的用户工作入手，用户已选B/C/D，先B+C再D，每小轮建议1–2项。请先看[六个短任务选项](short-task-picker.html)和[小步交付规则](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/short-task-rounds.md)。下文十项是全量能力池，未选项不自动展开。
 
-用户新增的[主动进展研究P](proactive-progress-design.md)已按GawkBot源码与本仓接线核对，包含最小展示判断设计和七个反例；BCD选择不变，P尚未默认进入实施队列。
+用户新增的[主动进展研究P](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/proactive-progress-design.md)已按GawkBot源码与本仓接线核对，包含最小展示判断设计和七个反例；BCD选择不变，P尚未默认进入实施队列。
 
 2026-10-04，冻结远端 `feat/tag-multitenant@f4c4790cbea1066857f96d4b6468c9710d77646b`（06:47:12 +08:00），比初次44566d0bf7新增36笔。本工作树规划分支已rebase到该版本；只增加规划/评测材料，不修改业务实现、不发布或运行真实评测。
 
 **现在先完成第三候选的原失败闭环，再扩持续员工能力。**旧待办中的harness未合入、首次建库依赖、DS09仍失败已经过时；同场域记忆硬门与原生收集取消也有新证据。最新阻断集中在本人跨源遗忘、真续接/当前进度、迟答假记录承诺、证据筛选/计算，以及后台Runtime轨迹可读性。
 
-[最新详细复核](latest-remote-review.md)给出代码→发布→验收映射；[能力图与选择页](decision-board.html)可逐项选「做／后做／不做」并导出。所有用户决定仍未定，建议不等于批准。初次分析保留在[44566旧快照](previous-review-44566.md)，不能当实时状态。
+[最新详细复核](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/latest-remote-review.md)给出代码→发布→验收映射；[能力图与选择页](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/decision-board.html)可逐项选「做／后做／不做」并导出。所有用户决定仍未定，建议不等于批准。初次分析保留在[44566旧快照](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/previous-review-44566.md)，不能当实时状态。
 
 ## 1. 新增改变了哪些判断
 
@@ -22,7 +22,7 @@
 | 收集取消 | read_task→cancel_collection、Task/wait关闭和迟答不复活已有证据 | 迟答仍出现未记入却说记下；closed/active/mixed新修复待验 |
 | 记忆 | 同scene权限/遗忘/available-history硬门已过；真实14话flush成功 | 本人跨源DM旧派生reply撤销是新反例，epoch17候选待live完整旧值反例；MF纯长期使用仍partial |
 
-事实依据来自最新提交源码和已提交报告，本 session没有独立live复跑。最新报告有发布证据的第二版是fa8302/run3110367125；第三候选含3128/8fcb/07e9仍待发布复验。来源和hash见[source-manifest.json](source-manifest.json)。
+事实依据来自最新提交源码和已提交报告，本 session没有独立live复跑。最新报告有发布证据的第二版是fa8302/run3110367125；第三候选含3128/8fcb/07e9仍待发布复验。来源和hash见[source-manifest.json](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/source-manifest.json)。
 
 ## 2. 还要做的十项及收益
 
@@ -52,12 +52,15 @@
 
 ## 4. 评测与计划产物
 
-[评测套件](../../../../scripts/employee-e2e/cases/gap-plan/SUITE.md)使用最新v2 parser：现有88条不改，新增35条定义（32条原GP加GP-33跨源私有撤销、GP-34执行继承/当前read、GP-35关闭迟答假记录）。全部not_run；有定义不代表功能已实现或可跑。
+[评测套件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/scripts/employee-e2e/cases/gap-plan/SUITE.md)使用最新v2 parser：现有88条不改，新增35条定义（32条原GP加GP-33跨源私有撤销、GP-34执行继承/当前read、GP-35关闭迟答假记录）。全部not_run；有定义不代表功能已实现或可跑。
 
-本 session实际默认88条dry-run：35 runnable、19 partial、7 waiting_release、21 waiting_ops、5 blocked_harness、1 blocked_resource，suite_errors=[]；[完整离线名单](latest-88-readiness.json)。开关默认false不等于功能未上线，必须由当波证据启用。
+本 session实际默认88条dry-run：35 runnable、19 partial、7 waiting_release、21 waiting_ops、5 blocked_harness、1 blocked_resource，suite_errors=[]；[完整离线名单](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/latest-88-readiness.json)。开关默认false不等于功能未上线，必须由当波证据启用。
 
-[contracts.json](../../../../scripts/employee-e2e/cases/gap-plan/contracts.json)中的setup/身份/时间/硬事实/consumer是签收必需，旧grader不认识的事实不会被静默算pass。跨会话card/question动作、候选Runtime和故障条件未就绪继续阻断。
+[contracts.json](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/scripts/employee-e2e/cases/gap-plan/contracts.json)中的setup/身份/时间/硬事实/consumer是签收必需，旧grader不认识的事实不会被静默算pass。跨会话card/question动作、候选Runtime和故障条件未就绪继续阻断。
 
-[静态图](capability-map.png)／[可编辑SVG](capability-map.svg)／[选择页](decision-board.html)／[决定源文件](decisions.json)／[验证记录](validation.md)。图表达已有范围、缺证和开放能力，不作为实时线上监控。
+[静态图](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/capability-map.png)／[可编辑SVG](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/capability-map.svg)／[选择页](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/decision-board.html)／[决定源文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/decisions.json)／[验证记录](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/codex/employee-short-progress/docs/plans/2026-10-04/employee-loop-gap-plan/validation.md)。图表达已有范围、缺证和开放能力，不作为实时线上监控。
 
 架构继续参考本仓固定GawkBot SOURCE_MAP。未来长任务输入参考[LangGraph持久interrupt](https://docs.langchain.com/oss/python/langgraph/interrupts)，外部效果沿幂等/对账边界，不新引入框架。细节参考初次规划，用户选择和当前合同优先。
+
+
+本交付树只摘取P功能提交；源规划/可视化/大套件链接保留在源分支，不代表本轮新增执行范围。本批集成与发布入口：[employee-progress-integration.md](../employee-progress-integration.md)。
