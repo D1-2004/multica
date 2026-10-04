@@ -864,6 +864,9 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 	h := w.handler
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+		if err := supersedeEmployeeFirstFeedback(ctx, tx, job.ID); err != nil {
+			return err
+		}
 		// Reuse this transaction for the use-time fences; borrowing the pool here
 		// deadlocks a single-connection deployment while Complete holds its lease.
 		permissionView := &Handler{Queries: db.New(tx)}

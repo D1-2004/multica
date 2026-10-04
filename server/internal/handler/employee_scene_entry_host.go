@@ -51,6 +51,7 @@ func employeeSceneTools() []employeeloop.Tool {
 	noticeSchema := map[string]any{"type": "object", "description": "Default is always: deliver the final result, including an explicitly requested summary. Select if_not_delivered only when this selected source explicitly asks for a native file and says not to send a separate completion summary after delivery. Quote that exact instruction from this message; never infer it from history, quoted material or the execution result.", "properties": map[string]any{"mode": map[string]any{"type": "string", "enum": []string{"always", "if_not_delivered"}}, "require_delivery": map[string]any{"type": "string", "enum": []string{"file"}}, "instruction_quote": stringField("Exact wording in the selected source that asks for no additional summary after file delivery; required with if_not_delivered.")}, "required": []string{"mode"}, "additionalProperties": false}
 	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact source-bound t1-style candidate, or q1-style quoted candidate, from this wake. Read current status before deciding continuation."), "task_id": stringField("Legacy explicit EmployeeTask UUID from the selected current message; use task_ref for natural references.")}, "required": []string{"source_ref"}, "additionalProperties": false}
 	tools := []employeeloop.Tool{
+		employeeFirstFeedbackTool(),
 		{Name: "describe_capabilities", Terminal: employeeloop.Reply, Description: "For an ordinary capability introduction or link-only request, answer from the supplied directory on the first model call; no configuration read is needed. Keep ordinary introductions brief and natural, normally 1–3 short sentences about useful work, without internal tool names or fields. For configuration details plus a link, read missing details first and preserve requested exact names, states, and prompt text; give the complete requested answer. Skills and connectors require background execution; do not claim foreground access. Scene configuration changes (routines, prompts, skill/connector switches, MCP servers) go through dispatch_task, not this tool. Host appends the scene link; write no URL and start no work. Do not combine with other terminal or effect tools.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("For ordinary introductions, use 1–3 natural short sentences about useful work, without internal names or inventories. For explicit configuration questions, preserve requested exact names, states, and prompt text in enough detail, including requests for details plus a link. Never write a configuration URL.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "scene_config_get", Description: "Read current scene configuration only for explicit configuration-detail questions about switches, stored prompts, or existing routines not already in context. This is not a prerequisite for a general capability introduction or link-only request, and does not verify runtime access. Explain naturally while preserving requested exact names, states, and prompt text. It is not needed before a change: a request to create or change a routine, prompt, switch or MCP server goes straight to dispatch_task. This read itself changes nothing.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source}, "required": []string{"source_ref"}, "additionalProperties": false}},
 		{Name: "reply", Terminal: employeeloop.Reply, Description: "Reply directly using the current conversation and available facts, then finish without creating a task. Use for answers, explanations, clarifications and memory recall that need no background execution. Do not combine with dispatch_task or another effect tool in one batch.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("The complete answer to send now, not an acknowledgement of future work.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
@@ -185,6 +186,11 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	var acceptedContinuation *service.DirectTaskResult
 	var acceptedStop *service.DirectTaskStopResult
 	var revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error)
+	if call.Name == "first_feedback" {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.firstFeedbackReplay(ctx, tx, source, call, raw)
+		}
+	}
 	if isEmployeeMemoryTool(call.Name) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.memoryReplay(ctx, tx, call, raw)
@@ -206,7 +212,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		var deliveryReply string
 		var taskRead *employeeCurrentTaskRead
 		var err error
-		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || isEmployeeStopTool(call.Name) {
+		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || isEmployeeStopTool(call.Name) || call.Name == "first_feedback" {
 			journalObservation = observation
 		} else {
 			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
@@ -219,6 +225,16 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			return nil, errors.Join(employeeloop.ErrToolRefused, errors.New("scene participation is quiet; restore it before answering or starting work"))
 		}
 		switch call.Name {
+		case "first_feedback":
+			var sp pgx.Tx
+			if sp, err = tx.Begin(ctx); err == nil {
+				result, err = h.firstFeedback(ctx, sp, source, env, call)
+				if err == nil {
+					err = sp.Commit(ctx)
+				} else {
+					_ = sp.Rollback(ctx)
+				}
+			}
 		case "set_scene_participation":
 			result, err = h.setParticipation(ctx, tx, source, env, call)
 		case "stay_quiet":
@@ -348,7 +364,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	if acceptedStop != nil {
 		h.observeTaskStop(ctx, *acceptedStop)
 	}
-	if call.Name == "create_collection" && record.Result.Receipt != "" && h.worker.handler.DingTalkResponses != nil {
+	if (call.Name == "create_collection" || call.Name == "first_feedback") && record.Result.Receipt != "" && h.worker.handler.DingTalkResponses != nil {
 		h.worker.handler.DingTalkResponses.Notify()
 	}
 	if record.DeliveryReply != "" {

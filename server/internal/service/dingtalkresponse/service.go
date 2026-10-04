@@ -26,7 +26,11 @@ import (
 // ActionInput is a frozen dispatch snapshot. Credential material must never be
 // included here: this value is persisted before any external operation.
 type ActionInput struct {
-	ActionID string `json:"action_id,omitempty"`
+	// First feedback is a non-terminal foreground notice, never Task evidence.
+	EmployeeFirstFeedbackJobID     string `json:"employee_first_feedback_job_id,omitempty"`
+	EmployeeFirstFeedbackReceiptID string `json:"employee_first_feedback_receipt_id,omitempty"`
+	EmployeeFirstFeedbackSourceRef string `json:"employee_first_feedback_source_ref,omitempty"`
+	ActionID                       string `json:"action_id,omitempty"`
 	// EmployeeMessageJobID is set by the foreground Host, never an authority claim.
 	// BeforeSend verifies it against the exact completed message job and scope.
 	EmployeeMessageJobID string `json:"employee_message_job_id,omitempty"`
@@ -158,8 +162,8 @@ func (s *Service) FindRoute(ctx context.Context, callbackURL string) (*Route, er
 // Enqueue is transaction-friendly. Call Notify only after the caller commits.
 // Reusing an action ID with different contents is rejected, never overwritten.
 func (s *Service) Enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
-	if in.CoordinatorWaitJobID != "" {
-		return "", errors.New("coordinator wait progress requires its Host enqueue path")
+	if in.CoordinatorWaitJobID != "" || in.EmployeeFirstFeedbackJobID != "" {
+		return "", errors.New("non-terminal progress requires its Host enqueue path")
 	}
 	return s.enqueue(ctx, tx, in)
 }
@@ -436,6 +440,10 @@ func validateInput(in ActionInput) error {
 		}
 	}
 	switch {
+	case in.EmployeeFirstFeedbackJobID != "":
+		if err := validateFirstFeedbackInput(in); err != nil {
+			return err
+		}
 	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
 			return errors.New("coordinator wait job id is invalid")

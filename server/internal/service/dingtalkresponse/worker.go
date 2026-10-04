@@ -108,7 +108,7 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 	// A revoked Host send has no delivery receipt to report. Keep receipt_state
 	// empty and stop instead of retrying an obsolete Router callback forever.
 	suppressed := a.State == "cancelled" && strings.HasPrefix(a.ErrorCode, suppressedSendCodePrefix)
-	noReceipt := progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != "" || suppressed
+	noReceipt := a.Input.EmployeeFirstFeedbackJobID != "" || progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != "" || suppressed
 	if !noReceipt && isReceiptState(a.State) && a.ReceiptState != a.State {
 		if s.receipts == nil {
 			return true, s.release(ctx, a, time.Now().Add(time.Minute))
@@ -164,7 +164,15 @@ func (s *Service) send(ctx context.Context, a *action) error {
 	}
 	// This commit must precede the external write. If we disappear after send,
 	// the next owner sees unknown and cannot automatically submit again.
-	if err := s.saveState(ctx, a, "unknown", "", "", "", "submission_interrupted"); err != nil {
+	if a.Input.EmployeeFirstFeedbackJobID != "" {
+		accepted, err := s.reserveFirstFeedbackSubmission(ctx, a)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil
+		}
+	} else if err := s.saveState(ctx, a, "unknown", "", "", "", "submission_interrupted"); err != nil {
 		return err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, providerTimeout)
