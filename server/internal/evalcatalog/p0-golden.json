@@ -459,10 +459,12 @@
         "独立验证者"
       ],
       "verifies": [
-        "真实 occurrence 一次效果；已受理指令冻结，下一次采用新版本；暂停跨时点无执行。"
+        "真实 occurrence 一次效果；已受理指令冻结，下一次采用新版本；暂停跨时点无执行。",
+        "当前一次性要求不被旧单轮话覆盖，到点Run不重演原创建和旧格式；当前Host结果合同与一次消息可证。"
       ],
       "method": [
-        "建专用例行任务，在真实到点回读结果，重投该 occurrence；受理后改指令，暂停跨下一时点，再恢复。核 occurrence/配置revision、Task、工作包、消息和完整窗口。"
+        "建专用例行任务，在真实到点回读结果，重投该 occurrence；受理后改指令，暂停跨下一时点，再恢复。核 occurrence/配置revision、Task、工作包、消息和完整窗口。",
+        "保留旧不要定时的历史复测明确5分钟请求，核真实once设置与原消息时间；含旧结构化创建packet的到点Run按当前结果consumer交付，保留前台派发和新Run工具证据。"
       ],
       "scenarioRefs": [
         "cron-office",
@@ -476,7 +478,9 @@
         "office-cron-pause-resume",
         "office-cron-once-short-due",
         "office-cron-once-source-context",
-        "office-cron-once-cancel-pending"
+        "office-cron-once-cancel-pending",
+        "office-cron-once-history-scope",
+        "office-cron-once-result-contract"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

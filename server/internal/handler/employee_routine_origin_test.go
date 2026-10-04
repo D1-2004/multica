@@ -195,7 +195,7 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 		t.Fatal(err)
 	}
 	modelInput := daemon.BuildPrompt(task, "codex")
-	if !strings.HasPrefix(modelInput, "This is a Direct employee task.") || !strings.Contains(modelInput, "FROZEN_ROUTINE_V1") ||
+	if !strings.HasPrefix(modelInput, "Work packet:") || !strings.Contains(modelInput, "FROZEN_ROUTINE_V1") ||
 		strings.Contains(modelInput, "CHANGED_ROUTINE_V2") || strings.Contains(modelInput, "Autopilot instructions") {
 		t.Fatalf("model input = %s", modelInput)
 	}

@@ -2850,6 +2850,58 @@
           ],
           "origin": "defined",
           "sourceCases": []
+        },
+        {
+          "id": "office-cron-once-history-scope",
+          "title": "旧的不要定时不覆盖本轮一次性要求",
+          "roles": [
+            "发起者：同一测试真人",
+            "执行者：测试员工",
+            "观察者：获准回读原会话、任务和实际工具调用"
+          ],
+          "verifies": [
+            "同一人针对旧事项的不要定时只约束原轮；本轮明确几分钟后执行一次直接创建once，不虚构现在还是以后的歧义。",
+            "前台不得向后台添加sleep或禁止创建timer；run_at从原延迟请求时间计算，补充一次性确认不重新起算。"
+          ],
+          "method": [
+            "保留同一会话先前“现在讲一个，不需要定时任务”的旧轮及已送达结果，不清历史；随后明确“5分钟后在这里讲一个笑话”。",
+            "若业务流程需要补充确认，再发送“一次性执行”，记录两条原消息occurredAt；核前台dispatch原参数、后台scene_routine_create及资源run_at，不能用源码或ACK代替工具证据。",
+            "等待原计划时间回读一次结果，核无sleep长等待、无周期规则/待办替代，原请求人、场域与历史材料仍在；当前权限限制不能被旧历史作用域规则绕过。"
+          ],
+          "sources": [
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": [
+            "office-cron-once-short-due"
+          ]
+        },
+        {
+          "id": "office-cron-once-result-contract",
+          "title": "到点结果不重演旧创建或输出协议",
+          "roles": [
+            "发起者：测试真人",
+            "执行者：到点的新Run",
+            "观察者：可读新Run输入、真实工具与消息"
+          ],
+          "verifies": [
+            "已到点的Run执行当前业务动作；历史创建工作包保留事实和引用，但不能再创建timer、再等待或借用旧Tag控制JSON格式。",
+            "Host拥有当前结果投递；简单提醒不为确认投递协议探索CLI帮助/二进制，不在消息中泄露控制JSON或重复发送。"
+          ],
+          "method": [
+            "通过结构化Human创建任务设置一次性提醒，让其原工作包含tag-round-result/v1尾部合同；创建Run完成后保持原source快照，再等真实到点。",
+            "核当前claim的真实结果consumer与显式合同，读取新Run完整模型/tool轨迹：一次性业务结果仍用既有routine文本消费者，历史格式不作为本轮控制要求。",
+            "独立回读原场域的提醒文字及次数；分开核due→admission与due→交付，超时或格式探测造成的迟到保留失败。工具使用应仅与当前业务动作有关；另外做需要实际工具的延迟工作，不能把所有once降为无需工具的聊天。"
+          ],
+          "sources": [
+            "docs/employee-loop.md",
+            "docs/plans/2026-10-04-scene-one-shot-scheduling-proposal.md"
+          ],
+          "origin": "defined",
+          "sourceCases": [
+            "office-cron-once-source-context"
+          ]
         }
       ],
       "categoryRef": "collaboration"
