@@ -1179,7 +1179,7 @@ func routineCreatedMessage(view sceneRoutineView) string {
 			next = routineLocalTime(at, view.Trigger.Timezone)
 		}
 	}
-	return fmt.Sprintf("已在这个场域创建例行任务「%s」，按「%s」（%s）运行，下次运行：%s。每次开始和结束都会在这里发一条消息。",
+	return fmt.Sprintf("已在这个场域创建例行任务「%s」，按「%s」（%s）运行，下次运行：%s。每次运行的结果会交付到这里，执行情况可在运行记录中查看。",
 		view.Title, view.Trigger.Cron, view.Trigger.Timezone, next)
 }
 

@@ -40,3 +40,10 @@ MCP删除入口从配置弹窗底部移到列表行，继续使用场域授权�
 - Employee schedule整链独立PG检查1项通过；Webhook、条件判断、结果异常边界独立批30项通过；once3项通过，最终各批0fail/skip。合批时schedule claim发生一次queued却未取得的夹具竞争，原失败日志保留；单独进程原链通过，不修改生产claim门。
 - decision guidance、run_routine描述与tool result同步取消start/end承诺；quiet/reply/wait语义保留，源码审查确认所有冻结routine origin均适用。服务构建通过，150定义检查通过；前端仍使用已通过99项证据，无新增前端变化。
 - CR：Code Review 30323103，目标feat/tag-multitenant；提交后由发布协调统一合入部署，按新源码和live reader通知启动真实验收。尚未将本地PG/替身结果签成真实IM通过。
+
+
+## 部署后验收与创建回执补正
+
+CR30323103已合并；source f4f582d812cbbbf91e6ef5b5666df7bdc4a16cb1 / release80941fe742b68e6d38d79efc05db6ad3a6ffd246 / Run3110401398，2026-10-04 23:15:01预发部署成功。release血缘独立核含20a564b54f；23:24实时fence normal、两个live employee-loop23/human2/webhook-source1。fence.started_at仍是旧记录，不能用作本次进程启动时间，当前发布回执由发布协调提供。
+
+真实验收进行中，独占dxxh DM测试routine；冬翔DM页面测试仅独立disabled临时MCP及不触发的Webhook，保留原配置。发现routineCreatedMessage的周期创建回执仍承诺“每次开始和结束发消息”，与Employee新行为矛盾。本补正改为结果交付与运行记录说明；不改派发/投递/队列或Coordinator行为，不以文字修改洗掉先前现场。补正将独立CR交同发布协调，当前测试仍冻结前版并逐版签收。
