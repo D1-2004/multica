@@ -889,9 +889,9 @@ function WebhookRevealDialog({
   const title = useMemo(() => value?.title ?? "", [value]);
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t(($) => $.context_config.routines.webhook_reveal_title, { name: title })}</DialogTitle>
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-lg">
+        <DialogHeader className="min-w-0 pr-8">
+          <DialogTitle className="break-words [overflow-wrap:anywhere]">{t(($) => $.context_config.routines.webhook_reveal_title, { name: title })}</DialogTitle>
           <DialogDescription>{t(($) => $.context_config.routines.webhook_reveal_description)}</DialogDescription>
         </DialogHeader>
         {value ? <WebhookUrlField url={value.url} size="md" /> : null}

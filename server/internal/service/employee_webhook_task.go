@@ -33,7 +33,7 @@ import (
 //     ingress, bounded by MaxWebhookSelectedBytes, as untrusted data in the
 //     packet, never the whole body. Actor, org or scene fields inside it grant
 //     nothing: scope, principal and delivery come from the routine binding.
-//   - The routine's start and end notices stay the only sender.
+//   - The routine outbox is the only sender: no start notice, result at end.
 //
 // The ingress freezes the choice of this path in the delivery's binding only
 // while every live replica reads this origin kind (EmployeeRoutineReady).
@@ -379,7 +379,7 @@ func compileWebhookRoutinePacket(scope employeetask.Scope, in webhookOccurrenceI
 	return employeetask.Compile(employeetask.CompileInput{
 		Scope: scope, PrincipalID: in.Principal.ID, Definition: employeetask.Definition{Goal: in.Title}, Prompt: in.Instructions,
 		Source: material, References: []employeetask.PacketMaterial{fields}, History: employeetask.PacketHistory{State: employeetask.HistoryUnavailable},
-		ReturnAddress: "scene:" + in.SceneID + "; routine:" + in.RoutineID + " (the Host posts the start and end notices with your final output)",
+		ReturnAddress: "scene:" + in.SceneID + "; routine:" + in.RoutineID + " (the Host delivers your final business result here; no start announcement or elapsed-time report)",
 	})
 }
 

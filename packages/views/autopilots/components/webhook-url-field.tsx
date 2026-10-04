@@ -74,7 +74,7 @@ export function WebhookUrlField({ url, size = "sm", actions }: WebhookUrlFieldPr
   );
 
   return (
-    <div className={cn("flex gap-1.5", s.row)}>
+    <div className={cn("flex w-full min-w-0 max-w-full gap-1.5", s.row)}>
       {revealed ? (
         <code className={valueClassName}>{url}</code>
       ) : (

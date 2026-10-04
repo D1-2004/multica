@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Loader2, Lock, Plus, X } from "lucide-react";
+import { Loader2, Lock, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   useSetContextConfigMcpConfig,
@@ -130,15 +130,27 @@ export function ScopeMcpServers({
             }
             action={
               editable ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label={t(($) => $.context_config.mcp_edit, { name: server.name })}
-                  disabled={busyName === server.name}
-                  onClick={() => setDialog({ kind: "edit", name: server.name })}
-                >
-                  {t(($) => $.context_config.app_configure)}
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={t(($) => $.context_config.mcp_edit, { name: server.name })}
+                    disabled={save.isPending}
+                    onClick={() => setDialog({ kind: "edit", name: server.name })}
+                  >
+                    {t(($) => $.context_config.app_configure)}
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label={t(($) => $.context_config.mcp_delete, { name: server.name })}
+                    disabled={save.isPending}
+                    onClick={() => setDeleting(server)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
               ) : null
             }
           />
@@ -198,6 +210,7 @@ export function ScopeMcpServers({
                   variant="ghost"
                   size="sm"
                   className="text-muted-foreground hover:text-destructive"
+                  disabled={save.isPending}
                   onClick={() => {
                     setDeleting(current);
                     setDialog(null);
