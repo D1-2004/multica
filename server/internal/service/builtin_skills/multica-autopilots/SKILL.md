@@ -25,6 +25,8 @@ An autopilot is not an agent. It is a rule that dispatches work to an agent, or 
 
 The chain is: trigger fires (`schedule`, `webhook`, `dingtalk_message`, or `manual`) -> `autopilot_run` row -> `execution_mode` decides output -> assignee readiness check -> issue/task execution -> run status sync. Webhooks have a durable admission step in front: HTTP ingress stores a queued `webhook_delivery`, synchronously creates or reuses its idempotent run, and returns `200` with `status=accepted|skipped` plus `run_id`; a database-leased worker then resumes accepted runs and owns recoverable issue/task dispatch.
 
+During a rolling upgrade, authenticated webhook ingress returns `503` with `Retry-After` until every live server supports the frozen-source reader. The provider can retry the same event ID after the readers are ready. Frozen deliveries use an isolated internal queue; Deliveries API continues to show `queued`. A rollback must retain a compatible consumer or safely hold that queue, rather than handing frozen sources to an older worker.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.
@@ -59,12 +61,17 @@ For "why didn't it run":
 2. `multica autopilot runs <id> --output json` — run status and failure reason.
 3. If assigned to a squad, inspect the squad: `multica squad get <squad-id> --output json`; execution goes to the leader.
 4. Inspect the target agent/runtime: `multica agent get <agent-id> --output json` and `multica runtime list --output json`.
-5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` reuses the original delivery.
+5. For webhooks, inspect delivery status: `queued` means the worker has not completed dispatch; `failed` carries the worker error. A provider retry with the same `X-GitHub-Delivery` / `Idempotency-Key` and the same payload reuses the original delivery, even after it failed (use replay to run it again); the same id with a different payload is answered `409 conflict` and recorded as a `rejected` delivery with error `event_id_conflict`. Signatures are checked on the raw body before deduplication, so an unsigned retry is `401 rejected`, never `duplicate`.
 6. For `create_issue`, inspect the created issue if the run records one.
 
 ## Side effects
 
 These mutate durable state or start work: `create`, `update`, `delete`, trigger add/update/delete/rotate, `trigger`, and webhook calls to `/api/webhooks/autopilots/{token}`.
+
+Scene routines (例行任务) are autopilots managed from a group or 1:1 chat
+scene's configuration: the autopilot routes refuse to change them with 409
+`managed_by_scene`. Change them on the configure page, in the agent's 场域
+tab, or from that conversation with the config-qwen-tag-scene tools.
 
 More source-backed details: `references/autopilots-source-map.md`.
 
@@ -72,12 +79,13 @@ More source-backed details: `references/autopilots-source-map.md`.
 
 `agent update <id> --event-trigger-enabled[=false]` controls the default-off
 “Proactively process all new conversation messages” setting under Digital Employee,
-immediately below inbound judging. Enabling it enables inbound judging atomically;
-disabling inbound judging disables proactive processing. Existing bindings and
+in the message-routing settings. Enabling it enables coordination atomically for
+the saved handling mode; it never changes EmployeeLoop back to Coordinator.
+Disabling inbound judging disables proactive processing. Existing bindings and
 subscription scopes are unchanged. Router synchronization normally takes up to five
 seconds plus request latency.
 
-Observed group messages use the normal durable Coordinator window (4 seconds quiet,
+For Coordinator-owned work, observed group messages use the durable Coordinator window (4 seconds quiet,
 12 seconds maximum collection, at most 100 messages). No Autopilot is created, and
 there is no extra 30-second task interval or wait for the sandbox to finish before
 judging new messages. Configure the employee's behavior through Agent instructions.
@@ -86,7 +94,16 @@ Authorized additions to a busy Issue are durably queued and combined for its nex
 Read decisions in Coordinator conversations and execution in the associated Issues.
 Legacy event Autopilots are retained as history and only drain previously admitted work.
 
-The task-finished follow-up setting still controls automatic completion reports.
+The handling selector saves `coordination_mode=coordinator|employee` through the
+existing authorized Agent update API. It defaults to Coordinator and is independent
+of `inbound_coordinator`, which remains the total enabled switch. Switching modes
+never enables a previously disabled Agent. Older clients that only send the enabled
+field retain the saved mode. The Host rejects selecting or enabling EmployeeLoop
+when its readiness callback is absent or fails; `employee_loop_ready` exposes that
+readiness to the UI. A saved mode is not proof that every Runtime or event source
+has passed acceptance. Already admitted work retains its saved owner.
+
+The task-finished follow-up setting controls Coordinator completion reports.
 Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
 `proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.
 
@@ -117,3 +134,13 @@ and conversation IDs to read messages when the runbook requires their content.
 The run detail exposes the same statistics in `trigger_payload`. No prompt
 placeholder is required. Both `create_issue` and `run_only` are supported.
 The former hourly conversation-summary task creator is retired.
+
+## Scene one-shot schedules
+
+A scene-managed trigger may have `kind=once` with an absolute `run_at`. Manage
+it through the scene configuration MCP/API, not generic autopilot commands:
+scene-managed writes are refused with `managed_by_scene`. It requires Employee
+mode, preserves the originating scene and selected source context, and admits
+one occurrence. `last_fired_at` means consumed/admitted, not delivered. Pending
+one-shots can be rescheduled or cancelled; consumed ones cannot be rearmed.
+Do not translate a one-shot into cron or sleep in an execution.

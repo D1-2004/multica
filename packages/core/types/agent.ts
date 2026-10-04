@@ -509,11 +509,15 @@ export interface Agent {
    */
   chat_session_resume?: boolean;
   /**
-   * When true, DingTalk and web chat first decide whether to reply immediately
-   * or open an Issue. Optional because older backends omit it; treat
-   * `undefined` as false. Only an explicit true turns it on.
+   * Total enabled switch for message coordination. The mode independently
+   * selects the owner for supported new work. Older backends omit this;
+   * only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  /** Selected owner for new work; unknown server values disable mode editing. */
+  coordination_mode?: "coordinator" | "employee" | "unknown";
+  /** Host readiness is independent of the saved mode and the enabled switch. */
+  employee_loop_ready?: boolean;
   inbound_coordinator_user_decision?: boolean;
   inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];
@@ -626,6 +630,13 @@ export interface Agent {
   invocation_targets: AgentInvocationTarget[];
   status: AgentStatus;
   max_concurrent_tasks: number;
+  /**
+   * Share one FC/E2B sandbox across tasks in the same scene and trigger.
+   * Older backends omit it; treat `undefined` as on. An explicit false turns
+   * reuse off for this agent. Employee filesystems and images without the
+   * capability still use a private sandbox.
+   */
+  sandbox_connection_reuse?: boolean;
   model: string;
   /**
    * Runtime-native reasoning/effort token (e.g. Claude's
@@ -841,13 +852,42 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
-/** One exact Scene Memory row for a bound digital-employee conversation. */
-export interface AgentSceneMemory {
+export type AgentMemoryLoop = "coordinator" | "employee";
+export interface AgentMemorySelection {
+  loop: AgentMemoryLoop;
+  scene_id: string;
+  org_id: string;
+  expected_revision: number;
+}
+export interface AgentMemoryLearning {
   id: string;
+  key: string;
+  insight: string;
+  source: string;
+  evidence_id: string;
+  confidence: number;
+  trusted: boolean;
+}
+
+/** The Scene Memory of one Agent work scene (docs/agent-scene.md). */
+export interface AgentSceneMemory {
+  loop?: AgentMemoryLoop | "unknown";
+  scope_kind?: "scene";
+  learnings?: AgentMemoryLearning[];
+  truncated?: boolean;
+  /** Same as scene_id (the server sends it as id, scene_id and scene_key). */
+  id: string;
+  /** The scene's identity: the path key of the scene memory routes and of
+   * its relations. */
+  scene_id: string;
   workspace_id: string;
   agent_id: string;
   org_id: string;
+  /** Same as scene_id (the server sends both). */
   scene_key: string;
+  /** DingTalk openConversationId of the scene, for display only; "" when
+   * the server does not say. */
+  conversation_id: string;
   scene_kind: string;
   scene_title: string;
   memory_text: string;
@@ -875,8 +915,11 @@ export interface UpdateAgentRequest {
   coordinator_contract?: CoordinatorContract | null;
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
+  /** See `Agent.sandbox_connection_reuse`. Omitted leaves the stored value. */
+  sandbox_connection_reuse?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  coordination_mode?: "coordinator" | "employee";
   inbound_coordinator_user_decision?: boolean;
   inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];

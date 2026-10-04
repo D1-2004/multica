@@ -28,6 +28,7 @@ export function AuthInitializer({
   storage = defaultStorage,
   cookieAuth,
   identity,
+  standalone = false,
 }: {
   children: ReactNode;
   onLogin?: () => void;
@@ -35,6 +36,7 @@ export function AuthInitializer({
   storage?: StorageAdapter;
   cookieAuth?: boolean;
   identity?: ClientIdentity;
+  standalone?: boolean;
 }) {
   const qc = useQueryClient();
 
@@ -43,7 +45,7 @@ export function AuthInitializer({
 
     // Stamp attribution before anything else — the signup event (server-side)
     // reads this cookie, so it has to be present before the user hits submit.
-    captureSignupSource();
+    if (!standalone) captureSignupSource();
 
     // Fetch app config (CDN domain, PostHog key, …) in the background — non-blocking.
     api
@@ -79,7 +81,7 @@ export function AuthInitializer({
         });
         configStore.getState().setFeatureFlags(cfg.feature_flags);
         configStore.getState().setServerVersion(cfg.server_version);
-        if (cfg.posthog_key) {
+        if (!standalone && cfg.posthog_key) {
           initAnalytics({
             key: cfg.posthog_key,
             host: cfg.posthog_host || "",
@@ -99,12 +101,12 @@ export function AuthInitializer({
     const onAuthSuccess = (user: User) => {
       onLogin?.();
       useAuthStore.setState({ user, isLoading: false });
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      if (!standalone) identifyAnalytics(user.id, { email: user.email, name: user.name });
     };
 
     const onAuthFailure = () => {
       onLogout?.();
-      resetAnalytics();
+      if (!standalone) resetAnalytics();
       useAuthStore.setState({ user: null, isLoading: false });
     };
 
@@ -116,10 +118,10 @@ export function AuthInitializer({
       // resolve the slug without a second fetch. The active workspace itself
       // is derived from the URL by [workspaceSlug]/layout.tsx — no imperative
       // selection here.
-      Promise.all([api.getMe(), api.listWorkspaces()])
+      Promise.all([api.getMe(), standalone ? Promise.resolve(null) : api.listWorkspaces()])
         .then(([user, wsList]) => {
           onAuthSuccess(user);
-          qc.setQueryData(workspaceKeys.list(), wsList);
+          if (wsList) qc.setQueryData(workspaceKeys.list(), wsList);
         })
         .catch((err) => {
           logger.error("cookie auth init failed", err);
@@ -138,12 +140,12 @@ export function AuthInitializer({
 
     api.setToken(token);
 
-    Promise.all([api.getMe(), api.listWorkspaces()])
+    Promise.all([api.getMe(), standalone ? Promise.resolve(null) : api.listWorkspaces()])
       .then(([user, wsList]) => {
         onAuthSuccess(user);
         // Seed React Query cache so the URL-driven layout can resolve the
         // slug without a second fetch.
-        qc.setQueryData(workspaceKeys.list(), wsList);
+        if (wsList) qc.setQueryData(workspaceKeys.list(), wsList);
       })
       .catch((err) => {
         logger.error("auth init failed", err);

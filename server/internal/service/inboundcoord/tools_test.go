@@ -23,21 +23,21 @@ func TestAssocToolsRecallDefaultsConversationID(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-eat",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		Purpose:        "向冬翔确认今天吃什么",
-		ConversationID: "cid-dongxiang",
-		EvidenceID:     "msg-out-1",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-eat",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Purpose:     "向冬翔确认今天吃什么",
+		Scene:       testSceneNode("cid-dongxiang"),
+		EvidenceID:  "msg-out-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 	}, toolAssocRecall, `{}`)
 	if err != nil {
@@ -60,21 +60,21 @@ func TestAssocToolsRecallDoesNotDefaultPersonID(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-eat",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		Purpose:        "向冬翔确认今天吃什么",
-		ConversationID: "cid-dongxiang",
-		EvidenceID:     "msg-out-1",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-eat",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Purpose:     "向冬翔确认今天吃什么",
+		Scene:       testSceneNode("cid-dongxiang"),
+		EvidenceID:  "msg-out-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		PersonID:       "25698887",
 	}, toolAssocRecall, `{}`)
@@ -95,21 +95,21 @@ func TestAssocToolsRecallUsesExplicitConversationID(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-train",
-		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
-		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		EvidenceID:     "msg-out-9",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-train",
+		IssueTitle:  "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Scene:       testSceneNode("cid+bEFv7ngm9n79Q1vL9HYJw=="),
+		EvidenceID:  "msg-out-9",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-robot"),
 		ConversationID: "cid-robot",
 	}, toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw=="}`)
 	if err != nil {
@@ -146,27 +146,27 @@ func TestAssocToolsRecallOmitsPurposeWithoutEvent(t *testing.T) {
 		SrcType:       assoc.NodeTask,
 		SrcID:         empty.ID,
 		DstType:       assoc.NodeScene,
-		DstID:         "cid-a",
+		DstID:         testSceneID("cid-a"),
 		Rel:           assoc.RelTaskScene,
 		LastTouchedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-eat",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		Purpose:        "向冬翔确认今天吃什么",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-1",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-eat",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Purpose:     "向冬翔确认今天吃什么",
+		Scene:       testSceneNode("cid-a"),
+		EvidenceID:  "msg-out-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := (&AssocTools{Service: svc}).Call(ctx, Turn{
+	raw, err := (&AssocTools{Scenes: testScenes{}, Service: svc}).Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-a"),
 		ConversationID: "cid-a",
 	}, toolAssocRecall, `{}`)
 	if err != nil {
@@ -186,33 +186,32 @@ func TestAssocToolsRecallQKeepsInboundConversation(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-train",
-		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
-		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		EvidenceID:     "msg-out-9",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-train",
+		IssueTitle:  "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Scene:       testSceneNode("cid+bEFv7ngm9n79Q1vL9HYJw=="),
+		EvidenceID:  "msg-out-9",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-eat",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		Purpose:        "向冬翔确认今天吃什么",
-		ConversationID: "cid-robot",
-		EvidenceID:     "msg-out-eat",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-eat",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Purpose:     "向冬翔确认今天吃什么",
+		Scene:       testSceneNode("cid-robot"),
+		EvidenceID:  "msg-out-eat",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-robot"),
 		ConversationID: "cid-robot",
 	}, toolAssocRecall, `{"q":"高铁"}`)
 	if err != nil {
@@ -235,18 +234,17 @@ func TestAssocToolsRecallQWithoutInboundSceneStillSearchesWindow(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-train",
-		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
-		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		EvidenceID:     "msg-out-9",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-train",
+		IssueTitle:  "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Scene:       testSceneNode("cid+bEFv7ngm9n79Q1vL9HYJw=="),
+		EvidenceID:  "msg-out-9",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID: "ws",
 		AgentID:     agent,
@@ -286,10 +284,11 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	svc := assoc.NewService(store)
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-new"),
 		ConversationID: "cid-new",
 		PersonID:       "123456",
 		EvidenceID:     "msg-in-1",
@@ -305,6 +304,7 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	got, err := svc.Recall(ctx, assoc.Query{
 		WorkspaceID:    "ws",
 		AgentID:        agentID,
+		SceneID:        testSceneID("cid-new"),
 		ConversationID: "cid-new",
 		Since:          mustSince48h(t),
 	})
@@ -337,6 +337,7 @@ func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 	_, err := tools.Call(context.Background(), Turn{
 		WorkspaceID:    "ws",
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		SenderName:     "冬翔",
 	}, toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask","delegator":"冬翔"}`)
@@ -352,7 +353,7 @@ func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 func TestAssocToolsBindAcceptsTechnicalSubject(t *testing.T) {
 	t.Parallel()
 	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
-	_, err := tools.Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: testAgentID(), ConversationID: "cid-tech", SenderName: "乔宁"}, toolAssocBind, `{"issue_id":"issue-tech","delegator":"乔宁","intent":"lookup","purpose":"排查 dws chat data-auth 跨组织授权失败的原因并提供修复建议"}`)
+	_, err := tools.Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: testAgentID(), SceneID: testSceneID("cid-tech"), ConversationID: "cid-tech", SenderName: "乔宁"}, toolAssocBind, `{"issue_id":"issue-tech","delegator":"乔宁","intent":"lookup","purpose":"排查 dws chat data-auth 跨组织授权失败的原因并提供修复建议"}`)
 	if err != nil {
 		t.Fatalf("technical subject rejected by Host: %v", err)
 	}
@@ -497,14 +498,13 @@ func TestAssocToolsRecallDoesNotExposeEventText(t *testing.T) {
 	agent := testAgentID()
 	agentID := util.UUIDToString(agent)
 	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        agentID,
-		IssueID:        "issue-ball",
-		IssueTitle:     "向须莫v6确认今晚几点打球",
-		Purpose:        "向须莫v6确认今晚几点打球",
-		ConversationID: "cid-v6",
-		EvidenceID:     "msg-out-1",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		IssueID:     "issue-ball",
+		IssueTitle:  "向须莫v6确认今晚几点打球",
+		Purpose:     "向须莫v6确认今晚几点打球",
+		Scene:       testSceneNode("cid-v6"),
+		EvidenceID:  "msg-out-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -514,14 +514,15 @@ func TestAssocToolsRecallDoesNotExposeEventText(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   assoc.DirInbound,
 		EvidenceID:  "msg-in-7",
-		SceneKey:    "cid-v6",
+		SceneID:     testSceneID("cid-v6"),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tools := &AssocTools{Service: svc}
+	tools := &AssocTools{Scenes: testScenes{}, Service: svc}
 	raw, err := tools.Call(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-v6"),
 		ConversationID: "cid-v6",
 		EvidenceID:     "msg-in-7",
 		Message:        "7点",
@@ -541,7 +542,7 @@ func TestAssocToolsRecallDoesNotExposeEventText(t *testing.T) {
 	}
 	// The graph remains available to other consumers with its actual events.
 	underlying, err := svc.Recall(ctx, assoc.Query{
-		WorkspaceID: "ws", AgentID: agentID, ConversationID: "cid-v6", Since: mustSince48h(t), Until: time.Now().UTC(),
+		WorkspaceID: "ws", AgentID: agentID, SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", Since: mustSince48h(t), Until: time.Now().UTC(),
 	})
 	if err != nil || len(underlying.Events) == 0 {
 		t.Fatalf("shared association events lost: %+v err=%v", underlying, err)

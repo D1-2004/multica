@@ -48,7 +48,7 @@ func TestParticipationHistoryAttemptClearsOnlyReadFeedback(t *testing.T) {
 			} else if status == "unavailable" {
 				history.err = errors.New("history unavailable")
 			}
-			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "Can you check this?"}
+			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "Can you check this?"}
 			d, err := (&Coordinator{Chat: chat, DWSHistory: history, Tools: &stubTools{}}).runLoop(context.Background(), turn)
 			if err != nil || d.Action != ActionSilence || history.calls != 1 || chat.checkCalls != 2 {
 				t.Fatalf("history attempt was not re-evaluated: decision=%s err=%v reads=%d reviews=%d", d.Action, err, history.calls, chat.checkCalls)
@@ -104,7 +104,7 @@ func TestIgnoreNeedsDialogueEvidenceWhenRecipientIsUnresolved(t *testing.T) {
 		{"unavailable must not reread forever", "unavailable", "unknown", "", "allow"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, HistoryStatus: tc.status, ConversationID: "cid-test", Message: "Riley, can you check this?"}
+			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, HistoryStatus: tc.status, SceneID: testSceneID("cid-test"), ConversationID: "cid-test", Message: "Riley, can you check this?"}
 			result := finishCheckResult{Verdict: "allow", ParticipationChecks: []finishParticipationCheck{{SourceRefs: []string{"u1"}, Basis: tc.basis, RecipientQuote: tc.quote, Disposition: "ignore"}}}
 			decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "ignore", SourceRefs: []string{"u1"}}}}
 			if err := validateFinishParticipationChecks(&result, turn, decision); err != nil || result.Verdict != tc.want {

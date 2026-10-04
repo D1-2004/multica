@@ -171,7 +171,8 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 	ctx := context.Background()
 	if _, err := a.Exec(ctx, `ALTER TABLE agent_task_queue ADD COLUMN runtime_id uuid, ADD COLUMN issue_id uuid, ADD COLUMN chat_session_id uuid;
  CREATE TABLE fc_e2b_sandbox_session (runtime_id uuid, sandbox_id text, sandbox_backend text DEFAULT 'aliyun_fc',
- status text DEFAULT 'running', expires_at timestamptz, updated_at timestamptz DEFAULT now())`); err != nil {
+ status text DEFAULT 'running', expires_at timestamptz, updated_at timestamptz DEFAULT now(),
+ scope_type text DEFAULT '', scope_id uuid)`); err != nil {
 		t.Fatal(err)
 	}
 	f := &releaseFixture{pool: a, other: b, provider: &releaseProvider{}, key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, endAt: map[string]time.Time{}}

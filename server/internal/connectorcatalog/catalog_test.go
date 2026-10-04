@@ -7,7 +7,7 @@ import (
 
 func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 	apps := Default().Apps()
-	want := []string{"github", "notion", "linear", "atlassian", "sentry", "asana", "figma", "stripe"}
+	want := []string{"github", "slack", "notion", "linear", "atlassian", "sentry", "asana", "figma", "stripe", "outlook", "agentmail"}
 	if len(apps) != len(want) {
 		t.Fatalf("apps = %d, want %d", len(apps), len(want))
 	}
@@ -26,6 +26,39 @@ func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 	notion, _ := Default().Lookup("notion")
 	if !notion.OAuthAvailable(false) || notion.AllowsPAT {
 		t.Fatalf("notion entry = %+v", notion)
+	}
+	asana, ok := Default().Lookup("asana")
+	if !ok || asana.AuthKind != AuthOAuthPreregistered || asana.AuthorizationEndpoint == "" || asana.TokenEndpoint == "" ||
+		asana.MCPURL != "https://mcp.asana.com/v2/mcp" || asana.Resource != "https://mcp.asana.com/v2" || asana.Scope != "" {
+		t.Fatalf("asana entry = %+v", asana)
+	}
+	if asana.OAuthAvailable(true) {
+		t.Fatal("Asana OAuth availability is per workspace, not the process environment")
+	}
+	slack, ok := Default().Lookup("slack")
+	if !ok || slack.AuthKind != AuthOAuthPreregistered || slack.MCPURL != "https://mcp.slack.com/mcp" ||
+		slack.AuthorizationEndpoint != "https://slack.com/oauth/v2_user/authorize" ||
+		slack.TokenEndpoint != "https://slack.com/api/oauth.v2.user.access" || slack.Scope == "" || len(slack.Scope) > 512 {
+		t.Fatalf("slack entry = %+v", slack)
+	}
+	if slack.OAuthAvailable(true) {
+		t.Fatal("Slack OAuth availability is per workspace, not the process environment")
+	}
+	outlook, ok := Default().Lookup("outlook")
+	if !ok || outlook.AuthKind != AuthOAuthPreregistered || outlook.OAuthAvailable(true) || outlook.AllowsPAT ||
+		outlook.MCPURL != "https://graph.microsoft.com/v1.0" || outlook.Resource != "" ||
+		outlook.AuthorizationEndpoint != "https://login.microsoftonline.com/common/oauth2/v2.0/authorize" ||
+		outlook.TokenEndpoint != "https://login.microsoftonline.com/common/oauth2/v2.0/token" ||
+		outlook.AccountURL != "https://graph.microsoft.com/v1.0/me" ||
+		outlook.Scope != "offline_access openid profile email User.Read Mail.Read Calendars.Read Contacts.Read" {
+		t.Fatalf("outlook entry = %+v", outlook)
+	}
+	agentmail, ok := Default().Lookup("agentmail")
+	if !ok || agentmail.AuthKind != AuthOAuthDCR || !agentmail.OAuthAvailable(false) || agentmail.AllowsPAT ||
+		agentmail.MCPURL != "https://mcp.agentmail.to/mcp" ||
+		agentmail.AuthorizationEndpoint != "" || agentmail.TokenEndpoint != "" ||
+		agentmail.Scope != "openid email profile offline_access user:org:read" {
+		t.Fatalf("agentmail entry = %+v", agentmail)
 	}
 	for _, app := range apps {
 		if slug, ok := Default().SlugForURL(app.MCPURL); !ok || slug != app.Slug {

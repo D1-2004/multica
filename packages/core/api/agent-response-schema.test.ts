@@ -9,7 +9,36 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("sandbox connection reuse", () => {
+  it("stays on when an older backend omits or malforms the switch", () => {
+    expect(AgentResponseSchema.parse({ id: "agent-1" }).sandbox_connection_reuse).toBe(true);
+    expect(AgentResponseSchema.parse({ id: "agent-1", sandbox_connection_reuse: "no" }).sandbox_connection_reuse).toBe(true);
+  });
+
+  it("preserves an explicit off and sends it", async () => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", sandbox_connection_reuse: false }).sandbox_connection_reuse).toBe(false);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", sandbox_connection_reuse: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { sandbox_connection_reuse: false });
+    expect(result.sandbox_connection_reuse).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ sandbox_connection_reuse: false }) }));
+  });
+});
+
 describe("Agent response policy compatibility", () => {
+  it("defaults old agents to Coordinator without enabling coordination", () => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator: false })).toMatchObject({ coordination_mode: "coordinator", employee_loop_ready: false, inbound_coordinator: false });
+  });
+  it.each(["future", "", null, true, {}])("marks unknown coordination mode %j as unsupported", (mode) => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", coordination_mode: mode, employee_loop_ready: true })).toMatchObject({ coordination_mode: "unknown", employee_loop_ready: false });
+  });
+  it("sends and parses Employee mode independently from the enabled switch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", coordination_mode: "employee", employee_loop_ready: true, inbound_coordinator: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { coordination_mode: "employee" });
+    expect(result).toMatchObject({ coordination_mode: "employee", employee_loop_ready: true, inbound_coordinator: false });
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ coordination_mode: "employee" }) }));
+  });
   it.each(["off", "all", "named"] as const)("preserves explicit user decision mode %s", (mode) => {
     const parsed = AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision_mode: mode, inbound_coordinator_user_decision: mode === "off" });
     expect(parsed.inbound_coordinator_user_decision_mode).toBe(mode);

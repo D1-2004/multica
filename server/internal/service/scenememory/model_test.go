@@ -6,14 +6,32 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestKindFromChatType(t *testing.T) {
-	if KindFromChatType("group") != KindGroup || KindFromChatType("GROUP") != KindGroup {
-		t.Fatal("group")
+// Scene Memory exists for conversation scenes only.
+func TestValidSceneRequiresAConversationScene(t *testing.T) {
+	sc := db.AgentScene{
+		ID: util.MustParseUUID("aaaaaaaa-0000-4000-8000-000000000001"), WorkspaceID: util.MustParseUUID("aaaaaaaa-0000-4000-8000-000000000002"),
+		AgentID: util.MustParseUUID("aaaaaaaa-0000-4000-8000-000000000003"), TenantOrgID: "org-1", ExternalSceneID: "cidA", SceneKind: KindGroup,
 	}
-	if KindFromChatType("p2p") != KindDM || KindFromChatType("") != KindDM {
-		t.Fatal("dm")
+	if !validScene(sc) {
+		t.Fatal("group scene rejected")
+	}
+	sc.SceneKind = KindDM
+	if !validScene(sc) {
+		t.Fatal("dm scene rejected")
+	}
+	for name, bad := range map[string]func(db.AgentScene) db.AgentScene{
+		"enterprise": func(s db.AgentScene) db.AgentScene { s.SceneKind = "enterprise"; return s },
+		"no id":      func(s db.AgentScene) db.AgentScene { s.ID.Valid = false; return s },
+		"no org":     func(s db.AgentScene) db.AgentScene { s.TenantOrgID = ""; return s },
+	} {
+		if validScene(bad(sc)) {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }
 

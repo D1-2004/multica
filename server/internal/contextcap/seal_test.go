@@ -71,11 +71,11 @@ func TestOpenCredentialRejectsUnsafeSealedBearer(t *testing.T) {
 		AgentID:     "22222222-2222-4222-8222-222222222222",
 		ConnectorID: "33333333-3333-4333-8333-333333333333",
 		ScopeType:   ScopeScene,
-		ScopeKey:    "cidGroup",
+		ScopeKey:    "aaaaaaaa-0000-4000-8000-000000000003",
 	}
 	for _, bearer := range []string{"", "a\r\nInjected: 1", "a\x00b"} {
 		payload := `{"workspace_id":"11111111-1111-4111-8111-111111111111","agent_id":"22222222-2222-4222-8222-222222222222",` +
-			`"connector_id":"33333333-3333-4333-8333-333333333333","scope_type":"scene","org_id":"","scope_key":"cidGroup","bearer":` +
+			`"connector_id":"33333333-3333-4333-8333-333333333333","scope_type":"scene","org_id":"","scope_key":"aaaaaaaa-0000-4000-8000-000000000003","bearer":` +
 			jsonString(bearer) + `}`
 		sealed, err := box.Seal([]byte(payload))
 		if err != nil {
@@ -94,7 +94,7 @@ func TestSealCredentialValidatesInput(t *testing.T) {
 		AgentID:     "22222222-2222-4222-8222-222222222222",
 		ConnectorID: "33333333-3333-4333-8333-333333333333",
 		ScopeType:   ScopeScene,
-		ScopeKey:    "cidGroup",
+		ScopeKey:    "aaaaaaaa-0000-4000-8000-000000000003",
 	}
 	for _, bearer := range []string{"", " padded", "line\nbreak", "nul\x00", strings.Repeat("x", MaxBearerLength+1)} {
 		if _, err := SealCredential(box, binding, bearer); !errors.Is(err, ErrInvalidBearer) {

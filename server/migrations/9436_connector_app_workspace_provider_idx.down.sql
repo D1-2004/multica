@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS connector_app_workspace_provider_idx

@@ -191,7 +191,7 @@ my-agent/
 | MCP 工具 | `configuration.mcp_config` | 保留当前 `mcpServers` 和 `mcp` 两种容器及 provider 扩展 |
 | Composio 工具 | `configuration.composio_toolkit_allowlist` | 仅工具选择，使用目标 owner 已授权连接，沿用 owner-only 权限 |
 | 运行时 | `bindings.runtime` | 解析到 `runtime_id`；`provider/runtime_mode` 是兼容要求，不修改 Runtime 实体 |
-| 模型与执行参数 | `configuration.model/thinking_level/service_tier/max_concurrent_tasks/custom_args` | 模型、思考强度、服务等级、并发和自定义参数 |
+| 模型与执行参数 | `configuration.model/thinking_level/service_tier/max_concurrent_tasks/sandbox_connection_reuse/custom_args` | 模型、思考强度、服务等级、并发、沙箱复用和自定义参数。沙箱复用默认打开 |
 | 环境变量 | `configuration.custom_env` | 普通字符串或 `secret_ref`；使用独立 env 权限与审计流程 |
 | OpenClaw 运行配置 | `configuration.runtime_config.mode/gateway` | `local/gateway`；网关 host、port、tls 与 token 引用 |
 | 我的电脑 / 本机 MCP | `bindings.runner` | 已授权电脑挂载；本机 MCP 清单由电脑提供，不复制发现结果 |

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_task_verification_task_idx;

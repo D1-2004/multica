@@ -4,9 +4,30 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestTaskCompletionCancellationRunsAfterOutbox(t *testing.T) {
+	files := migrationFilesForLint(t, "*.up.sql")
+	versions := map[string]int{}
+	for _, file := range files {
+		base := filepath.Base(file)
+		for _, name := range []string{"task_completion_outbox", "task_completion_canceled_status"} {
+			if strings.HasSuffix(base, "_"+name+".up.sql") {
+				version, err := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				versions[name] = version
+			}
+		}
+	}
+	if versions["task_completion_outbox"] == 0 || versions["task_completion_canceled_status"] <= versions["task_completion_outbox"] {
+		t.Fatalf("cancellation migration must run after its outbox table is created: %v", versions)
+	}
+}
 
 func TestTaskCompletionCanceledStatusMigrationPreservesHistory(t *testing.T) {
 	_, current, _, ok := runtime.Caller(0)
@@ -15,12 +36,12 @@ func TestTaskCompletionCanceledStatusMigrationPreservesHistory(t *testing.T) {
 	}
 	migrationsDir := filepath.Clean(filepath.Join(filepath.Dir(current), "..", "..", "migrations"))
 	up, err := os.ReadFile(filepath.Join(
-		migrationsDir, "271_task_completion_canceled_status.up.sql"))
+		migrationsDir, "9540_task_completion_canceled_status.up.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	down, err := os.ReadFile(filepath.Join(
-		migrationsDir, "271_task_completion_canceled_status.down.sql"))
+		migrationsDir, "9540_task_completion_canceled_status.down.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}

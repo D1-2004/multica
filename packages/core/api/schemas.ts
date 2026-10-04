@@ -2548,13 +2548,31 @@ export const AgentTaskSchema = z
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+// One Agent work scene's memory (docs/agent-scene.md). id, scene_id and
+// scene_key all carry the scene_id; conversation_id (the DingTalk chat id)
+// is display-only, so a missing or malformed one reads as "".
 export const AgentSceneMemorySchema = z
   .object({
+    loop: z.enum(["coordinator", "employee", "unknown"])
+      .optional().default("coordinator").catch("unknown"),
+    scope_kind: z.literal("scene").optional(),
+    learnings: z.array(z.object({
+      id: z.string(),
+      key: z.string(),
+      insight: z.string(),
+      source: z.string().catch(""),
+      evidence_id: z.string().catch(""),
+      confidence: z.number().catch(0),
+      trusted: z.boolean().catch(false),
+    }).loose()).optional().catch([]),
+    truncated: z.boolean().optional().catch(false),
     id: z.string(),
+    scene_id: z.string().catch(""),
     workspace_id: z.string().default(""),
     agent_id: z.string().default(""),
     org_id: z.string().default(""),
-    scene_key: z.string(),
+    scene_key: z.string().catch(""),
+    conversation_id: z.string().catch(""),
     scene_kind: z.string().default(""),
     scene_title: z.string().default(""),
     memory_text: z.string().default(""),
@@ -2566,15 +2584,20 @@ export const AgentSceneMemorySchema = z
     bootstrapped_at: z.string().optional().default(""),
     last_flushed_at: z.string().optional().default(""),
   })
-  .loose();
+  .loose()
+  // A backend that omits scene_id still names the scene by scene_key or
+  // the row id, which carry the same scene_id.
+  .transform((row) => ({ ...row, scene_id: row.scene_id || row.scene_key || row.id }));
 
 export const AgentSceneMemoryListSchema = z.array(AgentSceneMemorySchema);
 export const EMPTY_AGENT_SCENE_MEMORY: AgentSceneMemory = {
   id: "",
+  scene_id: "",
   workspace_id: "",
   agent_id: "",
   org_id: "",
   scene_key: "",
+  conversation_id: "",
   scene_kind: "",
   scene_title: "",
   memory_text: "",
@@ -2967,6 +2990,8 @@ const AgentResponseBaseSchema = z
     id: z.string(),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
+    coordination_mode: z.enum(["coordinator", "employee", "unknown"]).catch("unknown").default("coordinator"),
+    employee_loop_ready: z.boolean().catch(false).default(false),
     inbound_coordinator_user_decision: z.boolean().catch(false).default(false),
     inbound_coordinator_user_decision_mode: z.enum(["off", "all", "named"]).optional().catch("off"),
     inbound_coordinator_user_decision_names: z.array(z.string()).catch([]).default([]),
@@ -2980,12 +3005,15 @@ const AgentResponseBaseSchema = z
       .safe()
       .catch(1)
       .default(1),
+    // Older backends omit the switch. Missing or malformed means on.
+    sandbox_connection_reuse: z.boolean().catch(true).default(true),
   })
   .loose();
 
 function normalizeUserDecisionMode<T extends z.infer<typeof AgentResponseBaseSchema>>(agent: T) {
   return {
     ...agent,
+    employee_loop_ready: agent.coordination_mode !== "unknown" && agent.employee_loop_ready === true,
     inbound_coordinator_user_decision_mode: agent.inbound_coordinator_user_decision_mode
       ?? (agent.inbound_coordinator_user_decision === true ? "named" as const : "off" as const),
   };
@@ -3010,6 +3038,7 @@ export const EMPTY_AGENT_RESPONSE: Agent = {
   invocation_targets: [],
   status: "offline",
   max_concurrent_tasks: 1,
+  sandbox_connection_reuse: true,
   model: "",
   owner_id: null,
   skills: [],

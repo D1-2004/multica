@@ -55,7 +55,7 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	if len(body) == 0 {
 		body = json.RawMessage("{}")
 	}
-	reqCtx := ctx
+	reqCtx := middleware.WithDaemonAuthPath(ctx, identity.AuthPath)
 	// A daemon-token connection is workspace-scoped: pin the daemon context so
 	// the reused handler's daemon_id + workspace checks behave exactly like the
 	// HTTP path. A PAT/cloud connection (no daemon id) authorizes per-workspace
@@ -72,6 +72,9 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	req.Header.Set("Content-Type", "application/json")
 	if identity.UserID != "" {
 		req.Header.Set("X-User-ID", identity.UserID)
+	}
+	if identity.AuthPath == middleware.DaemonAuthPathCloudPAT {
+		req.Header.Set("X-Actor-Source", "cloud_pat")
 	}
 	if identity.Capabilities != "" {
 		req.Header.Set("X-Client-Capabilities", identity.Capabilities)

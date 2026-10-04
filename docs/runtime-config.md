@@ -135,6 +135,27 @@ This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` 
 
 Rollout order: binaries older than this key reject a runtime document that carries it. Follow "Adding a runtime-document key" under the release procedure: every replica runs the supporting binary before the key is published, and the key is removed before an older binary is released.
 
+## FC/E2B scene sandbox reuse
+
+Tasks that share one scene and one trigger can run in the same FC/E2B sandbox. Each agent has its own switch, `sandbox_connection_reuse`, on the execution settings next to concurrency. The switch is on for existing agents. Turning it off keeps one sandbox per chat or issue for that agent.
+
+`runtime.fc_e2b.connection_reuse` only sets how many tasks may share one sandbox. The default cap is 6. A seventh concurrent task starts a private sandbox and does not move the shared pointer.
+
+```json
+"connection_reuse": {
+  "max_concurrent_tasks": 6
+}
+```
+
+- `max_concurrent_tasks` omitted or `0` means 6. Any other value must be 1–50. The whole key may be omitted; the cap is still 6 and the agent switch still decides.
+- `enabled`, `workspace_ids` and `agent_ids` are leftover gray-list fields. They are still parsed, and identifiers must still be canonical lowercase UUIDs without duplicates, so a document published for the earlier list keeps loading. They do not select anyone.
+- Image metadata is not consulted. Catalogued templates are not stamped with `sandbox_connection_reuse_v1`, and a runtime without that capability still reuses. An A2A task or a task with no scene keeps one sandbox per chat or issue.
+- A scheduled or other scene task with no single trigger uses the scene's public bucket. Several speakers in one run do too. One person's sandbox is never used for someone else's run.
+- Employee filesystem and DSH host sandboxes stay on their own scope and do not join this bucket.
+- SDK `ConnectSandbox` renews to the task lifetime (4800 seconds unless `timeout_seconds` is higher). A connect must not shrink a sandbox that task start just renewed.
+
+Do not add back `sandbox_renewal_enabled`.
+
 ## DingTalk calls through the DWS SDK
 
 `runtime.use_dws_for_tag` (boolean, default false) sends the server's DingTalk calls through the in-process DWS gateway SDK (`server/pkg/dws`, synced from dws-for-tag by `scripts/sync-dws.sh`) instead of spawning the `dws` CLI:
@@ -150,7 +171,7 @@ Rollout order: binaries older than this key reject a runtime document that carri
 - Credentials are shared, not per call. An identity (agent, DWS user, organization) is exchanged once; every operation and every replica then uses its token, and an Agent Identity context is minted only when no usable token exists. Tokens are stored in the store Redis, sealed with `MULTICA_DINGTALK_SECRET_KEY` under a per-deployment prefix, and refreshed by one replica at a time under a Redis lock, because the refresh token rotates. Without Redis or the key, tokens stay per process. Agent Identity therefore records the context of the first operation that minted, not one per call.
 - Event streams are the only state a replica holds. `server/internal/dwseventsource` is the server's DWS WebSocket event source: one DWS personal event stream per identity that some consumer needs (today: senders with open user decisions, for `user_card_action_triggered`), however many identities the deployment hosts. Where each stream runs is `server/internal/connmgr`'s business, a business-free connection manager built on the robot connector's proven design (the robot connector itself is unchanged): a Redis coordinator with one READY member per identity places each stream, a dropped stream is released and claimed again with backoff, a crashed holder is replaced after the lease TTL, and on shutdown the stream keeps consuming until another replica's replacement is READY, so rolling deploys hand streams over. A replica already holding more streams than the least-loaded replica waits longer before claiming, and replicas heartbeat their load into Redis so one holding more than its fair share hands one stream per poll interval to a less-loaded replica through the same drain handoff; streams therefore spread again after a rolling deploy. Each stream pings the gateway every minute and treats the pong as proof of life, because an idle gateway sends nothing for longer than the three-minute read deadline. Event dedupe, subscription records and a short-lived per-identity ready marker live in Redis; delivery is at least once (a handoff overlaps two streams), and the decision service dedupes card actions by event id; any replica persists a card action through the decision service, and a decision session waits for its identity's stream instead of opening one. Switching on ends a card consumer still running on the dws CLI within a second, and switching off ends a session waiting on a stream at once; either way the decision service reopens the identity on the selected transport.
 - Known difference: dws release binaries decrypt SafeChat (encrypted-group) messages with a native library. The SDK cannot; such messages keep their ciphertext in `content`, as dws does when its own decryption fails.
-- The same key gates the native subscription event source (`h.DWSNativeEvents`): a second `dwseventsource` source, with its own Redis prefix, that streams `user_im_message_receive_at` and `user_im_message_receive_o2o_all` for every execution identity with native subscription on. It always dials the production DWS gateway (`mcp.dingtalk.com`), whatever this deployment is, and its replies are pinned to production through `dws_environment` on the managed response action. Switched off, the source holds no streams; native callbacks already queued still drain through the native completion worker. The per-agent switch (`PUT …/dingtalk/account-bindings/{agentId}/native-subscription`) selects identities; `GET` on the same path reports the identity's stream state for the identity card's indicator (`unavailable` while this key is off). See "Native subscription ingress" in `docs/inbound-coordinator-loop.md`.
+- The same key gates the native subscription event source (`h.DWSNativeEvents`): a second `dwseventsource` source, with its own Redis prefix, that streams `user_im_message_receive_at`, `user_im_message_receive_o2o_all`, and `user_card_action_triggered` for every execution identity with native subscription on. Card clicks are applied by `server/internal/service/a2ui` (`ask:`, `show:`, `appr:`) and are not IM messages. It always dials the production DWS gateway (`mcp.dingtalk.com`), whatever this deployment is, and its replies are pinned to production through `dws_environment` on the managed response action. Switched off, the source holds no streams; native callbacks already queued still drain through the native completion worker. The per-agent switch (`PUT …/dingtalk/account-bindings/{agentId}/native-subscription`) selects identities; `GET` on the same path reports the identity's stream state for the identity card's indicator (`unavailable` while this key is off). See "Native subscription ingress" in `docs/inbound-coordinator-loop.md`.
 - Behavior rollback: publish `false` or remove the key; no release is needed.
 
 Rollout order: as for any new key, release the binary that knows it to every replica first, then publish it (see "Adding a runtime-document key").
@@ -203,6 +224,9 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-10-02 | Scene reuse no longer requires capability `sandbox_connection_reuse_v1`. | Catalogued images never carried that name, so the check kept every current runtime on a fresh sandbox. The agent switch remains the on/off control. |
+| 2026-10-02 | `runtime.fc_e2b.connection_reuse` keeps only `max_concurrent_tasks`. | The on/off switch is `agent.sandbox_connection_reuse`, on by default. `enabled`, `workspace_ids` and `agent_ids` stay in the parser so an older document still loads, and they no longer select anyone. |
+| 2026-10-02 | Added `runtime.fc_e2b.connection_reuse`. | Tasks in the same scene and trigger can share one sandbox, capped at 6, behind an explicit workspace or agent gray list. |
 | 2026-10-01 | `runtime.use_dws_for_tag` also gates the native subscription event source. | Native subscription reuses the DWS SDK event streams; no separate Diamond key or environment variable. |
 | 2026-09-30 | Added `runtime.use_dws_for_tag`. | Move the server's DingTalk calls from the dws subprocess to the in-process SDK behind a live switch. |
 | 2026-09-30 | The process stop also covers failed tasks; its second pass runs 10 seconds after the task ended; moved the references to `runtime.performance_optimization` out of this document. | A failed task leaves the same orphans as a cancelled one; that key is implemented and documented by the PRI-47 change, which is not on this branch yet. |

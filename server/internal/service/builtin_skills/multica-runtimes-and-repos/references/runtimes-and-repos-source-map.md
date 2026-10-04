@@ -1,6 +1,6 @@
 # Runtimes and repos source map
 
-- FC/E2B sandbox lifetime: `server/internal/service/fc_e2b.go` `defaultFCE2BTimeoutSeconds` (4800) and `createSandbox --timeout`; `fc_e2b_timeout.go` `sandboxTaskTimeout` / `renewSandboxForTask` use the same duration (config may raise it, never lower it). `--lifecycle.ontimeout kill`. Release after a terminal task: `fc_e2b_sandbox_release.go` (`TaskTerminal` via `TaskRuntimeTerminalObserver` from `task.go` `publishTaskEvent`; single-use non-DSH scopes released, others trimmed to `fcE2BSandboxIdleRetention` = 10 minutes; log event `fc_e2b_sandbox_lifecycle`). A cancelled or failed task's processes: `fc_e2b_task_stop.go` (`scheduleAbortedTaskStop` from `TaskTerminal`, two passes, only processes proven by runner command line or `FC_E2B_TASK_ID` / `MULTICA_TASK_ID`, gated by `runtime.fc_e2b_sdk_rollout`; log event `fc_e2b_task_processes_stopped`); completed tasks' processes are left to the release. Documented in `docs/fc-sandbox-lifecycle.md`.
+- FC/E2B sandbox lifetime: `server/internal/service/fc_e2b.go` `defaultFCE2BTimeoutSeconds` (4800) and `createSandbox --timeout`; `fc_e2b_timeout.go` `sandboxTaskTimeout` / `renewSandboxForTask` use the same duration (config may raise it, never lower it). `--lifecycle.ontimeout kill`. Release after a terminal task: `fc_e2b_sandbox_release.go` (`TaskTerminal` via `TaskRuntimeTerminalObserver` from `task.go` `publishTaskEvent`; single-use non-DSH scopes released, others trimmed to `fcE2BSandboxIdleRetention` = 10 minutes; log event `fc_e2b_sandbox_lifecycle`). A cancelled or failed task's processes: `fc_e2b_task_stop.go` (`scheduleAbortedTaskStop` from `TaskTerminal`, two passes, only processes proven by runner command line or `FC_E2B_TASK_ID` / `MULTICA_TASK_ID`, gated by `runtime.fc_e2b_sdk_rollout`; log event `fc_e2b_task_processes_stopped`); completed tasks' processes are left to the release. Documented in `docs/fc-sandbox-lifecycle.md`. Scene connection reuse is on by default per agent (`agent.sandbox_connection_reuse`, migration `9524_agent_sandbox_connection_reuse`; the inspector switch is beside concurrency). `runtime.fc_e2b.connection_reuse.max_concurrent_tasks` is only the per-sandbox cap (default 6; omitted or 0 means 6). `enabled`, `workspace_ids` and `agent_ids` are still parsed and ignored. Selection is `fc_e2b_connection_reuse.go` plus migration `9523_fc_e2b_sandbox_session_scene_scope`: the same scene and trigger share one sandbox when the agent switch is on; image capability `sandbox_connection_reuse_v1` is not required. A full sandbox does not move the shared session. Employee filesystem and DSH hosts do not join. Launcher SDK connects renew with `sandboxTaskTimeoutSeconds` instead of the 300s CLI attach.
 - Attachment upload receipts: `server/internal/handler/file.go` `AttachmentResponse.size_bytes` + `sha256`; CLI `server/internal/cli/client.go` `UploadFile` / `Receipt()`. Limit `maxUploadSize` 100 MB.
 
 - `server/internal/service/asb_capacity_gate.go` distinguishes short create pacing from cached full/429 results. `asb_capacity.go` waits the remaining pacing interval inside the current launch under the tenant lock; it preserves cancellation and never reports pacing as full quota. `asb_capacity_waiter.go` wakes the next eligible waiter after a recovery launch finishes.
@@ -183,3 +183,55 @@
 - `server/internal/service/fc_e2b_dsh_profile.go`: saved configuration prepares build intents; application occurs at ordinary task startup. No employee Host is started by a Profile worker.
 - `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: filesystem preparation only, with no native-page API or navigation.
 - `packages/views/agents/components/tabs/dsh-plugins-tab.tsx`: configuration save is confirmed by the persisted desired revision, independently of task/Host execution.
+
+
+## Employee Direct execution
+
+- `server/internal/service/direct_task.go`: issue-free admission, source replay,
+  atomic queue/Run mapping and capability checks; `employee_task_lifecycle.go`
+  persists terminal evidence and repairs terminal queue transitions.
+- `server/internal/service/task_claim_authorization.go` and
+  `server/pkg/db/queries/agent.sql`: server-owned runtime allowlist filters Direct
+  claim/reclaim/recovery before queue mutation. Ordinary tasks keep prior rules.
+- `server/internal/handler/employee_task_execution_access.go`: verified mdt
+  runtime binding or genuine runtime-owner PAT; exact task tokens are scoped to
+  their existing task. `daemon_ws.go`, `daemon_rpc.go` and `daemonws/hub.go` retain
+  the server-derived authentication path for WebSocket claims.
+- `server/internal/handler/employee_task_access.go`: private Direct reads for
+  genuine human managers/originators, exact task credentials, and the verified
+  executor. `service/task.go` sends Direct realtime payload only to a current
+  originator and preserves the runtime terminal observer.
+- `server/pkg/protocol/messages.go`, `internal/daemon/{client,daemon,prompt}.go`
+  and `internal/daemon/execenv`: `employee-direct-v1` transports the task-owned
+  prompt to the normal provider execution path without a fabricated Issue.
+- `server/internal/service/fc_e2b.go` and `direct_task_template_test.go`: recognized
+  provider fingerprint plus r2 advertises Direct; r1 behavior is unchanged,
+  unknown fingerprints and unsupported protocol versions do not grant it.
+- Real PostgreSQL tests in `direct_task*_test.go`,
+  `employee_direct_privacy_test.go`, `employee_run_claim_test.go`, and
+  `employee_task_*access_test.go` cover replay, parallel tasks, usage/results,
+  HTTP authentication boundaries and WebSocket claims. Local transport/fake CLI
+  tests do not substitute for a real FC canary or persistent-device verification.
+
+### Direct file artifacts
+
+- `server/internal/handler/employee_task_artifact*.go`: queue/Run/Task/scene
+  provenance, pending/ready upload receipts, immutable deduplication, private
+  metadata/list/download/content/delete, and deletion retries/tombstones.
+  Object ciphertext uses the existing internal connector secretbox master key;
+  no plaintext per-object key is persisted.
+- `server/internal/handler/file.go`, `server/pkg/db/queries/attachment.sql`:
+  Direct-only seams preserve the existing upload/download API and prevent
+  implicit Issue/Chat rebinding. `server/cmd/multica/cmd_attachment.go` and
+  `server/internal/cli/client.go` continue using the existing task-id multipart
+  protocol and authenticated attachment download.
+- `server/migrations/9660`–`9664`: explicit provenance/intent ledger, no foreign
+  keys, one concurrent index per migration. Workspace teardown removes attachment
+  references and leaves only deleting/tombstoned cleanup bookkeeping until the
+  object store has settled.
+- `server/internal/handler/employee_task_artifact*_test.go`: real isolated
+  PostgreSQL plus local fake Storage cover publication, replay, private reads,
+  wrong task credentials/scope, ciphertext tampering, old attachment compatibility,
+  failed uploads/deletes, workspace deletion during PUT, and late-object cleanup.
+  These tests do not certify production storage, key configuration, or external
+  channel delivery.

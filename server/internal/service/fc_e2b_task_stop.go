@@ -27,9 +27,10 @@ import (
 // aborted task's processes inside each sandbox the task used. A completed
 // task's processes are left to the sandbox release.
 //
-// runtime.fc_e2b_sdk_rollout gates the stop and the runner marker together
+// For legacy aborts, runtime.fc_e2b_sdk_rollout gates the stop and runner marker together
 // with the SDK transport, by the task's workspace, agent and runtime: a scope
 // it does not select keeps the behavior from before the SDK change.
+// Explicit steer cancellation requires exit proof through either transport.
 //
 // Only processes provably owned by the task are ended; a process whose owner
 // cannot be proven is left alone (PRI-61: a start-time window took another
@@ -246,24 +247,32 @@ if (( ${#target[@]} > 0 )); then
     killed=$(( $(count "$left") - remaining ))
   fi
 fi
-runners=0
-for p in "${!runner[@]}"; do provenrunner "$p" && runners=$((runners + 1)); done
-printf '{"version":3,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
+runners=0 unresolved_runners=0 quiescent=false
+for p in "${!runner[@]}"; do
+  provenrunner "$p" && runners=$((runners + 1))
+  # A matching runtime/port with unreadable ownership remains ambiguous.
+  # Unreadable unrelated sandbox services do not own this task's writer lane.
+  [[ -n ${unreadable[$p]:-} && -z ${foreign[$p]:-} ]] && unresolved_runners=$((unresolved_runners + 1))
+done
+(( remaining == 0 && unresolved_runners == 0 )) && quiescent=true
+printf '{"version":4,"quiescent":%s,"unresolved_runners":%d,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$quiescent" "$unresolved_runners" "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
 `
 
 // fcE2BTaskStopReceipt is the script's report for one sandbox. Unreadable
 // counts processes whose environment could not be read and so could not be
 // proven to be anyone's.
 type fcE2BTaskStopReceipt struct {
-	Version    int    `json:"version"`
-	Runners    int    `json:"runners"`
-	Marked     int    `json:"marked"`
-	Unreadable int    `json:"unreadable"`
-	Found      int    `json:"found"`
-	Terminated int    `json:"terminated"`
-	Killed     int    `json:"killed"`
-	Remaining  int    `json:"remaining"`
-	Error      string `json:"error"`
+	Quiescent         bool   `json:"quiescent"`
+	UnresolvedRunners int    `json:"unresolved_runners"`
+	Version           int    `json:"version"`
+	Runners           int    `json:"runners"`
+	Marked            int    `json:"marked"`
+	Unreadable        int    `json:"unreadable"`
+	Found             int    `json:"found"`
+	Terminated        int    `json:"terminated"`
+	Killed            int    `json:"killed"`
+	Remaining         int    `json:"remaining"`
+	Error             string `json:"error"`
 }
 
 // fcE2BTaskStopArgs ends the task's processes as root with the same loader
@@ -288,7 +297,7 @@ func fcE2BTaskStopArgs(sandboxID, runtimeID string, healthPort int, taskID strin
 func parseFCE2BTaskStopReceipt(out string) (fcE2BTaskStopReceipt, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var receipt fcE2BTaskStopReceipt
-	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || receipt.Version != 3 {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || (receipt.Version != 3 && receipt.Version != 4) {
 		return fcE2BTaskStopReceipt{}, errors.New("FC/E2B task stop returned no receipt")
 	}
 	if receipt.Error != "" {
@@ -317,7 +326,7 @@ func (l *FCE2BLauncher) scheduleAbortedTaskStop(task db.AgentTaskQueue) bool {
 	// not.
 	rollout := frozen.Config.SDKRollout
 	scope := FCE2BScope{AgentID: pgFCE2BScopeID(task.AgentID), RuntimeID: pgFCE2BScopeID(task.RuntimeID)}
-	if !frozen.Config.Enabled || !(fcE2BRolloutSelects(rollout, scope) || rollout.Enabled && len(rollout.WorkspaceIDs) > 0) {
+	if !frozen.Config.Enabled || !(fcE2BRolloutSelects(rollout, scope) || rollout.Enabled && len(rollout.WorkspaceIDs) > 0 || taskProcessStopPending(task)) {
 		return false
 	}
 	taskKey := util.UUIDToString(task.ID)
@@ -411,8 +420,17 @@ func (l *FCE2BLauncher) stopAbortedTaskProcesses(ctx context.Context, taskID pgt
 		slog.Warn("FC/E2B task stop could not list sandboxes", "task_id", util.UUIDToString(taskID), "error", err)
 		return true
 	}
+	confirmed := len(sandboxes) > 0 && pass >= 2
 	for _, sandboxID := range sandboxes {
-		l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
+		receipt, stopErr := l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
+		confirmed = confirmed && stopErr == nil && receipt.Version == 4 && receipt.Quiescent && receipt.Remaining == 0 && receipt.UnresolvedRunners == 0
+	}
+	// A server-side receipt is also positive exit proof for older sandbox
+	// daemons. Never infer it from an empty, disabled or failed stop response.
+	if confirmed && taskProcessStopPending(task) && l.Tasks != nil {
+		if err := l.Tasks.AcknowledgeTaskProcessStopped(ctx, task.ID); err != nil {
+			slog.Warn("FC/E2B process-stop acknowledgement failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
 	}
 	return len(sandboxes) > 0
 }
@@ -433,7 +451,7 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 		AgentID:     pgFCE2BScopeID(task.AgentID),
 		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
 	}
-	if !fcE2BRolloutSelects(l.Config.SDKRollout, scope) {
+	if !fcE2BRolloutSelects(l.Config.SDKRollout, scope) && !taskProcessStopPending(task) {
 		slog.Info("FC/E2B task processes not stopped", append(attrs, "outcome", "disabled")...)
 		return fcE2BTaskStopReceipt{}, nil
 	}

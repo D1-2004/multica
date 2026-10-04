@@ -54,3 +54,39 @@ func TestDWSMessagePolicyRequiresWorkingShim(t *testing.T) {
 		t.Fatalf("legacy task should keep existing behavior: %v", err)
 	}
 }
+
+func TestDWSFinalTextOwnerClaimSurvivesEnvironmentRoundTrip(t *testing.T) {
+	for _, owner := range []string{"host", "", "future-owner"} {
+		t.Run(owner, func(t *testing.T) {
+			policy := map[string]any{"show_ai_tag": true, "platform_managed_lifecycle": true, "reply_conversation_id": "cid-origin"}
+			if owner != "" {
+				policy["final_text_owner"] = owner
+			}
+			raw, err := json.Marshal(map[string]any{"id": "direct-task", "dingtalk_message_policy": policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var task Task
+			if err = json.Unmarshal(raw, &task); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{execenv.DWSMessagePolicyEnv: `{"final_text_owner":"untrusted"}`}
+			execenv.ApplyDWSMessagePolicyEnv(env, task.DingTalkMessagePolicy)
+			var got map[string]any
+			if err = json.Unmarshal([]byte(env[execenv.DWSMessagePolicyEnv]), &got); err != nil {
+				t.Fatal(err)
+			}
+			if owner == "" {
+				if _, present := got["final_text_owner"]; present {
+					t.Fatal("legacy policy gained a final-text owner")
+				}
+			} else if got["final_text_owner"] != owner {
+				t.Fatal("claim field disappeared before the SDK could read it", got)
+			}
+			execenv.ApplyDWSMessagePolicyEnv(env, nil)
+			if env[execenv.DWSMessagePolicyEnv] != "" {
+				t.Fatal("warm task retained prior final ownership")
+			}
+		})
+	}
+}

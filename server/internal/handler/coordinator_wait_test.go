@@ -75,7 +75,7 @@ func waitPlanFixture(t *testing.T, managed bool) coordinatorWaitFixture {
 	f.h.DingTalkResponses = dingtalkresponse.NewService(f.pool, nil, nil)
 	f.command.CompletionCallback = &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/" + f.baseKey + "/execution-result", ResponseURL: "/api/v1/dispatch-tasks/" + f.baseKey + "/response-receipt", Target: testRouterTargetIdentity}
 	f.command.Outbound = DispatchOutbound{Mode: protocol.DispatchOutboundModeDWS}
-	f.command.ExternalIdentity = AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "wait-fixture", OrgID: "org"}}
+	f.command.ExternalIdentity = AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "wait-fixture", OrgID: "org-plan"}}
 	if managed {
 		f.command.ResponsePolicy = &protocol.DingTalkResponsePolicy{Version: 1, Mode: protocol.DingTalkResponseModeCoordinator, Revision: 1}
 	}

@@ -3,6 +3,7 @@ package langfuse
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -29,14 +30,33 @@ type Exchange struct {
 // maxExchangeRawBytes bounds a raw fallback body kept on the observation.
 const maxExchangeRawBytes = 32 << 10
 
+// Reserve half the shared attribute budget for tool inventory so ordinary
+// parameters and explicit completeness flags cannot be clipped by long names.
+const maxExchangeToolNamesBytes = 32 << 10
+
+var exchangeModelParameterKeys = []string{
+	"temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
+	"reasoning_effort", "reasoning", "tool_choice", "parallel_tool_calls", "stream",
+	"response_format", "stop", "presence_penalty", "frequency_penalty", "seed",
+	"service_tier", "thinking", "enable_thinking",
+}
+
 // ParseExchange normalizes a request body and its response body.
-func ParseExchange(request, response []byte) Exchange {
-	ex := Exchange{API: "unknown", ModelParameters: map[string]any{}}
+// requestTruncated is the proxy capture signal, even when its body is valid JSON.
+func ParseExchange(request, response []byte, requestTruncated bool) Exchange {
+	ex := Exchange{API: "unknown", ModelParameters: map[string]any{
+		"tool_capture_status": "request_missing", "tool_count_known": false,
+		"tool_names_complete": false, "tool_schemas_recorded": false,
+		"tool_schemas_status": "not_exported",
+	}}
 	ex.parseRequest(request)
-	ex.parseResponse(response)
-	if len(ex.ModelParameters) == 0 {
-		ex.ModelParameters = nil
+	if requestTruncated {
+		ex.ModelParameters["tool_capture_status"] = "request_truncated"
+		ex.ModelParameters["tool_count_known"] = false
+		ex.ModelParameters["tool_names_complete"] = false
 	}
+	ex.boundModelParameters()
+	ex.parseResponse(response)
 	return ex
 }
 
@@ -45,6 +65,7 @@ func (ex *Exchange) parseRequest(body []byte) {
 	if len(body) == 0 {
 		return
 	}
+	ex.ModelParameters["tool_capture_status"] = "request_unparseable"
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		ex.Input = clipString(string(body), maxExchangeRawBytes)
@@ -53,20 +74,15 @@ func (ex *Exchange) parseRequest(body []byte) {
 	if model, ok := req["model"].(string); ok {
 		ex.Model = strings.TrimSpace(model)
 	}
-	for _, key := range []string{
-		"temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
-		"reasoning_effort", "reasoning", "tool_choice", "parallel_tool_calls", "stream",
-		"response_format", "stop", "presence_penalty", "frequency_penalty", "seed",
-		"service_tier", "thinking", "enable_thinking",
-	} {
+	for _, key := range exchangeModelParameterKeys {
 		if value, ok := req[key]; ok && value != nil {
 			ex.ModelParameters[key] = value
 		}
 	}
-	if tools, ok := req["tools"].([]any); ok && len(tools) > 0 {
-		ex.ModelParameters["tools"] = len(tools)
-		ex.ModelParameters["tool_names"] = toolNames(tools)
+	if req != nil {
+		ex.captureTools(req)
 	}
+
 	switch {
 	case req["messages"] != nil && req["system"] != nil:
 		ex.API = "anthropic.messages"
@@ -83,6 +99,87 @@ func (ex *Exchange) parseRequest(body []byte) {
 		ex.Input = input
 	default:
 		ex.Input = req
+	}
+}
+
+// captureTools reports only what is visible in the captured request. Full tool
+// definitions are not exported here: they would compete with model parameters
+// for the shared 64 KiB attribute budget, or displace the generation's messages.
+func (ex *Exchange) captureTools(req map[string]any) {
+	raw, present := req["tools"]
+	tools, ok := raw.([]any)
+	status := "complete"
+	if !present || raw == nil {
+		tools, ok, status = []any{}, true, "tools_absent"
+	}
+	if !ok {
+		ex.ModelParameters["tool_capture_status"] = "tools_invalid"
+		return
+	}
+	names := toolNames(tools)
+	kept := make([]string, 0, len(names))
+	size := 2 // JSON array brackets.
+	for _, name := range names {
+		encoded, _ := json.Marshal(name)
+		addition := len(encoded)
+		if len(kept) > 0 {
+			addition++
+		}
+		if size+addition > maxExchangeToolNamesBytes {
+			break
+		}
+		kept = append(kept, name)
+		size += addition
+	}
+	ex.ModelParameters["tools"] = len(tools)
+	ex.ModelParameters["tool_names"] = kept
+	ex.ModelParameters["tool_names_total"] = len(names)
+	ex.ModelParameters["tool_names_recorded"] = len(kept)
+	ex.ModelParameters["tool_names_unresolved"] = len(tools) - len(names)
+	ex.ModelParameters["tool_names_truncated"] = len(kept) < len(names)
+	ex.ModelParameters["tool_names_complete"] = len(kept) == len(tools)
+	ex.ModelParameters["tool_count_known"] = true
+	ex.ModelParameters["tool_capture_status"] = status
+}
+
+// Preserve the inventory and its completeness flags even if one provider
+// parameter is enormous. Omitted parameter keys are explicit; messages keep
+// their separate, unchanged input attribute and its existing payload limit.
+func (ex *Exchange) boundModelParameters() {
+	params := ex.ModelParameters
+	params["model_parameters_truncated"] = false
+	omitted := []string{}
+	params["model_parameters_omitted"] = omitted
+	encoded, _ := json.Marshal(params)
+	if len(encoded) <= maxPayloadBytes {
+		return
+	}
+	type parameterSize struct {
+		key  string
+		size int
+	}
+	var candidates []parameterSize
+	for _, key := range exchangeModelParameterKeys {
+		if value, ok := params[key]; ok {
+			raw, _ := json.Marshal(value)
+			candidates = append(candidates, parameterSize{key, len(raw)})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].size == candidates[j].size {
+			return candidates[i].key < candidates[j].key
+		}
+		return candidates[i].size > candidates[j].size
+	})
+	for _, candidate := range candidates {
+		delete(params, candidate.key)
+		omitted = append(omitted, candidate.key)
+		params["model_parameters_truncated"] = true
+		params["model_parameters_omitted"] = omitted
+		encoded, _ = json.Marshal(params)
+		if len(encoded) <= maxPayloadBytes {
+			return
+		}
 	}
 }
 
@@ -103,12 +200,9 @@ func toolNames(tools []any) []string {
 			names = append(names, name)
 			continue
 		}
-		if kind, ok := tool["type"].(string); ok && kind != "" {
+		if kind, ok := tool["type"].(string); ok && kind != "" && kind != "function" {
 			names = append(names, kind)
 		}
-	}
-	if len(names) > 40 {
-		names = names[:40]
 	}
 	return names
 }

@@ -20,13 +20,24 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ActionInput is a frozen dispatch snapshot. Credential material must never be
 // included here: this value is persisted before any external operation.
 type ActionInput struct {
-	ActionID             string `json:"action_id,omitempty"`
+	// A2UICard is a Host-built question projection; callers cannot use Enqueue
+	// to bypass the dedicated question enqueue path.
+	A2UICard *A2UIQuestionCard `json:"a2ui_card,omitempty"`
+	// First feedback is a non-terminal foreground notice, never Task evidence.
+	EmployeeFirstFeedbackJobID     string `json:"employee_first_feedback_job_id,omitempty"`
+	EmployeeFirstFeedbackReceiptID string `json:"employee_first_feedback_receipt_id,omitempty"`
+	EmployeeFirstFeedbackSourceRef string `json:"employee_first_feedback_source_ref,omitempty"`
+	ActionID                       string `json:"action_id,omitempty"`
+	// EmployeeMessageJobID is set by the foreground Host, never an authority claim.
+	// BeforeSend verifies it against the exact completed message job and scope.
+	EmployeeMessageJobID string `json:"employee_message_job_id,omitempty"`
 	WorkspaceID          string `json:"workspace_id"`
 	AgentID              string `json:"agent_id"`
 	TaskID               string `json:"task_id,omitempty"`
@@ -34,6 +45,10 @@ type ActionInput struct {
 	RequestID            string `json:"request_id"`
 	DWSUID               string `json:"dws_uid"`
 	DWSOrgID             string `json:"dws_org_id"`
+	// SceneID is the Agent work scene the response goes to
+	// (docs/agent-scene.md); ConversationID is that scene's external
+	// conversation id as the scene directory records it.
+	SceneID              string `json:"scene_id,omitempty"`
 	ConversationID       string `json:"conversation_id"`
 	SenderOpenDingTalkID string `json:"sender_open_dingtalk_id"`
 	IsGroup              bool   `json:"is_group"`
@@ -45,6 +60,23 @@ type ActionInput struct {
 	CloseState           string `json:"close_state,omitempty"`
 	// Set only by EnqueueCoordinatorWait, never by a caller-supplied send flag.
 	CoordinatorWaitJobID string `json:"coordinator_wait_job_id,omitempty"`
+	// RoutineRunID is set only by EnqueueRoutineNotice: a Host notice of a
+	// scene routine run (start or end), sent into the routine's scene with
+	// no dispatch to close and no Router callback.
+	RoutineRunID string `json:"routine_run_id,omitempty"`
+	// SceneNoticeID is set only by EnqueueSceneNotice: a Host notice that a
+	// conversation changed its scene's configuration, sent into that scene
+	// with no dispatch to close and no Router callback.
+	SceneNoticeID string `json:"scene_notice_id,omitempty"`
+	// InvitationActionID is set only by EnqueueInvitationNotice: a cross-scene
+	// collection invitation whose response action id is the invitation's own
+	// delivery action id. A 1:1 invitation to a person without a known
+	// conversation leaves ConversationID empty and adopts the conversation
+	// the provider reports on delivery.
+	InvitationActionID string `json:"invitation_action_id,omitempty"`
+	// EmployeeRunNoticeID is Host provenance retained even if workspace teardown
+	// removes the notice row while a worker already holds the action payload.
+	EmployeeRunNoticeID string `json:"employee_run_notice_id,omitempty"`
 	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
 	// send goes through. Empty keeps the provider's configured gateway; native
 	// subscriptions set "production", where their events come from.
@@ -68,6 +100,12 @@ type DBTX interface {
 }
 
 type Service struct {
+	// OnA2UIAccepted persists card identity, independently of question outcome.
+	// Configure before Run; the Host must tolerate an early answer and retries.
+	OnA2UIAccepted func(context.Context, ActionInput, dwsclient.A2UIReceipt) error
+	// BeforeSend is an optional Host authority fence immediately before a new
+	// provider submission. Configure before Run; ordinary actions may return nil.
+	BeforeSend func(context.Context, ActionInput) error
 	// OnSandboxDelivered must be configured before Run. Implementations must
 	// tolerate repetition after a crash between their commit and our ack.
 	OnSandboxDelivered func(context.Context, ActionInput, string, string) error
@@ -131,8 +169,11 @@ func (s *Service) FindRoute(ctx context.Context, callbackURL string) (*Route, er
 // Enqueue is transaction-friendly. Call Notify only after the caller commits.
 // Reusing an action ID with different contents is rejected, never overwritten.
 func (s *Service) Enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
-	if in.CoordinatorWaitJobID != "" {
-		return "", errors.New("coordinator wait progress requires its Host enqueue path")
+	if in.A2UICard != nil {
+		return "", errors.New("A2UI question requires its Host enqueue path")
+	}
+	if in.CoordinatorWaitJobID != "" || in.EmployeeFirstFeedbackJobID != "" {
+		return "", errors.New("non-terminal progress requires its Host enqueue path")
 	}
 	return s.enqueue(ctx, tx, in)
 }
@@ -151,6 +192,87 @@ func (s *Service) EnqueueCoordinatorWait(ctx context.Context, tx DBTX, in Action
 	return s.enqueue(ctx, tx, in)
 }
 
+// Routine notice phases (EnqueueRoutineNotice).
+const (
+	RoutineNoticeStart = "start"
+	RoutineNoticeEnd   = "end"
+)
+
+// routineNoticeTarget fills CallbackTarget for routine notices, which have
+// no Router callback to receipt.
+const routineNoticeTarget = "scene-routine"
+
+// RoutineNoticeRequestID is the idempotency key of a routine run's start or
+// end notice.
+func RoutineNoticeRequestID(runID, phase string) string {
+	return "routine:" + runID + ":" + phase
+}
+
+// EnqueueRoutineNotice records the start or end notice of a scene routine run
+// (docs/context-capabilities.md §9). The request id is derived from the run
+// and phase, so a retried dispatch or terminal transition enqueues the same
+// action once. There is no dispatch to close and no Router callback: the
+// worker sends it and keeps its delivery state without a receipt.
+func (s *Service) EnqueueRoutineNotice(ctx context.Context, tx DBTX, in ActionInput, runID, phase string) (string, error) {
+	if _, err := uuid.Parse(runID); err != nil {
+		return "", errors.New("routine run id is invalid")
+	}
+	if phase != RoutineNoticeStart && phase != RoutineNoticeEnd {
+		return "", errors.New("routine notice phase is invalid")
+	}
+	in.RoutineRunID = runID
+	in.RequestID = RoutineNoticeRequestID(runID, phase)
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	// No task or issue id: a notice is not a task's reply, so nothing that
+	// reads a task's responses (delivery evidence, close states) sees it.
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
+// EnqueueSceneNotice records a Host notice into a scene (a configuration
+// change made from a conversation). noticeID makes it idempotent; like a
+// routine notice it closes no dispatch and has no Router callback.
+func (s *Service) EnqueueSceneNotice(ctx context.Context, tx DBTX, in ActionInput, noticeID string) (string, error) {
+	if _, err := uuid.Parse(noticeID); err != nil {
+		return "", errors.New("scene notice id is invalid")
+	}
+	in.SceneNoticeID = noticeID
+	in.RoutineRunID = ""
+	in.RequestID = "scene-notice:" + noticeID
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
+// invitationNoticeNamespace derives the scene notice id of an invitation from
+// its delivery action id, so older workers treat the action as a notice (no
+// Router callback) and a replay maps to the same row.
+var invitationNoticeNamespace = uuid.MustParse("3f6d1c2a-6a0e-4c2e-9e57-2f6a1d8b9c41")
+
+// EnqueueInvitationNotice records the send of one collection invitation. The
+// response action id is actionID itself (taskinput.DeliveryActionID), so the
+// invitation, its history fact and any later reminder name the same frozen
+// provider address. It closes no dispatch and has no Router callback.
+func (s *Service) EnqueueInvitationNotice(ctx context.Context, tx DBTX, in ActionInput, actionID string) (string, error) {
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" || len(actionID) > 128 || strings.ContainsAny(actionID, " \t\r\n") {
+		return "", errors.New("invitation action id is invalid")
+	}
+	in.InvitationActionID = actionID
+	in.SceneNoticeID = uuid.NewSHA1(invitationNoticeNamespace, []byte(actionID)).String()
+	in.RoutineRunID = ""
+	in.RequestID = "invitation:" + actionID
+	in.ActionID = actionID
+	in.CoordinatorWaitJobID = ""
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
 func (s *Service) enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
 	if tx == nil {
 		return "", errors.New("response action database is required")
@@ -159,7 +281,7 @@ func (s *Service) enqueue(ctx context.Context, tx DBTX, in ActionInput) (string,
 		return "", err
 	}
 	kind := "message.send"
-	if in.Text == "" {
+	if in.Text == "" && in.A2UICard == nil {
 		kind = "reaction.clear"
 	}
 	if in.ActionID == "" {
@@ -322,15 +444,41 @@ func validateScope(in ActionInput) error {
 }
 
 func validateInput(in ActionInput) error {
-	if in.CoordinatorWaitJobID != "" {
+	if in.EmployeeRunNoticeID != "" {
+		if _, err := uuid.Parse(in.EmployeeRunNoticeID); err != nil {
+			return errors.New("employee run notice id is invalid")
+		}
+	}
+	switch {
+	case in.A2UICard != nil:
+		if err := validateA2UIQuestion(in); err != nil {
+			return err
+		}
+	case in.EmployeeFirstFeedbackJobID != "":
+		if err := validateFirstFeedbackInput(in); err != nil {
+			return err
+		}
+	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
 			return errors.New("coordinator wait job id is invalid")
 		}
 		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.Text == "" {
 			return errors.New("coordinator wait cannot close a dispatch or claim a task")
 		}
-	} else if _, err := parseCallback(in.CallbackURL, true); err != nil {
-		return err
+	case in.RoutineRunID != "" || in.SceneNoticeID != "":
+		if in.RoutineRunID != "" && in.SceneNoticeID != "" {
+			return errors.New("a notice is a routine notice or a scene notice, not both")
+		}
+		if _, err := uuid.Parse(in.RoutineRunID + in.SceneNoticeID); err != nil {
+			return errors.New("notice id is invalid")
+		}
+		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.Text == "" {
+			return errors.New("routine notice cannot close a dispatch, claim a task or quote a message")
+		}
+	default:
+		if _, err := parseCallback(in.CallbackURL, true); err != nil {
+			return err
+		}
 	}
 	if err := validateScope(in); err != nil {
 		return err
@@ -345,17 +493,23 @@ func validateInput(in ActionInput) error {
 			}
 		}
 	}
-	if in.Text == "" {
+	if in.Text == "" && in.A2UICard == nil {
 		switch in.CloseState {
 		case "silent", "failed", "cancelled", "unknown":
 			return nil
 		}
 		return errors.New("response close state is invalid")
 	}
-	if strings.TrimSpace(in.Text) == "" || in.CloseState != "" {
+	if (strings.TrimSpace(in.Text) == "" && in.A2UICard == nil) || in.CloseState != "" {
 		return errors.New("response send content is invalid")
 	}
-	if in.DWSUID == "" || in.DWSOrgID == "" || in.ConversationID == "" || (!in.IsGroup && in.SenderOpenDingTalkID == "") {
+	if in.InvitationActionID != "" && (in.ActionID != in.InvitationActionID || in.SceneNoticeID == "") {
+		return errors.New("invitation notice identity is inconsistent")
+	}
+	// Only an invitation may reach a person by DM before their conversation
+	// is known; the provider reports the conversation on delivery.
+	pendingConversation := in.InvitationActionID != "" && !in.IsGroup && in.ConversationID == ""
+	if in.DWSUID == "" || in.DWSOrgID == "" || (in.ConversationID == "" && !pendingConversation) || (!in.IsGroup && in.SenderOpenDingTalkID == "") {
 		return errors.New("response send identity or target is incomplete")
 	}
 	return nil

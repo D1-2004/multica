@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
@@ -210,7 +211,11 @@ func (h *Handler) requireUserTaskViewAccess(w http.ResponseWriter, r *http.Reque
 		return db.AgentTaskQueue{}, false
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	allowed := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID)
+	if service.IsEmployeeDirectTask(task) {
+		allowed = h.canReadEmployeeDirectTask(r, task, agent)
+	}
+	if !allowed {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.AgentTaskQueue{}, false
 	}

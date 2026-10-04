@@ -1,0 +1,20 @@
+CREATE TABLE employee_progress_report (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    tenant_org_id text NOT NULL,
+    scene_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    queue_task_id uuid NOT NULL,
+    goal_revision bigint NOT NULL,
+    report_id text NOT NULL,
+    summary text NOT NULL,
+    content_hash text NOT NULL,
+    state text NOT NULL DEFAULT 'woken' CHECK (state IN ('woken','decided','failed')),
+    decision text NOT NULL DEFAULT '',
+    job_id uuid,
+    action_id text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    decided_at timestamptz
+);

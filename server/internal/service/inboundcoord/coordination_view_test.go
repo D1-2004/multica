@@ -37,7 +37,7 @@ func TestCoordinationRecallReadsIssueStatusInsteadOfAssociationWaiting(t *testin
 	issueID, issue := testOwnedIssue(t, agent)
 	issue.Status = "done"
 	svc := assoc.NewService(assoc.NewMemory())
-	_, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: util.UUIDToString(agent), IssueID: issueID, IssueTitle: issue.Title, Purpose: issue.Title, ConversationID: "cid-current", EvidenceID: "outbound-1", Kind: "dm"})
+	_, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: util.UUIDToString(agent), IssueID: issueID, IssueTitle: issue.Title, Purpose: issue.Title, Scene: testSceneNode("cid-current"), EvidenceID: "outbound-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ func TestCoordinationRecallReadsIssueStatusInsteadOfAssociationWaiting(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &coordinationIssueStub{issue: tc.issue, err: tc.err}
-			tools := &AssocTools{Service: svc, Issues: stub}
-			raw, err := tools.Call(context.Background(), Turn{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: agent, ConversationID: "cid-current"}, toolAssocRecall, `{}`)
+			tools := &AssocTools{Scenes: testScenes{}, Service: svc, Issues: stub}
+			raw, err := tools.Call(context.Background(), Turn{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: agent, SceneID: testSceneID("cid-current"), ConversationID: "cid-current"}, toolAssocRecall, `{}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestCoordinationRecallLimitsCandidatesWithoutChangingGraph(t *testing.T) {
 	svc := assoc.NewService(assoc.NewMemory())
 	agent := testAgentID()
 	for i := 0; i < 8; i++ {
-		_, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: "ws", AgentID: util.UUIDToString(agent), IssueID: fmt.Sprintf("issue-%d", i), IssueTitle: fmt.Sprintf("查证第%d项产品机制", i), Purpose: fmt.Sprintf("查证第%d项产品机制", i), ConversationID: "cid-current", EvidenceID: fmt.Sprintf("outbound-%d", i), Kind: "dm"})
+		_, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: "ws", AgentID: util.UUIDToString(agent), IssueID: fmt.Sprintf("issue-%d", i), IssueTitle: fmt.Sprintf("查证第%d项产品机制", i), Purpose: fmt.Sprintf("查证第%d项产品机制", i), Scene: testSceneNode("cid-current"), EvidenceID: fmt.Sprintf("outbound-%d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestCoordinationRecallLimitsCandidatesWithoutChangingGraph(t *testing.T) {
 		args  string
 		count int
 	}{{`{}`, 3}, {`{"limit":1}`, 1}, {`{"limit":99}`, 5}} {
-		raw, err := (&AssocTools{Service: svc}).Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: agent, ConversationID: "cid-current"}, toolAssocRecall, tc.args)
+		raw, err := (&AssocTools{Scenes: testScenes{}, Service: svc}).Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: agent, SceneID: testSceneID("cid-current"), ConversationID: "cid-current"}, toolAssocRecall, tc.args)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +144,7 @@ func TestCoordinationRecallLimitsCandidatesWithoutChangingGraph(t *testing.T) {
 			t.Fatalf("args=%s view=%s", tc.args, raw)
 		}
 	}
-	underlying, err := svc.Recall(context.Background(), assoc.Query{WorkspaceID: "ws", AgentID: util.UUIDToString(agent), ConversationID: "cid-current", Since: time.Now().Add(-time.Hour), Limit: 20})
+	underlying, err := svc.Recall(context.Background(), assoc.Query{WorkspaceID: "ws", AgentID: util.UUIDToString(agent), SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Since: time.Now().Add(-time.Hour), Limit: 20})
 	if err != nil || len(underlying.Items) != 8 {
 		t.Fatalf("shared graph contract changed: %d %v", len(underlying.Items), err)
 	}

@@ -36,6 +36,7 @@ function initCore(
   onLogout?: () => void,
   cookieAuth?: boolean,
   identity?: ClientIdentity,
+  csrfCookieName?: string,
 ) {
   if (initialized) return;
 
@@ -59,6 +60,7 @@ function initCore(
       storage.removeItem("multica_token");
     },
     identity,
+    csrfCookieName,
   });
   setApiInstance(api);
   setSchemaLogger(createLogger("api-schema"));
@@ -88,6 +90,8 @@ export function CoreProvider({
   wsUrl = "ws://localhost:8080/ws",
   storage = defaultStorage,
   cookieAuth,
+  csrfCookieName,
+  standalone = false,
   onLogin,
   onLogout,
   identity,
@@ -98,7 +102,7 @@ export function CoreProvider({
   // Initialize singletons on first render only. Dependencies are read-once:
   // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, identity), []);
+  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, identity, csrfCookieName), []);
 
   // Client-only freeze watchdog — shared by web and desktop. No-op on the
   // server and idempotent, so mounting it here covers both apps in one place.
@@ -117,21 +121,24 @@ export function CoreProvider({
         storage={storage}
         cookieAuth={cookieAuth}
         identity={identity}
+        standalone={standalone}
       >
         {/* Desktop's reporter owns both activity and runtime state so it must
             be the only writer for that installation. */}
-        {identity?.platform !== "desktop" && (
+        {!standalone && identity?.platform !== "desktop" && (
           <ClientUsageReporter storage={storage} identity={identity} />
         )}
-        <WSProvider
-          wsUrl={wsUrl}
-          authStore={authStore}
-          storage={storage}
-          cookieAuth={cookieAuth}
-          identity={identity}
-        >
-          {children}
-        </WSProvider>
+        {standalone ? children : (
+          <WSProvider
+            wsUrl={wsUrl}
+            authStore={authStore}
+            storage={storage}
+            cookieAuth={cookieAuth}
+            identity={identity}
+          >
+            {children}
+          </WSProvider>
+        )}
       </AuthInitializer>
     </QueryProvider>
   );
@@ -140,7 +147,7 @@ export function CoreProvider({
   // the host app provides one (web layout + desktop App both do).
   const withAdapter = localeAdapter ? (
     <LocaleAdapterProvider adapter={localeAdapter}>
-      <UserLocaleSync />
+      {!standalone && <UserLocaleSync />}
       {tree}
     </LocaleAdapterProvider>
   ) : (

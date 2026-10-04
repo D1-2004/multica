@@ -14,6 +14,23 @@ Read [references/workflow.md](references/workflow.md) and [references/common-cas
 
 This Skill runs on the developer machine. It does not run inside the FC sandbox.
 
+Select the requested deliverable first: source review, candidate build,
+Runtime configuration, real FC task verification, or persistent-device
+compatibility. These are separate milestones. A code review does not start CI,
+create/switch a Runtime, or require a canary; a build-only task can finish as
+`build_verified` with runtime/task verification explicitly unverified. Creating
+or switching a candidate still follows the mutation rules, and claiming the
+operational loop or real compatibility complete still requires the applicable
+real canary/device evidence. Never replace a real-running claim with review.
+
+Follow `docs/development-delivery.md` and the affected domain contract: define
+E2E acceptance, target environment, milestones and handoff boundary first.
+Missing telemetry is a separate observability limitation; it does not
+automatically authorize a new image rebuild or make a previously verified
+product effect false. Preserve exact build facts and reuse them after an API
+read timeout rather than triggering duplicate CI. Bind the intended workspace
+explicitly for mutations; a mutable profile default is not a fixed target.
+
 The FC configuration loop is:
 
 1. A developer changes `dingtalk-ai-lab/multica-fc-hermes-runtime` on a branch.
@@ -35,9 +52,9 @@ Before triggering CI:
 - Read that repository's `AGENTS.md` and `CLAUDE.md`.
 - Put the change on a dedicated branch, commit it, and push the exact commit. Do not trigger a build for dirty or unpushed work because Aone can only build the remote commit.
 - Resolve both repositories to immutable 40-character commits. The helper rejects a branch/tag as `--multica-ref` and requires `--runtime-commit`; the pipeline must emit both commits independently.
-- Use a branch-specific FC candidate pipeline only. Never alter or manually repurpose the formal `master` pipeline. Pipeline `295064` is the dedicated binding for `codex/fc-runtime-dev-loop-20260903`; for another long-lived branch, add its isolated candidate YAML as required by the Runtime repository and pass both `--pipeline-id` and `--pipeline-path` (or the matching `FC_RUNTIME_CANDIDATE_PIPELINE_*` variables). Aone creates the pipeline and triggers its first run when that YAML is pushed.
+- Use a candidate pipeline bound to the task's actual Runtime branch. Never alter or manually repurpose the formal pipeline or another contributor's pipeline. Resolve the matching candidate YAML and pass both `--pipeline-id` and `--pipeline-path` (or the matching `FC_RUNTIME_CANDIDATE_PIPELINE_*` variables). Helper defaults are environment bindings, not a requirement to use a particular developer branch; inspect their mapping before use. If a new branch needs its own candidate YAML, follow the Runtime repository contract; pushing it may automatically create the pipeline and its first run.
 
-For the Multica API, prefer an isolated local profile such as `pre-fde`. Candidate create requires member + publisher; switch requires owner/admin + publisher. A read-only doctor proves authentication/catalog/publisher signals, not final mutation authority—the endpoint remains authoritative.
+For the Multica API, select the task's actual endpoint/workspace and available profile explicitly. Candidate create requires member + publisher; switch requires owner/admin + publisher. A read-only doctor proves authentication/catalog/publisher signals, not final mutation authority—the endpoint remains authoritative.
 
 ## Token handling
 
@@ -61,7 +78,7 @@ export MULTICA_TOKEN
 Or refresh the isolated CLI profile:
 
 ```bash
-multica --profile pre-fde login
+multica --profile <selected-profile> login
 ```
 
 ## Execution
@@ -72,7 +89,7 @@ Set the helper path once without changing common system variables:
 FC_RUNTIME_DEV=.agents/skills/fc-runtime-dev-loop/scripts/fc_runtime_dev.py
 ```
 
-When the Runtime ref is not the verified bootstrap branch, bind the branch's own candidate pipeline before running the examples:
+Bind the actual Runtime branch's verified candidate pipeline before running the examples; do not assume the helper's historical defaults match this task:
 
 ```bash
 FC_RUNTIME_CANDIDATE_PIPELINE_ID=<dedicated-pipeline-id>
@@ -83,18 +100,18 @@ export FC_RUNTIME_CANDIDATE_PIPELINE_ID FC_RUNTIME_CANDIDATE_PIPELINE_PATH
 Start with the read-only doctor. It validates the Aone candidate pipeline, Multica authentication, publisher permission, and Template catalog access:
 
 ```bash
-python3 "$FC_RUNTIME_DEV" doctor --profile pre-fde
+python3 "$FC_RUNTIME_DEV" doctor --profile <selected-profile>
 ```
 
 Preview the exact build and cutover plan without triggering CI or changing a Runtime:
 
 ```bash
 python3 "$FC_RUNTIME_DEV" cutover \
-  --runtime-ref codex/my-runtime-change \
+  --runtime-ref <runtime-branch> \
   --runtime-commit <40-char-runtime-commit> \
   --multica-ref <40-char-dt-fde-multica-commit> \
   --runtime-id <candidate-runtime-uuid> \
-  --profile pre-fde \
+  --profile <selected-profile> \
   --dry-run
 ```
 
@@ -102,24 +119,24 @@ Run the full existing-Runtime loop:
 
 ```bash
 python3 "$FC_RUNTIME_DEV" cutover \
-  --runtime-ref codex/my-runtime-change \
+  --runtime-ref <runtime-branch> \
   --runtime-commit <40-char-runtime-commit> \
   --multica-ref <40-char-dt-fde-multica-commit> \
   --runtime-id <candidate-runtime-uuid> \
-  --profile pre-fde
+  --profile <selected-profile>
 ```
 
 Create an isolated private candidate Runtime instead of switching one:
 
 ```bash
 python3 "$FC_RUNTIME_DEV" cutover \
-  --runtime-ref codex/my-runtime-change \
+  --runtime-ref <runtime-branch> \
   --runtime-commit <40-char-runtime-commit> \
   --multica-ref <40-char-dt-fde-multica-commit> \
   --create-name "FC candidate - my-runtime-change" \
   --provider hermes \
   --visibility private \
-  --profile pre-fde
+  --profile <selected-profile>
 ```
 
 Use the narrower commands when retrying one stage:
@@ -127,9 +144,9 @@ Use the narrower commands when retrying one stage:
 ```bash
 python3 "$FC_RUNTIME_DEV" build --runtime-ref <branch> --runtime-commit <commit> --multica-ref <commit>
 python3 "$FC_RUNTIME_DEV" inspect-build --run-id <aone-run-id> --runtime-ref <branch> --runtime-commit <commit> --multica-ref <commit> --wait
-python3 "$FC_RUNTIME_DEV" switch --template-id <template-id> --runtime-id <uuid> --profile pre-fde
-python3 "$FC_RUNTIME_DEV" create --template-id <template-id> --name <name> --provider hermes --profile pre-fde
-python3 "$FC_RUNTIME_DEV" create --template-id <template-id> --name <same-name> --provider hermes --profile pre-fde --reconcile-only
+python3 "$FC_RUNTIME_DEV" switch --template-id <template-id> --runtime-id <uuid> --profile <selected-profile>
+python3 "$FC_RUNTIME_DEV" create --template-id <template-id> --name <name> --provider <template-provider> --profile <selected-profile>
+python3 "$FC_RUNTIME_DEV" create --template-id <template-id> --name <same-name> --provider <template-provider> --profile <selected-profile> --reconcile-only
 ```
 
 Use a unique create name as the operation key. The initial call reuses one exact matching Runtime and reconciles a lost response when the row is already visible. If the response is lost and no row is visible, normal retry is forbidden: rerun with `--reconcile-only`, which never POSTs, until the row appears or the server provides authoritative proof that the original request did not commit. Ambiguous or mismatched rows always stop.

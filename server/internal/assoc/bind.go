@@ -6,26 +6,31 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
+// BindOutboundInput links an outbound message to the graph. Scene is the
+// Host-resolved scene of the conversation the message went to; WaitingOn,
+// when set, is another resolved scene the Issue now waits on.
 type BindOutboundInput struct {
-	WorkspaceID    string
-	AgentID        string
-	IssueID        string
-	IssueTitle     string
-	RunID          string
-	ConversationID string
-	PersonID       string
-	PersonAliases  []string
-	DisplayName    string
-	EvidenceID     string
-	Kind           string
-	Intent         string
-	Purpose        string
-	WaitingOn      string
+	WorkspaceID   string
+	AgentID       string
+	IssueID       string
+	IssueTitle    string
+	RunID         string
+	Scene         SceneNode
+	PersonID      string
+	PersonAliases []string
+	DisplayName   string
+	EvidenceID    string
+	Intent        string
+	Purpose       string
+	WaitingOn     *SceneNode
 }
 
 type BindOutboundResult struct {
+	SceneID        string `json:"scene_id"`
 	ConversationID string `json:"conversation_id"`
 	TaskID         string `json:"task_id,omitempty"`
 	IssueID        string `json:"issue_id,omitempty"`
@@ -48,8 +53,9 @@ func BindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 	return result, err
 }
 
-// ValidSceneID rejects tool command text that used to be stored as a conversation id.
-func ValidSceneID(s string) bool {
+// ValidConversationID rejects tool command text that used to be stored as a
+// conversation id.
+func ValidConversationID(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.ContainsAny(s, " \t\n") {
 		return false
@@ -61,21 +67,17 @@ func ValidSceneID(s string) bool {
 }
 
 func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindOutboundResult, error) {
-	cid := NormalizeConversationID(in.ConversationID)
-	if cid == "" {
-		return BindOutboundResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
-	}
-	if !ValidSceneID(cid) {
-		return BindOutboundResult{}, fmt.Errorf("%w: conversation_id is not a scene id", ErrInvalidQuery)
+	if !in.Scene.valid() {
+		return BindOutboundResult{}, fmt.Errorf("%w: scene_id is required", ErrInvalidQuery)
 	}
 	if strings.TrimSpace(in.WorkspaceID) == "" || strings.TrimSpace(in.AgentID) == "" {
 		return BindOutboundResult{}, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)
 	}
-	kind := normalizeSceneKind(in.Kind)
+	sceneID := in.Scene.SceneID
 	now := time.Now().UTC()
 	evidenceID := strings.TrimSpace(in.EvidenceID)
 	if evidenceID == "" {
-		evidenceID = "outbound:" + cid + ":" + now.UTC().Format(time.RFC3339Nano)
+		evidenceID = "outbound:" + sceneID + ":" + now.UTC().Format(time.RFC3339Nano)
 	}
 	personKey, personAliases := CanonicalPersonKey(append([]string{in.PersonID}, in.PersonAliases...)...)
 
@@ -87,24 +89,22 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 		EvidenceID:  evidenceID,
 		Body:        ClipBody(in.Purpose, EventBodyMaxRunes),
 		OccurredAt:  now,
-		SceneKey:    cid,
+		SceneID:     sceneID,
 		PersonKey:   personKey,
 	}
 
-	if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, cid, kind, now); err != nil {
-		return BindOutboundResult{}, err
-	}
 	if personKey != "" {
 		if err := store.EnsurePerson(ctx, in.WorkspaceID, in.AgentID, personKey, strings.TrimSpace(in.DisplayName), personAliases); err != nil {
 			return BindOutboundResult{}, err
 		}
 	}
+	result := BindOutboundResult{SceneID: sceneID, ConversationID: in.Scene.ConversationID}
 
 	if strings.TrimSpace(in.IssueID) == "" {
 		if _, err := store.InsertEvent(ctx, event); err != nil {
 			return BindOutboundResult{}, err
 		}
-		return BindOutboundResult{ConversationID: cid, Linked: false}, nil
+		return result, nil
 	}
 
 	task, err := ensureIssueTask(ctx, store, in, now)
@@ -117,15 +117,11 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 		return BindOutboundResult{}, err
 	}
 	actor := graphActor{WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, RunID: in.RunID}
-	props := map[string]any{"kind": kind, "conversation_id": cid}
-	if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, cid, RelTaskScene, props, now); err != nil {
-		return BindOutboundResult{}, err
-	}
-	if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, cid, RelOutreach, props, now); err != nil {
-		return BindOutboundResult{}, err
-	}
-	if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, cid, RelWaitingOn, props, now); err != nil {
-		return BindOutboundResult{}, err
+	props := sceneProps(in.Scene)
+	for _, rel := range []string{RelTaskScene, RelOutreach, RelWaitingOn} {
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, sceneID, rel, props, now); err != nil {
+			return BindOutboundResult{}, err
+		}
 	}
 	if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeIssue, in.IssueID, RelTaskIssue, map[string]any{}, now); err != nil {
 		return BindOutboundResult{}, err
@@ -139,12 +135,8 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 			return BindOutboundResult{}, err
 		}
 	}
-	if wait := NormalizeConversationID(in.WaitingOn); wait != "" && wait != cid {
-		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
-			return BindOutboundResult{}, err
-		}
-		waitProps := map[string]any{"kind": "dm", "conversation_id": wait}
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait, RelWaitingOn, waitProps, now); err != nil {
+	if wait := in.WaitingOn; wait != nil && wait.valid() && wait.SceneID != sceneID {
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait.SceneID, RelWaitingOn, sceneProps(*wait), now); err != nil {
 			return BindOutboundResult{}, err
 		}
 	}
@@ -156,12 +148,31 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 	if err := store.TouchTask(ctx, task.ID, now); err != nil {
 		return BindOutboundResult{}, err
 	}
-	return BindOutboundResult{
-		ConversationID: cid,
-		TaskID:         task.ID,
-		IssueID:        in.IssueID,
-		Linked:         true,
-	}, nil
+	result.TaskID = task.ID
+	result.IssueID = in.IssueID
+	result.Linked = true
+	return result, nil
+}
+
+// sceneProps are the display facts a scene edge keeps beside its scene_id
+// node: the conversation id and kind from the scene directory.
+func sceneProps(n SceneNode) map[string]any {
+	props := map[string]any{"scene_id": n.SceneID}
+	if cid := strings.TrimSpace(n.ConversationID); cid != "" {
+		props["conversation_id"] = cid
+	}
+	if kind := strings.TrimSpace(n.Kind); kind != "" {
+		props["kind"] = kind
+	}
+	return props
+}
+
+// validSceneNodeID accepts a scene node id: an agent_scene UUID. Raw
+// conversation ids stored as scene nodes before scene ids existed are not
+// scene nodes and never match.
+func validSceneNodeID(s string) bool {
+	_, err := uuid.Parse(strings.TrimSpace(s))
+	return err == nil && strings.TrimSpace(s) == s && len(s) == 36
 }
 
 func ensureIssueTask(ctx context.Context, store Store, in BindOutboundInput, now time.Time) (Task, error) {
@@ -222,13 +233,4 @@ func bindEdge(ctx context.Context, store Store, actor graphActor, srcType, srcID
 		OpenedByRunID: actor.RunID,
 	})
 	return err
-}
-
-func normalizeSceneKind(kind string) string {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "group", "2":
-		return "group"
-	default:
-		return "dm"
-	}
 }

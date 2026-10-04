@@ -13,12 +13,31 @@ func TestRedactConfigLinksPlainAndEncoded(t *testing.T) {
 	cases := map[string]struct {
 		in, want string
 	}{
-		"plain URL":          {in: "配置链接：" + testConfigLinkURL + " 请尽快打开", want: "配置链接：[configuration link] 请尽快打开"},
-		"path only":          {in: "open /dingtalk/configure?link=AbC-_9%3D", want: "open [configuration link]"},
-		"DingTalk deep link": {in: deepLink, want: "dingtalk://dingtalkclient/page/link?url=[configuration link]&pc_slide=true"},
+		"plain URL": {in: "配置链接：" + testConfigLinkURL + " 请尽快打开", want: "配置链接：[configuration link] 请尽快打开"},
+		"path only": {in: "open /dingtalk/configure?link=AbC-_9%3D", want: "open [configuration link]"},
+		// The whole deep link goes, so a redacted Markdown link has no
+		// live-looking target.
+		"DingTalk deep link": {in: deepLink, want: "[configuration link]"},
+		"Markdown link":      {in: "[本群能力配置](" + deepLink + ")（30 分钟内有效）", want: "[本群能力配置]([configuration link])（30 分钟内有效）"},
+		"deep link with a tab": {
+			in:   ConfigLinkDeepLink(testConfigLinkURL+"&tab=routines") + " ok",
+			want: "[configuration link] ok",
+		},
+		"JSON-escaped ampersand": {
+			in:   strings.ReplaceAll(deepLink, "&", `\u0026`),
+			want: "[configuration link]",
+		},
+		"double-encoded": {
+			in:   "see " + url.QueryEscape(url.QueryEscape(testConfigLinkURL)),
+			want: "see [configuration link]",
+		},
+		"partly encoded": {
+			in:   "see https%3A%2F%2Fapp.multica.example%2Fdingtalk%2Fconfigure%3Flink=" + testConfigLinkToken,
+			want: "see [configuration link]",
+		},
 		"tool result JSON": {
 			in:   `{"url":"` + testConfigLinkURL + `","dingtalk_url":"` + deepLink + `","scope":"person"}`,
-			want: `{"url":"[configuration link]","dingtalk_url":"dingtalk://dingtalkclient/page/link?url=[configuration link]&pc_slide=true","scope":"person"}`,
+			want: `{"url":"[configuration link]","dingtalk_url":"[configuration link]","scope":"person"}`,
 		},
 		"no link":             {in: "configure the group in 设置", want: "configure the group in 设置"},
 		"other configure URL": {in: "https://example.com/configure?x=1", want: "https://example.com/configure?x=1"},
@@ -100,7 +119,7 @@ func TestFirstRoundShadowMatchesTheClaimWhenConfigLinksAreOn(t *testing.T) {
 	logs := captureLogs(t)
 	loader := sameHistory(2)
 	c, recorder := shadowCoordinator(t, loader)
-	c.ConfigLinks = &configLinkIssuerStub{link: personConfigLink()}
+	c.ConfigLinks = &configLinkIssuerStub{link: dmConfigLink()}
 	cutoff := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
 	turn := shadowTurn(cutoff)
 	turn.WorkspaceID = "11111111-1111-1111-1111-111111111111"

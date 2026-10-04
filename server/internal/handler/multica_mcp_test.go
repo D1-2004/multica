@@ -154,40 +154,41 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 	}
 }
 
+// The recall tool takes the conversation id the model sees and reads the
+// graph of the agent's scene of that conversation.
 func TestMulticaMCPAssocRecall(t *testing.T) {
-	store := assoc.NewMemory()
-	ws := "00000000-0000-0000-0000-000000000004"
-	ag := "00000000-0000-0000-0000-000000000002"
-	task, err := store.InsertTask(context.Background(), assoc.Task{
-		WorkspaceID: ws,
-		AgentID:     ag,
-		IssueID:     "00000000-0000-0000-0000-000000000099",
-		Purpose:     "预约A与B本周五下午30分钟",
+	f := newAssocSceneFixture(t)
+	ctx := context.Background()
+	sc := f.scene(t, "group", "cid-a")
+	task, err := f.store.InsertTask(ctx, assoc.Task{
+		WorkspaceID:   f.ws,
+		AgentID:       f.agentID,
+		IssueID:       f.issueID,
+		Purpose:       "预约A与B本周五下午30分钟",
+		LastTouchedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.InsertEdge(context.Background(), assoc.Edge{
-		WorkspaceID: ws,
-		AgentID:     ag,
+	if _, err := f.store.InsertEdge(ctx, assoc.Edge{
+		WorkspaceID: f.ws,
+		AgentID:     f.agentID,
 		SrcType:     assoc.NodeTask,
 		SrcID:       task.ID,
 		DstType:     assoc.NodeScene,
-		DstID:       "cid-a",
+		DstID:       uuidToString(sc.ID),
 		Rel:         assoc.RelOutreach,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := testMulticaMCPHandler(t)
-	h.Assoc = assoc.NewService(store)
 	w := httptest.NewRecorder()
-	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+	f.h.MulticaMCP(w, f.mcp(mcpRequest(t, "tools/call", 1, map[string]any{
 		"name": multicaMCPAssocRecallTool,
 		"arguments": map[string]any{
 			"since":           "48h",
 			"conversation_id": "cid-a",
 		},
-	}))
+	})))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -198,8 +199,8 @@ func TestMulticaMCPAssocRecall(t *testing.T) {
 	}
 	structured := result["structuredContent"].(map[string]any)
 	items := structured["items"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("items=%#v", items)
+	if len(items) != 1 || structured["scene_id"] != uuidToString(sc.ID) {
+		t.Fatalf("scene=%v items=%#v", structured["scene_id"], items)
 	}
 }
 
@@ -222,17 +223,16 @@ func TestMulticaMCPAssocBindRequiresConversation(t *testing.T) {
 }
 
 func TestMulticaMCPAssocBindRecordsOutboundScene(t *testing.T) {
-	store := assoc.NewMemory()
-	h := testMulticaMCPHandler(t)
-	h.Assoc = assoc.NewService(store)
+	f := newAssocSceneFixture(t)
 	w := httptest.NewRecorder()
-	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+	f.h.MulticaMCP(w, f.mcp(mcpRequest(t, "tools/call", 1, map[string]any{
 		"name": multicaMCPAssocBindTool,
 		"arguments": map[string]any{
 			"conversation_id": "cid-outbound",
+			"kind":            "dm",
 			"evidence_id":     "msg-out-1",
 		},
-	}))
+	})))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -242,17 +242,14 @@ func TestMulticaMCPAssocBindRecordsOutboundScene(t *testing.T) {
 		t.Fatalf("tool error: %#v", result)
 	}
 	structured := result["structuredContent"].(map[string]any)
-	if structured["conversation_id"] != "cid-outbound" {
+	if structured["conversation_id"] != "cid-outbound" || structured["scene_id"] == "" {
 		t.Fatalf("structured=%#v", structured)
 	}
-	ev, err := store.GetEventByEvidence(context.Background(),
-		"00000000-0000-0000-0000-000000000004",
-		"00000000-0000-0000-0000-000000000002",
-		"msg-out-1")
+	ev, err := f.store.GetEventByEvidence(context.Background(), f.ws, f.agentID, "msg-out-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.SceneKey != "cid-outbound" || ev.Direction != assoc.DirOutbound {
+	if ev.SceneID != structured["scene_id"] || ev.Direction != assoc.DirOutbound {
 		t.Fatalf("event=%+v", ev)
 	}
 }

@@ -2,7 +2,7 @@ package inboundcoord
 
 func genericConversationFixtures() []coordinatorReplayFixture {
 	group := func(message string) Turn {
-		return Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "cidGenericSyntheticSceneB==", PersonID: "speaker", SenderName: "乔宁", AgentName: "小岚 QA 环境", EmployeeAccountName: "安然", DWSUID: "employee-generic", Message: message, Instructions: "你是安然，负责研发工具使用支持和软件故障排查。只有接到本人的请求或职责内开放求助时才参与，不代替其他成员接受任务。", HistoryStatus: "empty", SceneMemoryStatus: "empty", SkillsStatus: "empty"}
+		return Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, SceneID: testSceneID("cidGenericSyntheticSceneB=="), ConversationID: "cidGenericSyntheticSceneB==", PersonID: "speaker", SenderName: "乔宁", AgentName: "小岚 QA 环境", EmployeeAccountName: "安然", DWSUID: "employee-generic", Message: message, Instructions: "你是安然，负责研发工具使用支持和软件故障排查。只有接到本人的请求或职责内开放求助时才参与，不代替其他成员接受任务。", HistoryStatus: "empty", SceneMemoryStatus: "empty", SkillsStatus: "empty"}
 	}
 	unknown := group("小岚，能听到吗？")
 	unknown.EmployeeAccountName = ""

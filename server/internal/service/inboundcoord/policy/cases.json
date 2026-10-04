@@ -1592,7 +1592,7 @@
       ],
       "context_a": "钉钉群聊或单聊里问「你有哪些能力」，Coordinator以describe_capabilities回答，派发上下文给出可信群场域或单一发信人。",
       "context_b": "同一问题，但签发失败/超时/无可信场域（未知会话类型、多人合窗、重跑上下文）；或Web会话、A2UI选择卡、task_finished；或Agent未启用Coordinator；或本轮只有问候等其他动作。",
-      "expected_effects": "A的回复以Host固定一行结束：群聊为本群场域链接（30分钟、可复用），单聊为个人链接（15分钟、单次、兼授权该单聊场域）；链接随checkpoint保存，重投恢复同一回复不再铸造；模型与审查都看不到链接，日志/trace只记状态；会话记录（含渠道引擎）、存档计划、Issue描述与之后读回的钉钉历史只存占位符。B不附链接，模型回复逐字不变，不新增模型调用。",
+      "expected_effects": "A的回复以Host固定一行结束：群聊与单聊都是本会话场域链接（按会话 cid 对应的 scene_id 签发，30分钟、可复用，不依赖发信人 staffId；文案分别为「本群能力配置」「本单聊能力配置」）；链接随checkpoint保存，重投恢复同一回复不再铸造；模型与审查都看不到链接，日志/trace只记状态；会话记录（含渠道引擎）、存档计划、Issue描述与之后读回的钉钉历史只存占位符。B不附链接，模型回复逐字不变，不新增模型调用。",
       "verification": "host_tests_passed_local_2026-09-30; redaction_host_tests_passed_local_2026-10-01; model_replay_not_run; pre_e2e_not_run"
     },
     {
@@ -1643,6 +1643,26 @@
       "context_a": "账号已开启原生订阅（行存在、Agent 未归档、当前身份仍是该账号）：同一条群消息既经 Router 数字员工路由送达，又经原生事件送达；该账号另有一条漏网的 Router 消息绑定",
       "context_b": "同一 Agent 关闭原生订阅，或身份换绑到别的账号之后，再收到这条消息",
       "expected_effects": "前者只由原生入口建窗回复，Router 投递在受理前静默关闭且不回复；后者只由 Router 入口处理，原生事件确认后丢弃；任何时候一条消息只有一个入口处理，账号不会无人认领",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_native_backlog_not_answered",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "原生事件流连上后 DWS 补推积压：消息发送于本 Agent 为该账号开启原生订阅之前（换绑或订阅关闭期间），或送达时已超过 10 分钟",
+      "context_b": "同一会话里事件流短暂断开（重连、滚动发布）后几分钟内补到的消息，以及开启订阅之后新发的消息",
+      "expected_effects": "前者确认并丢弃（sent_before_subscription / stale_message），不建 Coordinator 窗口、不回复；后者正常入窗回复；这是投递层新鲜度规则，不作为对话延续的时间阈值",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_native_group_title_and_trigger_person",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "同一个人先在群里 @ 原生订阅的员工，再给员工发单聊；群名读取成功",
+      "context_b": "同一条群消息重投时群名读取失败或群已改名；或另一位成员在同一窗口里也 @ 了员工",
+      "expected_effects": "前者群场域以员工身份读到的群名命名，两次任务的个人层 key 都是该发言人的 staffId（本员工通讯录按 openDingTalkId 精确证明），跨组织或通讯录查不到时都是 odt:<openDingTalkId>；后者重投回放原受理（群名与 staffId 不计入指纹），读不到群名时照常派发、场域保留原名；多人合并窗口不带个人层；不从显示名或会话 ID 推断人",
       "verification": "not_run"
     }
   ]

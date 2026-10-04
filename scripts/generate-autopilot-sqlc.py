@@ -25,7 +25,9 @@ def main():
     if not args.sqlc:
         parser.error("sqlc is required on PATH or via --sqlc")
     root = Path(__file__).resolve().parents[1] / "server"
-    schemas = sorted((root / "migrations").glob("*.up.sql"))
+    # Match the migrator's numeric version order: 10060 follows 9520/9976.
+    schemas = sorted((root / "migrations").glob("*.up.sql"),
+                     key=lambda path: (int(path.name.split("_", 1)[0]), path.name))
     deferred = root / "migrations/271_task_completion_canceled_status.up.sql"
     if deferred in schemas:
         schemas.remove(deferred)

@@ -39,34 +39,36 @@ func (s *Service) AssociateIssueConversation(ctx context.Context, in AssociateIn
 	return AssociateIssueConversation(ctx, s.store, in)
 }
 
-func (s *Service) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, conversationID string) (CloseSceneResult, error) {
+// CloseSceneAssociations closes every open graph link of one scene and
+// unlinks its events (/reset-memory).
+func (s *Service) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneID string) (CloseSceneResult, error) {
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" {
 		return CloseSceneResult{}, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)
 	}
-	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" || !ValidSceneID(conversationID) {
-		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	sceneID = strings.TrimSpace(sceneID)
+	if !validSceneNodeID(sceneID) {
+		return CloseSceneResult{}, fmt.Errorf("%w: scene_id is required", ErrInvalidQuery)
 	}
 	var result CloseSceneResult
 	err := withStoreTx(ctx, s.store, func(store Store) error {
 		var closeErr error
-		result, closeErr = store.CloseSceneAssociations(ctx, workspaceID, agentID, conversationID)
+		result, closeErr = store.CloseSceneAssociations(ctx, workspaceID, agentID, sceneID)
 		return closeErr
 	})
 	return result, err
 }
 
-func (s *Service) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
+func (s *Service) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneID string, since time.Time, limit int) ([]Event, error) {
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" {
 		return nil, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)
 	}
-	if strings.TrimSpace(sceneKey) == "" {
-		return nil, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	if !validSceneNodeID(strings.TrimSpace(sceneID)) {
+		return nil, fmt.Errorf("%w: scene_id is required", ErrInvalidQuery)
 	}
 	if since.IsZero() {
 		return nil, fmt.Errorf("%w: since is required", ErrInvalidQuery)
 	}
-	return s.store.ListEventsByScene(ctx, workspaceID, agentID, sceneKey, since, limit)
+	return s.store.ListEventsByScene(ctx, workspaceID, agentID, strings.TrimSpace(sceneID), since, limit)
 }
 
 func (s *Service) Store() Store {

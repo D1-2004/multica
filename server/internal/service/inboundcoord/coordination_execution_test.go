@@ -41,7 +41,7 @@ func executionFixture(t *testing.T) (Turn, string, *coordinationExecutionStub) {
 		return pgtype.Timestamptz{Time: time.Date(2026, 9, 8, hour, minute, 0, 0, time.UTC), Valid: true}
 	}
 	stub := &coordinationExecutionStub{coordinationIssueStub: coordinationIssueStub{issue: issue}, task: db.GetLatestCoordinatorIssueExecutionRow{ID: taskID, Status: "completed", CreatedAt: stamp(13, 17), StartedAt: stamp(13, 18), CompletedAt: stamp(13, 19)}}
-	return Turn{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: agent, ConversationID: "cid-current"}, id, stub
+	return Turn{WorkspaceID: util.UUIDToString(issue.WorkspaceID), AgentID: agent, SceneID: testSceneID("cid-current"), ConversationID: "cid-current"}, id, stub
 }
 
 func TestWorkStateLatestExecutionKeepsIssueReviewSeparateFromCompletedRun(t *testing.T) {
@@ -184,10 +184,10 @@ func TestWorkStateExecutionReadOnlyAfterIssueOwnershipAndWorkspaceGate(t *testin
 func TestAssocRecallDoesNotQueryLatestExecution(t *testing.T) {
 	turn, id, stub := executionFixture(t)
 	svc := assoc.NewService(assoc.NewMemory())
-	if _, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: turn.WorkspaceID, AgentID: util.UUIDToString(turn.AgentID), IssueID: id, IssueTitle: stub.issue.Title, Purpose: stub.issue.Title, ConversationID: turn.ConversationID, EvidenceID: "outbound", Kind: "dm"}); err != nil {
+	if _, err := svc.BindOutbound(context.Background(), assoc.BindOutboundInput{WorkspaceID: turn.WorkspaceID, AgentID: util.UUIDToString(turn.AgentID), IssueID: id, IssueTitle: stub.issue.Title, Purpose: stub.issue.Title, Scene: testSceneNode(turn.ConversationID), EvidenceID: "outbound"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&AssocTools{Service: svc, Issues: stub}).Call(context.Background(), turn, toolAssocRecall, `{}`); err != nil {
+	if _, err := (&AssocTools{Scenes: testScenes{}, Service: svc, Issues: stub}).Call(context.Background(), turn, toolAssocRecall, `{}`); err != nil {
 		t.Fatal(err)
 	}
 	if len(stub.taskArgs) != 0 || stub.commentReads != 0 {

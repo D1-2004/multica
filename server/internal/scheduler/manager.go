@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 // Options configure a Manager. Defaults are set in NewManager so all
@@ -467,6 +468,8 @@ func (m *Manager) runHeartbeats(
 // before a terminal write, panic recovered by the scheduler, etc.).
 func classifyError(err error) string {
 	switch {
+	case errors.Is(err, service.ErrOnceAdmissionPending):
+		return "once_admission_pending"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "run_timeout"
 	case errors.Is(err, context.Canceled):

@@ -175,6 +175,7 @@ type TaskContextForEnv struct {
 	// of the brief.
 	ChatChannelDeliversFiles bool
 
+	DirectTaskPrompt        string // issue-free EmployeeTask execution input
 	AutopilotRunID          string // non-empty for autopilot run_only tasks
 	AutopilotID             string
 	AutopilotTitle          string

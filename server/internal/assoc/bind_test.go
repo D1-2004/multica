@@ -30,30 +30,27 @@ func TestGoldenBookTwoPeople(t *testing.T) {
 		IssueID:     issue,
 		IssueTitle:  "预约A与B本周五下午30分钟",
 		Intent:      "calendar.book",
-		Kind:        "dm",
 	}
 
 	a, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    ws,
-		AgentID:        ag,
-		IssueID:        issue,
-		IssueTitle:     in.IssueTitle,
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
-		Kind:           "dm",
-		Intent:         "calendar.book",
+		WorkspaceID: ws,
+		AgentID:     ag,
+		IssueID:     issue,
+		IssueTitle:  in.IssueTitle,
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
+		Intent:      "calendar.book",
 	})
 	if err != nil || !a.Linked {
 		t.Fatalf("bind A: %+v err=%v", a, err)
 	}
 	b, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    ws,
-		AgentID:        ag,
-		IssueID:        issue,
-		IssueTitle:     in.IssueTitle,
-		ConversationID: "cid-b",
-		EvidenceID:     "msg-out-b",
-		Kind:           "dm",
+		WorkspaceID: ws,
+		AgentID:     ag,
+		IssueID:     issue,
+		IssueTitle:  in.IssueTitle,
+		Scene:       sceneOf("cid-b"),
+		EvidenceID:  "msg-out-b",
 	})
 	if err != nil || b.TaskID != a.TaskID {
 		t.Fatalf("bind B should reuse task: %+v vs %+v err=%v", a, b, err)
@@ -65,7 +62,7 @@ func TestGoldenBookTwoPeople(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-in-a",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +72,7 @@ func TestGoldenBookTwoPeople(t *testing.T) {
 		Source:      "outbound_im",
 		Direction:   DirOutbound,
 		EvidenceID:  "msg-out-a",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -85,12 +82,12 @@ func TestGoldenBookTwoPeople(t *testing.T) {
 	}
 
 	if err := AssociateIssueConversation(ctx, store, AssociateInput{
-		WorkspaceID:    ws,
-		AgentID:        ag,
-		IssueID:        issue,
-		IssueTitle:     in.IssueTitle,
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-in-a",
+		WorkspaceID: ws,
+		AgentID:     ag,
+		IssueID:     issue,
+		IssueTitle:  in.IssueTitle,
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-in-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +109,7 @@ func TestGoldenBookTwoPeople(t *testing.T) {
 	byA, err := Recall(ctx, store, Query{
 		WorkspaceID:    ws,
 		AgentID:        ag,
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -156,10 +154,10 @@ func TestBindOutboundWithoutIssueRecordsEventOnly(t *testing.T) {
 	t.Parallel()
 	store := NewMemory()
 	got, err := BindOutbound(context.Background(), store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		ConversationID: "cid-x",
-		EvidenceID:     "msg-x",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Scene:       sceneOf("cid-x"),
+		EvidenceID:  "msg-x",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +168,7 @@ func TestBindOutboundWithoutIssueRecordsEventOnly(t *testing.T) {
 	result, err := Recall(context.Background(), store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-x"),
 		ConversationID: "cid-x",
 		Since:          time.Now().Add(-time.Hour),
 	})
@@ -181,17 +180,21 @@ func TestBindOutboundWithoutIssueRecordsEventOnly(t *testing.T) {
 	}
 }
 
-func TestBindOutboundRejectsCommandTextAsCID(t *testing.T) {
+// The Host resolves conversation ids to scenes; a scene node must be a
+// scene id, never tool command text or a raw conversation id.
+func TestBindOutboundRejectsNonSceneIDs(t *testing.T) {
 	t.Parallel()
-	_, err := BindOutbound(context.Background(), NewMemory(), BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "向冬翔确认今晚吃什么",
-		ConversationID: `$ dws chat message send --user 103262 --content "hi"`,
-	})
-	if err == nil {
-		t.Fatal("expected invalid conversation_id")
+	for _, id := range []string{`$ dws chat message send --user 103262 --content "hi"`, "cid-a", ""} {
+		_, err := BindOutbound(context.Background(), NewMemory(), BindOutboundInput{
+			WorkspaceID: "ws",
+			AgentID:     "ag",
+			IssueID:     "issue-1",
+			IssueTitle:  "向冬翔确认今晚吃什么",
+			Scene:       SceneNode{SceneID: id, ConversationID: id},
+		})
+		if err == nil {
+			t.Fatalf("expected invalid scene for %q", id)
+		}
 	}
 }
 
@@ -201,17 +204,17 @@ func TestListEventsBySceneFiltersConversation(t *testing.T) {
 	now := time.Now().UTC()
 	if _, err := store.InsertEvent(context.Background(), Event{
 		WorkspaceID: "ws", AgentID: "ag", Source: "outbound_im", Direction: DirOutbound,
-		EvidenceID: "out-1", SceneKey: "cid-a", OccurredAt: now,
+		EvidenceID: "out-1", SceneID: sceneIDOf("cid-a"), OccurredAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.InsertEvent(context.Background(), Event{
 		WorkspaceID: "ws", AgentID: "ag", Source: "inbound_im", Direction: DirInbound,
-		EvidenceID: "in-other", SceneKey: "cid-b", OccurredAt: now,
+		EvidenceID: "in-other", SceneID: sceneIDOf("cid-b"), OccurredAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.ListEventsByScene(context.Background(), "ws", "ag", "cid-a", now.Add(-time.Hour), 20)
+	got, err := store.ListEventsByScene(context.Background(), "ws", "ag", sceneIDOf("cid-a"), now.Add(-time.Hour), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,13 +227,13 @@ func TestBindOutboundUsesPurposeWhenTitleShort(t *testing.T) {
 	t.Parallel()
 	store := NewMemory()
 	got, err := BindOutbound(context.Background(), store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-eat",
-		IssueTitle:     "报名表",
-		Purpose:        "向冬翔确认今天吃什么",
-		ConversationID: "cid-dongxiang",
-		EvidenceID:     "msg-out",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-eat",
+		IssueTitle:  "报名表",
+		Purpose:     "向冬翔确认今天吃什么",
+		Scene:       sceneOf("cid-dongxiang"),
+		EvidenceID:  "msg-out",
 	})
 	if err != nil || !got.Linked {
 		t.Fatalf("got=%+v err=%v", got, err)
@@ -247,11 +250,11 @@ func TestBindOutboundUsesPurposeWhenTitleShort(t *testing.T) {
 func TestBindOutboundRejectsVaguePurpose(t *testing.T) {
 	t.Parallel()
 	_, err := BindOutbound(context.Background(), NewMemory(), BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "帮我看看",
-		ConversationID: "cid-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "帮我看看",
+		Scene:       sceneOf("cid-a"),
 	})
 	if err == nil {
 		t.Fatal("expected vague purpose to fail")
@@ -263,13 +266,12 @@ func TestBindOutboundDedupesConversationsAndUsesEventID(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	got, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "预约A与B本周五下午30分钟",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "预约A与B本周五下午30分钟",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
 	})
 	if err != nil || !got.Linked {
 		t.Fatalf("bind: %+v err=%v", got, err)
@@ -311,12 +313,12 @@ func TestInboundEventUnlinkedUntilAssociate(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	if _, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "预约A与B本周五下午30分钟",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "预约A与B本周五下午30分钟",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +328,7 @@ func TestInboundEventUnlinkedUntilAssociate(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-in-a",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -338,12 +340,12 @@ func TestInboundEventUnlinkedUntilAssociate(t *testing.T) {
 		t.Fatalf("inbound task_id should stay empty until associate: %q", inbound.TaskID)
 	}
 	if err := AssociateIssueConversation(ctx, store, AssociateInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "预约A与B本周五下午30分钟",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-in-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "预约A与B本周五下午30分钟",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-in-a",
 	}); err != nil {
 		t.Fatal(err)
 	}

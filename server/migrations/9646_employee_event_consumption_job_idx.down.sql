@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_event_consumption_job_idx;

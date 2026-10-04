@@ -130,7 +130,7 @@ vi.mock("@multica/core/wecom", () => ({
   }),
 }));
 
-import { AgentOverviewPane } from "./agent-overview-pane";
+import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 
 vi.mock("./tabs/runner-tab", () => ({ RunnerTab: () => <div>Execution machine</div> }));
 
@@ -189,6 +189,9 @@ function renderPane(
     initialView?: string;
     search?: Record<string, string>;
     source?: AgentSource;
+    tagRole?: "template" | "employee";
+    viewParam?: string;
+    tagTab?: DetailTab;
   } = {},
 ) {
   const queryClient = new QueryClient({
@@ -223,6 +226,10 @@ function renderPane(
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
             currentUserId={options.currentUserId}
+            tagRole={options.tagRole}
+            viewParam={options.viewParam}
+            tagTab={options.tagTab}
+            renderTenantConfig={() => <div>tenant-config</div>}
           />
         </QueryClientProvider>
       </NavigationProvider>
@@ -670,4 +677,55 @@ it("groups Home and plugins for the migrated FC metadata returned by preproducti
   fireEvent.click(screen.getByRole("tab", { name: "DSH configuration" }));
   expect(screen.getByText("dsh-plugins-tab")).toBeInTheDocument();
   expect(screen.getByText("dsh-home-tab")).toBeDefined();
+});
+
+describe("AgentOverviewPane in the Tag", () => {
+  const cloud = { ...makeRuntime("claude"), runtime_mode: "cloud" } as AgentRuntime;
+
+  it("shows the template as its shared configuration only", () => {
+    renderPane([cloud], { tagRole: "template", agentOverrides: { runtime_mode: "cloud" } });
+    // No overview, work or scenes: the Tag is managed and configured.
+    expect(screen.queryByRole("tablist", { name: enAgents.tabs.page_navigation_aria })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2, name: enAgents.tabs.instructions })).toBeTruthy();
+    expect(screen.getAllByText(enAgents.tabs.skills).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(enAgents.tabs.mcp_config).length).toBeGreaterThan(0);
+    expect(screen.queryByText(enAgents.tabs.llm_trace)).toBeNull();
+  });
+
+  it("frames the template's skills as the default access bundle", () => {
+    renderPane([cloud], { tagRole: "template", initialView: "skills", agentOverrides: { runtime_mode: "cloud" } });
+    expect(screen.getByText(enAgents.tag_tenant.bundle_title)).toBeTruthy();
+  });
+
+  it("gives an employee its tenant configuration, scenes and recent work", () => {
+    const { navigation } = renderPane([cloud], {
+      tagRole: "employee",
+      viewParam: "tview",
+      agentOverrides: { runtime_mode: "cloud" },
+    });
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      enAgents.tag_tenant.tab_tenant_config,
+      enAgents.tabs.scenes,
+      enAgents.tag_tenant.tab_recent_work,
+    ]);
+    expect(screen.getByText("tenant-config")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: enAgents.tag_tenant.tab_recent_work }));
+    expect(screen.getByText("activity-tab")).toBeTruthy();
+    // The tenant pane keeps its own view param next to the shared pane's.
+    expect(navigation.replace).toHaveBeenLastCalledWith("/acme/agents/agent-1?tview=overview");
+  });
+
+  it("shows exactly the view the Tag page picked, with no tab bar or config nav", () => {
+    const { navigation } = renderPane([cloud], {
+      tagRole: "template",
+      tagTab: "skills",
+      agentOverrides: { runtime_mode: "cloud" },
+    });
+    expect(screen.queryByRole("tablist", { name: enAgents.tabs.page_navigation_aria })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: enAgents.tabs.skills })).toBeNull();
+    expect(screen.queryByText(enAgents.tabs.instructions)).toBeNull();
+    expect(screen.getByText(enAgents.tag_tenant.bundle_title)).toBeTruthy();
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
 });

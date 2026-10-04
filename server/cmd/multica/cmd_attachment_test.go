@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ func TestRunAttachmentDownloadWritesBasenameIntoOutputDir(t *testing.T) {
 				"download_url": "/downloads/report.txt",
 				"size_bytes":   "15",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/downloads/report.txt":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/attachments/"+attachmentID+"/download":
 			if r.Header.Get("Authorization") == "" {
 				t.Fatalf("relative download missing auth header")
 			}
@@ -93,7 +94,7 @@ func TestRunAttachmentDownloadCreatesMissingOutputDir(t *testing.T) {
 				"download_url": "/downloads/shot.png",
 				"size_bytes":   "15",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/downloads/shot.png":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/attachments/"+attachmentID+"/download":
 			_, _ = w.Write([]byte(fileBody))
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -298,22 +299,62 @@ func TestRunAttachmentUploadRequiresTask(t *testing.T) {
 	}
 }
 
-func TestRunAttachmentDownloadRequiresDownloadURL(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/attachments/att-no-url" {
-			t.Fatalf("unexpected path = %q", r.URL.Path)
+// Metadata URLs may name the public server while the CLI uses a sandbox relay.
+// Downloads by ID must use that configured API, including its task identity.
+func TestRunAttachmentDownloadUsesConfiguredAPI(t *testing.T) {
+	for _, withURL := range []bool{true, false} {
+		name := "without_metadata_url"
+		if withURL {
+			name = "absolute_public_metadata_url"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":       "att-no-url",
-			"filename": "missing.txt",
+		t.Run(name, func(t *testing.T) {
+			const attachmentID = "4bd903ab-9d8c-4ad4-973d-8fecb3c0f518"
+			const content = "EL2-ART-fixture\n"
+			var externalRequests atomic.Int32
+			external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				externalRequests.Add(1)
+				http.Error(w, "metadata URL must not be requested", http.StatusBadGateway)
+			}))
+			defer external.Close()
+			var downloaded atomic.Bool
+			relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer mat_attachment-fixture" || r.Header.Get("X-Task-ID") != "task-attachment-fixture" {
+					t.Errorf("download lost task-scoped authentication: %v", r.Header)
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				switch r.URL.Path {
+				case "/api/attachments/" + attachmentID:
+					metadata := map[string]any{"id": attachmentID, "filename": "probe.txt"}
+					if withURL {
+						metadata["download_url"] = external.URL + "/api/attachments/" + attachmentID + "/download"
+					}
+					_ = json.NewEncoder(w).Encode(metadata)
+				case "/api/attachments/" + attachmentID + "/download":
+					downloaded.Store(true)
+					_, _ = w.Write([]byte(content))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer relay.Close()
+			setCLITestServerEnv(t, relay.URL)
+			t.Setenv("MULTICA_TOKEN", "mat_attachment-fixture")
+			t.Setenv("MULTICA_TASK_ID", "task-attachment-fixture")
+			cmd := newAttachmentDownloadTestCmd()
+			outdir := t.TempDir()
+			_ = cmd.Flags().Set("output-dir", outdir)
+			_, err := captureStdout(t, func() error { return runAttachmentDownload(cmd, []string{attachmentID}) })
+			if err != nil {
+				t.Fatalf("download through configured API: %v", err)
+			}
+			body, err := os.ReadFile(filepath.Join(outdir, "probe.txt"))
+			if err != nil || string(body) != content {
+				t.Fatalf("download body = %q, error = %v", body, err)
+			}
+			if !downloaded.Load() || externalRequests.Load() != 0 {
+				t.Fatalf("configured API used=%v public requests=%d", downloaded.Load(), externalRequests.Load())
+			}
 		})
-	}))
-	defer srv.Close()
-	setCLITestServerEnv(t, srv.URL)
-	t.Setenv("MULTICA_TOKEN", "mat_test-token")
-
-	cmd := newAttachmentDownloadTestCmd()
-	if err := runAttachmentDownload(cmd, []string{"att-no-url"}); err == nil || !strings.Contains(err.Error(), "no download URL") {
-		t.Fatalf("runAttachmentDownload error = %v, want missing download URL", err)
 	}
 }

@@ -16,8 +16,8 @@ export type ContextWriteScopeType = ContextScopeType | "org";
 export type ContextResourceType = "connector" | "skill";
 
 /** Kind of an IM scene: a DingTalk group chat or a 1:1 chat (a 1:1 chat is a
- * scene exactly like a group). Older backends only knew group scenes, so a
- * missing kind parses as "group". */
+ * scene exactly like a group, with its own configuration). Older backends
+ * only knew group scenes, so a missing kind parses as "group". */
 export type ContextSceneKind = "group" | "dm";
 
 /** How the caller obtained the right to configure a scope. Kept as a plain
@@ -56,6 +56,8 @@ export type ContextConnectorAuthMode = "none" | "bearer" | "oauth" | "unknown";
 /** A live grant that lets the caller configure one scope of an agent. */
 export interface ContextConfigGrant {
   scopeType: ContextScopeType;
+  /** The scene_id of a scene (a group or 1:1 chat), the person key of a
+   * person (a staffId, or "odt:" + an openDingTalkId). */
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -64,6 +66,8 @@ export interface ContextConfigGrant {
 
 /** Scene grant as returned inside agent detail (scope type is implied). */
 export interface ContextConfigSceneGrant {
+  /** The scene_id (docs/agent-scene.md), sent back as-is on every scene
+   * path and write. */
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -84,6 +88,9 @@ export interface ContextConfigRedeemResult {
   /** Tenant (DingTalk org) of the granted scope; "" when the server does not
    * say. The page opens that tenant. */
   orgId: string;
+  /** The 1:1 chat (scene_id) a person link was minted in, also granted; ""
+   * for any other link or an older backend. */
+  extraSceneId: string;
 }
 
 /** Why the caller may configure an agent on the configuration page: live
@@ -159,6 +166,9 @@ export interface ContextScopeRights {
   editPrompts: boolean;
   /** Add, edit, delete and switch the scope's remote MCP servers. */
   editMcp: boolean;
+  /** Create, edit, run and delete the scene's routines (例行任务). Only group
+   * and 1:1 chat scenes have routines. */
+  editRoutines: boolean;
 }
 
 /** A configure-page scope's own prompt components and MCP servers, and what
@@ -213,6 +223,75 @@ export interface ContextConfigOrgScope extends ContextConfigScopeContent {
   canEdit: boolean;
 }
 
+/** An official app of the connector catalog (GitHub, Notion, ...). */
+/** How an official app's sign-in gets ready: by itself ("automatic":
+ * dynamic registration or a deployment client), after the workspace saves
+ * an OAuth application ("oauth_app"), or not at all ("unsupported"). Unknown
+ * values from a newer backend read as "automatic". */
+export type ContextConfigAppSetup = "automatic" | "oauth_app" | "unsupported";
+
+export interface ContextConfigCatalogApp {
+  slug: string;
+  name: string;
+  setup: ContextConfigAppSetup;
+  /** A sign-in can start on this deployment now. */
+  ready: boolean;
+}
+
+/** One value of a scene's OAuth application: "client_id" or "client_secret". */
+export interface ContextConfigOAuthAppField {
+  key: string;
+  optional: boolean;
+  /** Pasted as a file's content. */
+  file: boolean;
+}
+
+/** A scene's own OAuth application of an app without dynamic registration
+ * (Slack, Asana, GitHub), as the configure page shows it. Connections at
+ * the scene sign in with it; without one the scene uses the workspace's
+ * (saved in the admin console). Secrets are never returned. */
+export interface ContextConfigOAuthApp {
+  slug: string;
+  name: string;
+  fields: ContextConfigOAuthAppField[];
+  /** Where the OAuth application is created in the provider's console. */
+  docsUrl: string;
+  /** The callback URL to register there. */
+  callbackUrl: string;
+  /** The scene has its own. */
+  saved: boolean;
+  clientId: string;
+  clientSecretSet: boolean;
+  /** Without its own, the scene signs in with the workspace's application. */
+  workspaceReady: boolean;
+  /** A sign-in can start at the scene now. */
+  ready: boolean;
+  /** The caller may save it now: the first one with the scene's connect
+   * right, a saved one only as the agent's manager. */
+  canEdit: boolean;
+}
+
+/** Saves a scene's OAuth application; an omitted secret keeps the stored one. */
+export interface ContextConfigOAuthAppInput {
+  clientId: string;
+  clientSecret?: string;
+}
+
+/** Adds an official app at a level from the configure page. */
+export interface AddContextConfigAppInput {
+  slug: string;
+  scopeType: ContextWriteScopeType;
+  scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
+}
+
+export interface AddContextConfigAppResult {
+  connectorId: string;
+  /** The agent's own connector: on at every level already. */
+  defaultOn: boolean;
+}
+
 export interface ContextConfigAgentDetail {
   agent: ContextConfigAgentIdentity;
   global: {
@@ -231,21 +310,26 @@ export interface ContextConfigAgentDetail {
   tenant: ContextConfigTenantRef | null;
   /** The tenants the caller may open. */
   tenants: ContextConfigTenantRef[];
-  /** The tenant's enterprise level; null when the caller may not read it. */
+  /** The tenant's enterprise level, read-only unless the caller manages the
+   * agent; null when there is none (and from older backends, for a caller
+   * who does not manage the agent). */
   org: ContextConfigOrgScope | null;
   jsapiAvailable: boolean;
   /** "manager" when the caller manages the agent (scenes then lists every
    * scene of the agent); "grant" otherwise and from older backends. */
   access: ContextConfigAccess;
+  /** Every official app the deployment supports, in catalog order. An app
+   * is usable here only once `global` or `offers` lists its connector;
+   * older backends send none. */
+  apps: ContextConfigCatalogApp[];
 }
 
-/** Where the configuration of one scene page lives: the scene itself (a
- * group chat), or, for a 1:1 chat, the counterpart person's own scope (a
- * 1:1 chat's configuration is that person's configuration). */
+/** Where the configuration of one scene page lives: the scene itself, a
+ * group chat or a 1:1 chat alike (key = its scene_id). */
 export interface ContextSceneScope {
   type: ContextScopeType;
   key: string;
-  /** Group name, or the person's display name. "" when unknown. */
+  /** The chat's title. "" when unknown. */
   title: string;
 }
 
@@ -253,14 +337,16 @@ export interface ContextConfigSceneDetail extends ContextConfigScopeContent {
   scene: ContextConfigSceneGrant;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
-  /** Where these bindings and credentials live. Older backends send no
-   * scope: the scene itself. null when the server cannot tell who the
-   * person of a 1:1 chat is, so nothing can be configured there. */
+  /** Where these bindings and credentials live: the scene itself. Older
+   * backends send no scope (the scene itself too); null when the value is
+   * malformed. */
   scope: ContextSceneScope | null;
-  /** The caller may store, remove or connect credentials in `scope` (false
-   * for a manager viewing someone's 1:1 chat). null when an older backend
-   * does not say. */
+  /** The caller may store, remove or connect credentials in `scope`. null
+   * when an older backend does not say. */
   canConnect: boolean | null;
+  /** Apps (catalog slugs) the scene signs in to with its own OAuth
+   * application; [] from an older backend. */
+  sceneOAuthApps: string[];
 }
 
 export interface SetContextCapabilityBindingInput {
@@ -371,11 +457,18 @@ export interface SetAgentContextCapabilityOffersInput {
 // people, and the Context Builder of each level
 // ---------------------------------------------------------------------------
 
-/** One IM scene of an agent (a DingTalk group chat or 1:1 chat) as listed
- * by `GET /api/agents/{id}/tenants/{orgId}/groups`. */
+/** One Agent work scene (a DingTalk group chat or 1:1 chat, see
+ * docs/agent-scene.md) as listed by
+ * `GET /api/agents/{id}/tenants/{orgId}/groups`. */
 export interface AgentSceneSummary {
-  /** openConversationId of the conversation. */
+  /** The scene's identity (a server-generated UUID): the key of its
+   * Context Builder node, its Scene Memory and its relations. */
+  sceneId: string;
+  /** Same as sceneId (the server sends both). */
   sceneKey: string;
+  /** DingTalk openConversationId of the chat, for display only; "" when
+   * the server does not say. */
+  conversationId: string;
   kind: ContextSceneKind;
   title: string;
   orgId: string;
@@ -385,8 +478,12 @@ export interface AgentSceneSummary {
    * there is none. */
   inboundSessionId: string;
   inboundCount: number;
-  /** scene_memory row id, "" when the scene has no memory. */
+  /** The scene_id when the scene has Scene Memory, "" otherwise. */
   memoryId: string;
+  /** The scene has Scene Memory (opened by sceneId). */
+  hasMemory: boolean;
+  /** The scene has prompt components of its own. */
+  hasPrompt: boolean;
 }
 
 export interface AgentScenesPage {
@@ -430,11 +527,12 @@ export interface CreateAgentTenantInput {
   name: string;
 }
 
-/** A person known under a tenant (a 1:1 chat is its person). */
+/** A person known under a tenant: their personal level. Their 1:1 chat is
+ * a scene of its own. */
 export interface AgentTenantPerson {
   staffId: string;
   title: string;
-  /** openConversationId of the person's 1:1 chat, "" when none. */
+  /** scene_id of the person's 1:1 chat scene, "" when unknown. */
   dmSceneKey: string;
   lastActiveAt: string;
 }
@@ -451,8 +549,8 @@ export type ContextLayer = "global" | "org" | "scene" | "person";
 export type ContextEffectiveLayer = ContextLayer | (string & {});
 
 /** Address of one Context Builder node: the tenant itself (`org`, key =
- * OrgId), one of its group chats (`scene`, key = openConversationId; a 1:1
- * chat key maps to its person) or one of its people (`person`, key =
+ * OrgId), one of its scenes (`scene`, key = scene_id; a group chat or a 1:1
+ * chat, each its own scope) or one of its people (`person`, key =
  * staffId). */
 export interface ContextNodeRef {
   orgId: string;
@@ -563,13 +661,12 @@ export interface ContextNodeEffective {
 }
 
 export interface ContextNodeDetail {
-  /** Where this node's configuration lives (a 1:1 chat key reads its
-   * person). null for a 1:1 chat whose person is unknown, so nothing is
-   * writable there. */
+  /** Where this node's configuration lives: the node's own scope. null
+   * when the value is malformed. */
   scope: ContextNodeScope | null;
-  /** The node's chat: the group of a group node, the 1:1 chat of a person
-   * (its inbound session and memory). null for a tenant, a person without a
-   * 1:1 chat, and from a server that does not say. */
+  /** The node's chat: the scene of a scene node, the 1:1 chat scene of a
+   * person (its inbound session and memory). null for a tenant, a person
+   * without a 1:1 chat, and from a server that does not say. */
   scene: AgentSceneSummary | null;
   prompts: ContextPromptComponent[];
   connectors: ContextNodeConnector[];
@@ -680,6 +777,9 @@ export interface ConnectedAppsList {
 
 /** One scene's use of an app. */
 export interface ConnectedAppSceneUsage {
+  /** The scene's scene_id. */
+  sceneId: string;
+  /** Same as sceneId (the server sends both). */
   sceneKey: string;
   title: string;
   kind: ContextSceneKind;
@@ -717,3 +817,100 @@ export interface ConnectedAppDetail extends ConnectedApp {
    * the list request. */
   canAdmin: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Scene routines (例行任务): cron or webhook runs bound to one group or 1:1
+// chat scene. Each run uses the scene's configuration; the server posts a
+// start and an end notice into the scene.
+
+/** "schedule", "once" or "webhook"; other values come from a newer backend and are
+ * shown generically. */
+export type ContextRoutineTriggerKind = "schedule" | "once" | "webhook" | (string & {});
+
+export interface ContextRoutineTrigger {
+  id: string;
+  kind: ContextRoutineTriggerKind;
+  /** One-shot execution instant (RFC3339), null for other triggers. */
+  runAt: string | null;
+  /** True once a one-shot trigger has admitted its execution. */
+  consumed: boolean;
+  /** Five-field cron expression; "" for other triggers. */
+  cron: string;
+  /** IANA timezone of the schedule; "" for a webhook. */
+  timezone: string;
+  /** Next timed run (ISO), null when paused or consumed. */
+  nextRunAt: string | null;
+  /** The next few scheduled runs (ISO), empty when paused or a webhook. */
+  nextRuns: string[];
+  /** The webhook URL with the token masked; "" for a schedule. */
+  webhookUrlMasked: string;
+  /** The full webhook URL, only right after it was minted (create, rotate). */
+  webhookUrl: string;
+}
+
+export interface ContextRoutineRun {
+  id: string;
+  /** Autopilot run status ("running", "completed", "failed", "skipped", …). */
+  status: string;
+  /** "schedule", "webhook" or "manual". */
+  source: string;
+  failureReason: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ContextRoutine {
+  id: string;
+  sceneId: string;
+  /** "group" or "dm". */
+  sceneKind: string;
+  autopilotId: string;
+  title: string;
+  instructions: string;
+  /** Runs on its trigger only when true. */
+  enabled: boolean;
+  /** Why the system paused it ("" when none). */
+  pauseReason: string;
+  trigger: ContextRoutineTrigger;
+  lastRun: ContextRoutineRun | null;
+  /** "member" (configure page) or "agent" (created from a conversation). */
+  createdByType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Outcome of a create or edit. `updated` is true when a create matched a
+ * routine of the scene with the same purpose and schedule and updated it. */
+export interface ContextRoutineWriteResult {
+  routine: ContextRoutine;
+  updated: boolean;
+}
+
+export interface ContextRoutineInput {
+  title: string;
+  instructions: string;
+  trigger: {
+    kind: "schedule" | "once" | "webhook";
+    run_at?: string;
+    cron?: string;
+    timezone?: string;
+  };
+}
+
+/** Fields of an edit; omitted ones stay. A schedule may change its cron and
+ * timezone; a one-shot may change its run_at before admission; the trigger kind never changes. */
+export interface ContextRoutinePatch {
+  title?: string;
+  instructions?: string;
+  enabled?: boolean;
+  cron?: string;
+  timezone?: string;
+  run_at?: string;
+}
+
+/** Where a scene's routines are read and written: the configure page
+ * (authorized by the caller's grant) or the admin Context Builder (a
+ * workspace-scoped scene node). */
+export type SceneRoutinesTarget =
+  | { kind: "config"; agentId: string; sceneId: string; orgId: string }
+  | { kind: "node"; wsId: string; agentId: string; node: ContextNodeRef };

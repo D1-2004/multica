@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_webhook_occurrence_workspace_idx ON employee_webhook_occurrence (workspace_id);

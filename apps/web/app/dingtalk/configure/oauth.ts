@@ -6,6 +6,7 @@
  */
 
 import { isOrgId } from "@multica/core/context-capabilities";
+import { browserForwarding, forwardStorageKey } from "@/platform/forwarding";
 
 export const CONFIGURE_PATH = "/dingtalk/configure";
 
@@ -97,7 +98,7 @@ function browserStorages(): StorageLike[] {
 
 function safeSet(storage: StorageLike, key: string, value: string) {
   try {
-    storage.setItem(key, value);
+    storage.setItem(forwardStorageKey(key), value);
   } catch {
     // Quota or privacy mode: the other storage may still work.
   }
@@ -105,7 +106,7 @@ function safeSet(storage: StorageLike, key: string, value: string) {
 
 function safeGet(storage: StorageLike, key: string): string | null {
   try {
-    return storage.getItem(key);
+    return storage.getItem(forwardStorageKey(key));
   } catch {
     return null;
   }
@@ -113,7 +114,7 @@ function safeGet(storage: StorageLike, key: string): string | null {
 
 function safeRemove(storage: StorageLike, key: string) {
   try {
-    storage.removeItem(key);
+    storage.removeItem(forwardStorageKey(key));
   } catch {
     // Nothing else to do.
   }
@@ -133,7 +134,8 @@ export function cleanConfigureUrl(params: Omit<ConfigureParams, "linkToken"> = {
   }
   if (params.tab) query.set("tab", params.tab);
   const search = query.toString();
-  return search ? `${CONFIGURE_PATH}?${search}` : CONFIGURE_PATH;
+  const path = `${browserForwarding()?.basePath ?? ""}${CONFIGURE_PATH}`;
+  return search ? `${path}?${search}` : path;
 }
 
 export function savePendingParams(
@@ -215,7 +217,7 @@ export function clearOAuthState(storages: StorageLike[] = browserStorages()): vo
 export function buildDingTalkOAuthUrl(clientId: string, origin: string, state: string): string {
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: `${origin}${CONFIGURE_PATH}`,
+    redirect_uri: `${origin}${cleanConfigureUrl()}`,
     response_type: "code",
     scope: "openid",
     prompt: "consent",

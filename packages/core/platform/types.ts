@@ -27,6 +27,10 @@ export interface CoreProviderProps {
   storage?: StorageAdapter;
   /** Use HttpOnly cookies for auth instead of localStorage tokens. Default: false. */
   cookieAuth?: boolean;
+  /** Cookie used for CSRF protection in an isolated API session. */
+  csrfCookieName?: string;
+  /** Standalone auth pages omit workspace prefetch, realtime, analytics and usage reporting. */
+  standalone?: boolean;
   /** Called after successful login (e.g. set cookie for Next.js middleware). */
   onLogin?: () => void;
   /** Called after logout (e.g. clear cookie). */

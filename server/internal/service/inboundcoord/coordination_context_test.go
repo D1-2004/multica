@@ -12,7 +12,7 @@ import (
 )
 
 func TestCoordinationContextReplacesReadAndPreservesFailure(t *testing.T) {
-	turn := Turn{ConversationID: "cid-a"}
+	turn := Turn{SceneID: testSceneID("cid-a"), ConversationID: "cid-a"}
 	seq := 0
 	first, err := rememberCoordinationRead(&turn, &seq, toolAssocRecall, `{"conversation_id":"cid-a"}`, `{"items":[]}`, nil)
 	if err != nil || !strings.Contains(first, `"read_ref":"r1"`) {
@@ -32,7 +32,7 @@ func TestCoordinationContextReplacesReadAndPreservesFailure(t *testing.T) {
 }
 
 func TestCoordinationContextBoundsAllSnapshotsAndExcludesHiddenRows(t *testing.T) {
-	turn := Turn{ConversationID: "cid-a"}
+	turn := Turn{SceneID: testSceneID("cid-a"), ConversationID: "cid-a"}
 	seq := 0
 	for n := 0; n < 6; n++ {
 		items := make([]map[string]any, 10)
@@ -66,7 +66,7 @@ func TestCoordinationContextBoundsAllSnapshotsAndExcludesHiddenRows(t *testing.T
 
 func TestCoordinationMessagesPreserveFullCurrentWindowWithoutRawHistory(t *testing.T) {
 	current := strings.Repeat("只起草，不要发送。", 1500) + "当前限制的尾部必须完整"
-	turn := Turn{Source: SourceDigitalEmployee, Message: current, HistoryStatus: "loaded", HistoryBefore: time.Date(2026, 9, 9, 3, 0, 0, 0, time.UTC), ConversationID: "cid-a", RelatedTasks: "UNBOUNDED_OLD_BACKGROUND"}
+	turn := Turn{Source: SourceDigitalEmployee, Message: current, HistoryStatus: "loaded", HistoryBefore: time.Date(2026, 9, 9, 3, 0, 0, 0, time.UTC), SceneID: testSceneID("cid-a"), ConversationID: "cid-a", RelatedTasks: "UNBOUNDED_OLD_BACKGROUND"}
 	for i := 0; i < 20; i++ {
 		turn.DingTalkHistory = append(turn.DingTalkHistory, HistoryLine{Role: "colleague", Content: fmt.Sprintf("message-%02d ", i) + strings.Repeat("历史", 1000), EvidenceID: fmt.Sprintf("evidence-%d", i), Timestamp: turn.HistoryBefore.Add(-time.Duration(20-i) * time.Minute), SenderID: "actual-sender", ReplyToEvidenceID: "actual-parent"})
 	}
@@ -97,7 +97,7 @@ func TestCoordinationMessagesPreserveFullCurrentWindowWithoutRawHistory(t *testi
 
 func TestCoordinationHistoryWatermarkAndUnparsedTimeRemainExplicit(t *testing.T) {
 	before := time.Date(2026, 9, 9, 3, 0, 0, 0, time.UTC)
-	turn := Turn{ConversationID: "cid-a", HistoryStatus: "loaded", HistoryBefore: before, DingTalkHistory: []HistoryLine{
+	turn := Turn{SceneID: testSceneID("cid-a"), ConversationID: "cid-a", HistoryStatus: "loaded", HistoryBefore: before, DingTalkHistory: []HistoryLine{
 		{Role: "a", Content: "PAST", Timestamp: before.Add(-time.Minute), EvidenceID: "old"},
 		{Role: "b", Content: "UNKNOWN_ORDER", TimestampRaw: "昨天晚上", EvidenceID: "unparsed", ContentTruncated: true},
 		{Role: "c", Content: "LATER_AUTHORIZATION", Timestamp: before.Add(time.Minute), EvidenceID: "later"},
@@ -131,7 +131,7 @@ func TestFinishReadEvidenceUsesOnlyCurrentHostSnapshots(t *testing.T) {
 func TestCoordinationHistoryEvictionReopensProjectionWithoutReload(t *testing.T) {
 	for _, source := range []Source{SourceDigitalEmployee, SourceWeb} {
 		t.Run(string(source), func(t *testing.T) {
-			turn := Turn{Source: source, ConversationID: "cid-a", HistoryStatus: "loaded", History: []HistoryLine{{Role: "user", Content: "PREVIOUS_QUESTION", EvidenceID: "old-message"}}}
+			turn := Turn{Source: source, SceneID: testSceneID("cid-a"), ConversationID: "cid-a", HistoryStatus: "loaded", History: []HistoryLine{{Role: "user", Content: "PREVIOUS_QUESTION", EvidenceID: "old-message"}}}
 			seq := 0
 			if _, err := rememberCoordinationRead(&turn, &seq, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
 				t.Fatal(err)

@@ -54,7 +54,7 @@ func init() {
 	assocBindCmd.Flags().String("conversation", "", "DingTalk openConversationId (required)")
 	assocBindCmd.Flags().String("evidence", "", "Optional message id for dedup")
 	assocBindCmd.Flags().String("person", "", "Optional DingTalk uid")
-	assocBindCmd.Flags().String("kind", "dm", "Conversation kind (dm or group)")
+	assocBindCmd.Flags().String("kind", "", "Conversation kind (dm or group); required for a conversation the agent has no scene for yet, never guessed")
 	assocBindCmd.Flags().String("purpose", "", "Optional precise purpose when creating the Issue task node")
 	assocBindCmd.Flags().String("output", "json", "Output format: json")
 

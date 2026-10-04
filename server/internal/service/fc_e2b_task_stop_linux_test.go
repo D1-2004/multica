@@ -208,6 +208,8 @@ esac
 		t.Log("python3 is unavailable: the unreadable runner was not exercised")
 	} else if len(unreadablePIDs()) == 0 {
 		t.Error("a runner whose environment could not be read was ended")
+	} else if receipt.Quiescent || receipt.UnresolvedRunners == 0 {
+		t.Error("an unreadable matching runner must hold the steer exit barrier")
 	}
 	t.Logf("receipt as uid %d: %s", os.Geteuid(), strings.TrimSpace(string(out)))
 }

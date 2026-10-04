@@ -43,7 +43,7 @@ func (q *Queries) AcquireAgentTaskRuntimeLaunchLease(ctx context.Context, arg Ac
 const archiveAgent = `-- name: ArchiveAgent :one
 UPDATE agent SET archived_at = now(), archived_by = $2, updated_at = now()
 WHERE id = $1 AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type ArchiveAgentParams struct {
@@ -86,6 +86,7 @@ func (q *Queries) ArchiveAgent(ctx context.Context, arg ArchiveAgentParams) (Age
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -94,7 +95,7 @@ const archiveAgentsByIDs = `-- name: ArchiveAgentsByIDs :many
 UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE id = ANY($2::uuid[]) AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type ArchiveAgentsByIDsParams struct {
@@ -151,6 +152,7 @@ func (q *Queries) ArchiveAgentsByIDs(ctx context.Context, arg ArchiveAgentsByIDs
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -167,7 +169,7 @@ UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE runtime_id = ANY($2::uuid[]) AND archived_at IS NULL
   AND (system_key IS NULL OR system_key = '')
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type ArchiveAgentsByRuntimeParams struct {
@@ -227,6 +229,7 @@ func (q *Queries) ArchiveAgentsByRuntime(ctx context.Context, arg ArchiveAgentsB
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -1161,20 +1164,33 @@ SET status = 'dispatched',
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.agent_id = $1 AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+            AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+                 OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
+                atq.context->>'type' = 'employee_direct'
+                AND active.context->>'type' = 'employee_direct'
+                AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+              )
+              OR (
                 atq.issue_id IS NULL
                 AND atq.chat_session_id IS NULL
                 AND atq.autopilot_run_id IS NULL
+                AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
                 AND active.issue_id IS NULL
                 AND active.chat_session_id IS NULL
                 AND active.autopilot_run_id IS NULL
+                AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
               )
             )
       )
@@ -1186,8 +1202,9 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ClaimAgentTaskParams struct {
-	AgentID          pgtype.UUID `json:"agent_id"`
-	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
+	AgentID                  pgtype.UUID   `json:"agent_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
 }
 
 // Claims the next queued task for an agent, enforcing per-(issue, agent) serialization:
@@ -1195,12 +1212,13 @@ type ClaimAgentTaskParams struct {
 // already dispatched or running. This allows different agents to work on the same
 // issue in parallel while preventing a single agent from running duplicate tasks.
 // Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
+// Employee Direct tasks serialize only with the same EmployeeTask identity.
 // Quick-create tasks have no issue / chat / autopilot link, so they serialize on
-// "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
+// other unlinked, non-Direct tasks for the same agent —
 // otherwise a user mashing the create button could fire concurrent quick-creates
 // whose completion lookup would race over "most recent issue by this agent".
 func (q *Queries) ClaimAgentTask(ctx context.Context, arg ClaimAgentTaskParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, claimAgentTask, arg.AgentID, arg.PrepareLeaseSecs)
+	row := q.db.QueryRow(ctx, claimAgentTask, arg.AgentID, arg.PrepareLeaseSecs, arg.EmployeeDirectRuntimeIds)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -1269,20 +1287,33 @@ SET status = 'dispatched',
 WHERE atq.id = $2
   AND atq.runtime_id = $3
   AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY($4::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue active
       WHERE active.agent_id = atq.agent_id
-        AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+        AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+             OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
         AND (
           (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
           OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
           OR (
+            atq.context->>'type' = 'employee_direct'
+            AND active.context->>'type' = 'employee_direct'
+            AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+          )
+          OR (
             atq.issue_id IS NULL
             AND atq.chat_session_id IS NULL
             AND atq.autopilot_run_id IS NULL
+            AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
             AND active.issue_id IS NULL
             AND active.chat_session_id IS NULL
             AND active.autopilot_run_id IS NULL
+            AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
           )
         )
   )
@@ -1290,9 +1321,10 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ClaimAgentTaskByIDParams struct {
-	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
-	ID               pgtype.UUID `json:"id"`
-	RuntimeID        pgtype.UUID `json:"runtime_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	ID                       pgtype.UUID   `json:"id"`
+	RuntimeID                pgtype.UUID   `json:"runtime_id"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
 }
 
 // Claims one specific queued task for a run-once runtime. This is used by
@@ -1300,7 +1332,12 @@ type ClaimAgentTaskByIDParams struct {
 // the launch; claiming any other queued task can run the wrong chat inside the
 // wrong warm sandbox.
 func (q *Queries) ClaimAgentTaskByID(ctx context.Context, arg ClaimAgentTaskByIDParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, claimAgentTaskByID, arg.PrepareLeaseSecs, arg.ID, arg.RuntimeID)
+	row := q.db.QueryRow(ctx, claimAgentTaskByID,
+		arg.PrepareLeaseSecs,
+		arg.ID,
+		arg.RuntimeID,
+		arg.EmployeeDirectRuntimeIds,
+	)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -1635,7 +1672,7 @@ func (q *Queries) ClaimPendingChannelChatTaskNotifications(ctx context.Context, 
 const clearAgentComposioToolkitAllowlist = `-- name: ClearAgentComposioToolkitAllowlist :one
 UPDATE agent SET composio_toolkit_allowlist = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 // Explicit NULL-clear for composio_toolkit_allowlist. The COALESCE-based
@@ -1679,6 +1716,7 @@ func (q *Queries) ClearAgentComposioToolkitAllowlist(ctx context.Context, id pgt
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -1686,7 +1724,7 @@ func (q *Queries) ClearAgentComposioToolkitAllowlist(ctx context.Context, id pgt
 const clearAgentMcpConfig = `-- name: ClearAgentMcpConfig :one
 UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -1724,6 +1762,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -1731,7 +1770,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 const clearAgentServiceTier = `-- name: ClearAgentServiceTier :one
 UPDATE agent SET service_tier = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 // Explicit NULL-clear for service_tier. COALESCE-based UpdateAgent cannot
@@ -1771,6 +1810,7 @@ func (q *Queries) ClearAgentServiceTier(ctx context.Context, id pgtype.UUID) (Ag
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -1778,7 +1818,7 @@ func (q *Queries) ClearAgentServiceTier(ctx context.Context, id pgtype.UUID) (Ag
 const clearAgentThinkingLevel = `-- name: ClearAgentThinkingLevel :one
 UPDATE agent SET thinking_level = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 // Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
@@ -1819,6 +1859,7 @@ func (q *Queries) ClearAgentThinkingLevel(ctx context.Context, id pgtype.UUID) (
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -1955,7 +1996,7 @@ INSERT INTO agent (
     COALESCE($19, 'private'),
     $20::jsonb
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type CreateAgentParams struct {
@@ -2037,6 +2078,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -2051,7 +2093,7 @@ INSERT INTO agent (
     'private', 'private', 1, $5, $6,
     '{}'::jsonb, '[]'::jsonb, $7, 'system', $8
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type CreateAgentBuilderParams struct {
@@ -2113,6 +2155,7 @@ func (q *Queries) CreateAgentBuilder(ctx context.Context, arg CreateAgentBuilder
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -2850,7 +2893,7 @@ INSERT INTO agent (
     $6, $7, $8, $9, $10,
     $11, '', '{}'::jsonb, '[]'::jsonb, 'user', $12
 )
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type CreateSystemUserAgentParams struct {
@@ -2928,6 +2971,7 @@ func (q *Queries) CreateSystemUserAgent(ctx context.Context, arg CreateSystemUse
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -3639,7 +3683,7 @@ func (q *Queries) FindAgentIssuesWithLostCompletion(ctx context.Context, arg Fin
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = $1
 `
 
@@ -3678,12 +3722,13 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
 
 const getAgentBySystemKey = `-- name: GetAgentBySystemKey :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE workspace_id = $1 AND system_key = $2 AND archived_at IS NULL
 ORDER BY created_at ASC, id ASC
 LIMIT 1
@@ -3732,12 +3777,13 @@ func (q *Queries) GetAgentBySystemKey(ctx context.Context, arg GetAgentBySystemK
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
 
 const getAgentForClaimUpdate = `-- name: GetAgentForClaimUpdate :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = $1
 FOR UPDATE
 `
@@ -3777,12 +3823,13 @@ func (q *Queries) GetAgentForClaimUpdate(ctx context.Context, id pgtype.UUID) (A
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
 
 const getAgentForUpdate = `-- name: GetAgentForUpdate :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = $1
 FOR UPDATE
 `
@@ -3824,12 +3871,13 @@ func (q *Queries) GetAgentForUpdate(ctx context.Context, id pgtype.UUID) (Agent,
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
 
 const getAgentInWorkspace = `-- name: GetAgentInWorkspace :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
 `
 
@@ -3873,6 +3921,7 @@ func (q *Queries) GetAgentInWorkspace(ctx context.Context, arg GetAgentInWorkspa
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -5041,7 +5090,7 @@ func (q *Queries) LinkTaskToIssue(ctx context.Context, arg LinkTaskToIssueParams
 }
 
 const listActiveAgentsByRuntime = `-- name: ListActiveAgentsByRuntime :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY name ASC
 `
@@ -5093,6 +5142,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5105,7 +5155,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 }
 
 const listActiveAgentsByRuntimeForUpdate = `-- name: ListActiveAgentsByRuntimeForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY name ASC
 FOR UPDATE
@@ -5159,6 +5209,7 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5171,7 +5222,7 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 }
 
 const listActiveAgentsByRuntimesForUpdate = `-- name: ListActiveAgentsByRuntimesForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE runtime_id = ANY($1::uuid[]) AND archived_at IS NULL
 ORDER BY id
 FOR UPDATE
@@ -5220,6 +5271,7 @@ func (q *Queries) ListActiveAgentsByRuntimesForUpdate(ctx context.Context, runti
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5492,7 +5544,7 @@ func (q *Queries) ListAgentTasks(ctx context.Context, agentID pgtype.UUID) ([]Ag
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE workspace_id = $1 AND archived_at IS NULL AND kind = 'user'
 ORDER BY created_at ASC
 `
@@ -5538,6 +5590,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5550,7 +5603,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 }
 
 const listAllAgents = `-- name: ListAllAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE workspace_id = $1 AND kind = 'user'
 ORDER BY created_at ASC
 `
@@ -5596,6 +5649,7 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5608,7 +5662,7 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 }
 
 const listAllAgentsAnyKind = `-- name: ListAllAgentsAnyKind :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -5664,6 +5718,7 @@ func (q *Queries) ListAllAgentsAnyKind(ctx context.Context, workspaceID pgtype.U
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -5676,7 +5731,7 @@ func (q *Queries) ListAllAgentsAnyKind(ctx context.Context, workspaceID pgtype.U
 }
 
 const listArchivedAgentsByRuntimesForUpdate = `-- name: ListArchivedAgentsByRuntimesForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE runtime_id = ANY($1::uuid[]) AND archived_at IS NOT NULL
 ORDER BY id
 FOR UPDATE
@@ -5727,6 +5782,7 @@ func (q *Queries) ListArchivedAgentsByRuntimesForUpdate(ctx context.Context, run
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -6257,7 +6313,7 @@ func (q *Queries) ListTasksByIssue(ctx context.Context, issueID pgtype.UUID) ([]
 }
 
 const listUserAgentsByRuntimeForUpdate = `-- name: ListUserAgentsByRuntimeForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE runtime_id = $1 AND kind = 'user'
 ORDER BY id
 FOR UPDATE
@@ -6309,6 +6365,7 @@ func (q *Queries) ListUserAgentsByRuntimeForUpdate(ctx context.Context, runtimeI
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -6628,7 +6685,7 @@ func (q *Queries) ListWorkspaceWorkingAgents(ctx context.Context, arg ListWorksp
 }
 
 const lockAgentForAutopilotAssignment = `-- name: LockAgentForAutopilotAssignment :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
 FOR SHARE
 `
@@ -6682,6 +6739,7 @@ func (q *Queries) LockAgentForAutopilotAssignment(ctx context.Context, arg LockA
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -6714,7 +6772,7 @@ func (q *Queries) LockAgentTaskClaimFinalization(ctx context.Context, arg LockAg
 }
 
 const lockAgentsForDingTalkBindingTeardown = `-- name: LockAgentsForDingTalkBindingTeardown :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse FROM agent
 WHERE id = ANY($1::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -6764,6 +6822,7 @@ func (q *Queries) LockAgentsForDingTalkBindingTeardown(ctx context.Context, agen
 			&i.DispatchAlwaysNewIssue,
 			&i.DispatchPromptOverrides,
 			&i.CoordinatorContract,
+			&i.SandboxConnectionReuse,
 		); err != nil {
 			return nil, err
 		}
@@ -7542,7 +7601,7 @@ SET runtime_id = $1,
     model = $3,
     updated_at = now()
 WHERE id = $4 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type RebindAgentBuilderRuntimeParams struct {
@@ -7608,6 +7667,7 @@ func (q *Queries) RebindAgentBuilderRuntime(ctx context.Context, arg RebindAgent
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -7620,8 +7680,11 @@ WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = $1
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
-      AND atq.dispatched_at < now() - make_interval(secs => $3::double precision)
+      AND atq.dispatched_at < now() - make_interval(secs => $4::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
     ORDER BY atq.priority DESC, atq.dispatched_at ASC
     LIMIT 1
@@ -7631,9 +7694,10 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ReclaimStaleDispatchedTaskForRuntimeParams struct {
-	RuntimeID         pgtype.UUID `json:"runtime_id"`
-	PrepareLeaseSecs  float64     `json:"prepare_lease_secs"`
-	ClaimRecoverySecs float64     `json:"claim_recovery_secs"`
+	RuntimeID                pgtype.UUID   `json:"runtime_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
+	ClaimRecoverySecs        float64       `json:"claim_recovery_secs"`
 }
 
 // Re-delivers a task whose previous claim likely succeeded server-side but
@@ -7642,7 +7706,12 @@ type ReclaimStaleDispatchedTaskForRuntimeParams struct {
 // Refresh dispatched_at so the server-side dispatch timeout measures from the
 // recovered delivery attempt.
 func (q *Queries) ReclaimStaleDispatchedTaskForRuntime(ctx context.Context, arg ReclaimStaleDispatchedTaskForRuntimeParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, reclaimStaleDispatchedTaskForRuntime, arg.RuntimeID, arg.PrepareLeaseSecs, arg.ClaimRecoverySecs)
+	row := q.db.QueryRow(ctx, reclaimStaleDispatchedTaskForRuntime,
+		arg.RuntimeID,
+		arg.PrepareLeaseSecs,
+		arg.EmployeeDirectRuntimeIds,
+		arg.ClaimRecoverySecs,
+	)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -7710,21 +7779,25 @@ WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = ANY($2::uuid[])
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
-      AND atq.dispatched_at < now() - make_interval(secs => $3::double precision)
+      AND atq.dispatched_at < now() - make_interval(secs => $4::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
     ORDER BY atq.priority DESC, atq.dispatched_at ASC
-    LIMIT $4::int
+    LIMIT $5::int
     FOR UPDATE SKIP LOCKED
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
 
 type ReclaimStaleDispatchedTasksForRuntimesParams struct {
-	PrepareLeaseSecs  float64       `json:"prepare_lease_secs"`
-	RuntimeIds        []pgtype.UUID `json:"runtime_ids"`
-	ClaimRecoverySecs float64       `json:"claim_recovery_secs"`
-	MaxTasks          int32         `json:"max_tasks"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	RuntimeIds               []pgtype.UUID `json:"runtime_ids"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
+	ClaimRecoverySecs        float64       `json:"claim_recovery_secs"`
+	MaxTasks                 int32         `json:"max_tasks"`
 }
 
 // Batch variant of ReclaimStaleDispatchedTaskForRuntime (MUL-4257): re-delivers
@@ -7738,6 +7811,7 @@ func (q *Queries) ReclaimStaleDispatchedTasksForRuntimes(ctx context.Context, ar
 	rows, err := q.db.Query(ctx, reclaimStaleDispatchedTasksForRuntimes,
 		arg.PrepareLeaseSecs,
 		arg.RuntimeIds,
+		arg.EmployeeDirectRuntimeIds,
 		arg.ClaimRecoverySecs,
 		arg.MaxTasks,
 	)
@@ -7822,8 +7896,16 @@ SET status = 'failed',
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
 WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+  AND ($2::boolean OR
+       (COALESCE(context->>'type', '') <> 'employee_direct' AND
+        COALESCE(trigger_evidence_kind, '') <> 'employee_task'))
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
+
+type RecoverOrphanedTasksForRuntimeParams struct {
+	RuntimeID           pgtype.UUID `json:"runtime_id"`
+	AllowEmployeeDirect bool        `json:"allow_employee_direct"`
+}
 
 // Called by the daemon at startup. Atomically fails any dispatched/running/
 // waiting_local_directory task that the prior incarnation of this runtime
@@ -7831,8 +7913,8 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 // them to the auto-retry path. waiting_local_directory rows are included
 // because the daemon holding the path lock is the same process that just
 // died — without us, the row would sit waiting forever.
-func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, recoverOrphanedTasksForRuntime, runtimeID)
+func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, arg RecoverOrphanedTasksForRuntimeParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, recoverOrphanedTasksForRuntime, arg.RuntimeID, arg.AllowEmployeeDirect)
 	if err != nil {
 		return nil, err
 	}
@@ -7917,7 +7999,7 @@ SET status = desired.status,
     updated_at = now()
 FROM desired
 WHERE a.id = $1 AND a.status IS DISTINCT FROM desired.status
-RETURNING a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.dispatch_always_new_issue, a.dispatch_prompt_overrides, a.coordinator_contract
+RETURNING a.id, a.workspace_id, a.name, a.avatar_url, a.runtime_mode, a.runtime_config, a.visibility, a.status, a.max_concurrent_tasks, a.owner_id, a.created_at, a.updated_at, a.description, a.runtime_id, a.instructions, a.archived_at, a.archived_by, a.custom_env, a.custom_args, a.mcp_config, a.model, a.thinking_level, a.composio_toolkit_allowlist, a.permission_mode, a.kind, a.system_key, a.disabled_runtime_skills, a.service_tier, a.dispatch_always_new_issue, a.dispatch_prompt_overrides, a.coordinator_contract, a.sandbox_connection_reuse
 `
 
 // Persisted agent.status has no queued/resource-wait bucket. Keep dispatched
@@ -7960,6 +8042,7 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8167,7 +8250,7 @@ func (q *Queries) RequeueAgentTaskAfterClaimFailure(ctx context.Context, arg Req
 const restoreAgent = `-- name: RestoreAgent :one
 UPDATE agent SET archived_at = NULL, archived_by = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -8205,6 +8288,7 @@ func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8367,6 +8451,17 @@ func (q *Queries) StartAgentTask(ctx context.Context, id pgtype.UUID) (AgentTask
 	return i, err
 }
 
+const getAgentSandboxConnectionReuse = `-- name: GetAgentSandboxConnectionReuse :one
+SELECT sandbox_connection_reuse FROM agent WHERE id = $1
+`
+
+func (q *Queries) GetAgentSandboxConnectionReuse(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getAgentSandboxConnectionReuse, id)
+	var sandboxConnectionReuse bool
+	err := row.Scan(&sandboxConnectionReuse)
+	return sandboxConnectionReuse, err
+}
+
 const updateAgent = `-- name: UpdateAgent :one
 UPDATE agent SET
     name = COALESCE($2, name),
@@ -8382,17 +8477,18 @@ UPDATE agent SET
     instructions = COALESCE($12, instructions),
     dispatch_prompt_overrides = COALESCE($13, dispatch_prompt_overrides),
     dispatch_always_new_issue = COALESCE($14, dispatch_always_new_issue),
-    custom_env = COALESCE($15, custom_env),
-    custom_args = COALESCE($16, custom_args),
-    mcp_config = COALESCE($17, mcp_config),
-    model = COALESCE($18, model),
-    thinking_level = COALESCE($19, thinking_level),
-    service_tier = COALESCE($20, service_tier),
-    composio_toolkit_allowlist = COALESCE($21::text[], composio_toolkit_allowlist),
-    coordinator_contract = NULLIF(COALESCE($22::jsonb, coordinator_contract), 'null'::jsonb),
+    sandbox_connection_reuse = COALESCE($15, sandbox_connection_reuse),
+    custom_env = COALESCE($16, custom_env),
+    custom_args = COALESCE($17, custom_args),
+    mcp_config = COALESCE($18, mcp_config),
+    model = COALESCE($19, model),
+    thinking_level = COALESCE($20, thinking_level),
+    service_tier = COALESCE($21, service_tier),
+    composio_toolkit_allowlist = COALESCE($22::text[], composio_toolkit_allowlist),
+    coordinator_contract = NULLIF(COALESCE($23::jsonb, coordinator_contract), 'null'::jsonb),
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type UpdateAgentParams struct {
@@ -8410,6 +8506,7 @@ type UpdateAgentParams struct {
 	Instructions             pgtype.Text `json:"instructions"`
 	DispatchPromptOverrides  []byte      `json:"dispatch_prompt_overrides"`
 	DispatchAlwaysNewIssue   pgtype.Bool `json:"dispatch_always_new_issue"`
+	SandboxConnectionReuse   pgtype.Bool `json:"sandbox_connection_reuse"`
 	CustomEnv                []byte      `json:"custom_env"`
 	CustomArgs               []byte      `json:"custom_args"`
 	McpConfig                []byte      `json:"mcp_config"`
@@ -8442,6 +8539,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.Instructions,
 		arg.DispatchPromptOverrides,
 		arg.DispatchAlwaysNewIssue,
+		arg.SandboxConnectionReuse,
 		arg.CustomEnv,
 		arg.CustomArgs,
 		arg.McpConfig,
@@ -8484,6 +8582,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8492,7 +8591,7 @@ const updateAgentCustomEnv = `-- name: UpdateAgentCustomEnv :one
 UPDATE agent
 SET custom_env = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type UpdateAgentCustomEnvParams struct {
@@ -8540,6 +8639,7 @@ func (q *Queries) UpdateAgentCustomEnv(ctx context.Context, arg UpdateAgentCusto
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8548,7 +8648,7 @@ const updateAgentDisabledRuntimeSkills = `-- name: UpdateAgentDisabledRuntimeSki
 UPDATE agent
 SET disabled_runtime_skills = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type UpdateAgentDisabledRuntimeSkillsParams struct {
@@ -8591,6 +8691,7 @@ func (q *Queries) UpdateAgentDisabledRuntimeSkills(ctx context.Context, arg Upda
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8598,7 +8699,7 @@ func (q *Queries) UpdateAgentDisabledRuntimeSkills(ctx context.Context, arg Upda
 const updateAgentStatus = `-- name: UpdateAgentStatus :one
 UPDATE agent SET status = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type UpdateAgentStatusParams struct {
@@ -8641,6 +8742,7 @@ func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusPa
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8651,7 +8753,7 @@ const updateAgentOwner = `-- name: UpdateAgentOwner :one
 UPDATE agent
 SET owner_id = $2, updated_at = now()
 WHERE id = $1 AND workspace_id = $3 AND kind = 'user'
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides, coordinator_contract, sandbox_connection_reuse
 `
 
 type UpdateAgentOwnerParams struct {
@@ -8695,6 +8797,7 @@ func (q *Queries) UpdateAgentOwner(ctx context.Context, arg UpdateAgentOwnerPara
 		&i.DispatchAlwaysNewIssue,
 		&i.DispatchPromptOverrides,
 		&i.CoordinatorContract,
+		&i.SandboxConnectionReuse,
 	)
 	return i, err
 }
@@ -8737,7 +8840,8 @@ func (q *Queries) UpdateAgentTaskSession(ctx context.Context, arg UpdateAgentTas
 const listAgentPendingTasks = `-- name: ListAgentPendingTasks :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at FROM agent_task_queue
 WHERE agent_id = $1
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND (status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+       OR (status = 'cancelled' AND context->>'process_stop_pending' = 'true'))
 ORDER BY created_at DESC
 `
 

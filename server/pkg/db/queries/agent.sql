@@ -135,6 +135,9 @@ RETURNING *;
 -- name: GetAgentChatSessionResume :one
 SELECT chat_session_resume FROM agent WHERE id = $1;
 
+-- name: GetAgentSandboxConnectionReuse :one
+SELECT sandbox_connection_reuse FROM agent WHERE id = $1;
+
 -- name: ListAgentChatSessionResumeByIDs :many
 SELECT id, chat_session_resume FROM agent WHERE id = ANY(sqlc.arg('ids')::uuid[]);
 
@@ -163,6 +166,7 @@ UPDATE agent SET
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     dispatch_prompt_overrides = COALESCE(sqlc.narg('dispatch_prompt_overrides'), dispatch_prompt_overrides),
     dispatch_always_new_issue = COALESCE(sqlc.narg('dispatch_always_new_issue'), dispatch_always_new_issue),
+    sandbox_connection_reuse = COALESCE(sqlc.narg('sandbox_connection_reuse'), sandbox_connection_reuse),
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
@@ -337,7 +341,8 @@ ORDER BY created_at DESC;
 -- rows can be large and must not be fetched on every launch or recovery tick.
 SELECT * FROM agent_task_queue
 WHERE agent_id = $1
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND (status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+       OR (status = 'cancelled' AND context->>'process_stop_pending' = 'true'))
 ORDER BY created_at DESC;
 
 -- name: ListHumanVisibleAgentTasks :many
@@ -832,8 +837,9 @@ FOR UPDATE OF atq;
 -- already dispatched or running. This allows different agents to work on the same
 -- issue in parallel while preventing a single agent from running duplicate tasks.
 -- Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
+-- Employee Direct tasks serialize only with the same EmployeeTask identity.
 -- Quick-create tasks have no issue / chat / autopilot link, so they serialize on
--- "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
+-- other unlinked, non-Direct tasks for the same agent —
 -- otherwise a user mashing the create button could fire concurrent quick-creates
 -- whose completion lookup would race over "most recent issue by this agent".
 UPDATE agent_task_queue
@@ -844,20 +850,33 @@ SET status = 'dispatched',
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.agent_id = $1 AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY(@employee_direct_runtime_ids::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+            AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+                 OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
+                atq.context->>'type' = 'employee_direct'
+                AND active.context->>'type' = 'employee_direct'
+                AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+              )
+              OR (
                 atq.issue_id IS NULL
                 AND atq.chat_session_id IS NULL
                 AND atq.autopilot_run_id IS NULL
+                AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
                 AND active.issue_id IS NULL
                 AND active.chat_session_id IS NULL
                 AND active.autopilot_run_id IS NULL
+                AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
               )
             )
       )
@@ -880,20 +899,33 @@ SET status = 'dispatched',
 WHERE atq.id = @id
   AND atq.runtime_id = @runtime_id
   AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY(@employee_direct_runtime_ids::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue active
       WHERE active.agent_id = atq.agent_id
-        AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+        AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+             OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
         AND (
           (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
           OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
           OR (
+            atq.context->>'type' = 'employee_direct'
+            AND active.context->>'type' = 'employee_direct'
+            AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+          )
+          OR (
             atq.issue_id IS NULL
             AND atq.chat_session_id IS NULL
             AND atq.autopilot_run_id IS NULL
+            AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
             AND active.issue_id IS NULL
             AND active.chat_session_id IS NULL
             AND active.autopilot_run_id IS NULL
+            AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
           )
         )
   )
@@ -968,6 +1000,9 @@ WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = $1
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY(@employee_direct_runtime_ids::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -992,6 +1027,9 @@ WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY(@employee_direct_runtime_ids::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -1353,6 +1391,9 @@ SET status = 'failed',
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
 WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+  AND (@allow_employee_direct::boolean OR
+       (COALESCE(context->>'type', '') <> 'employee_direct' AND
+        COALESCE(trigger_evidence_kind, '') <> 'employee_task'))
 RETURNING *;
 
 -- name: FailStaleTasks :many
@@ -1575,6 +1616,14 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
+
+
+
+
+
+
+
+
 
 -- name: CancelQueuedAgentTask :one
 -- Queue editing is a compare-and-set: never cancel a task that the daemon

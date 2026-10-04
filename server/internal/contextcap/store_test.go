@@ -91,7 +91,7 @@ func TestStoreOffersGateTaskBindings(t *testing.T) {
 		t.Fatalf("skill not offered: %v %v", offered, err)
 	}
 
-	scene := BindingWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-1", ScopeKey: "cidGroup",
+	scene := BindingWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-1", ScopeKey: "aaaaaaaa-0000-4000-8000-000000000003",
 		ScopeTitle: "Group", ResourceType: ResourceConnector, ResourceID: f.connectorID, Enabled: true, ActorID: actor}
 	if _, err := UpsertBinding(ctx, f.tx, scene); err != nil {
 		t.Fatal(err)
@@ -134,20 +134,20 @@ func TestStoreOffersGateTaskBindings(t *testing.T) {
 		}
 		return out
 	}
-	full := Scope{Dispatched: true, OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"}.Selection()
+	full := Scope{Dispatched: true, OrgID: "org-1", SceneID: "aaaaaaaa-0000-4000-8000-000000000003", PersonKey: "staff-1"}.Selection()
 	if got := layerResources(full); len(got) != 2 {
 		t.Fatalf("task layer resources = %v", got)
 	}
 	for _, sel := range []LayerSelection{
-		{OrgID: "org-2", SceneKey: "cidGroup", PersonKey: "staff-1"},
-		{OrgID: "org-1", SceneKey: "cidOther", PersonKey: "staff-2"},
+		{OrgID: "org-2", SceneID: "aaaaaaaa-0000-4000-8000-000000000003", PersonKey: "staff-1"},
+		{OrgID: "org-1", SceneID: "aaaaaaaa-0000-4000-8000-000000000004", PersonKey: "staff-2"},
 		{OrgID: "org-1", Org: true},
 	} {
 		if got := layerResources(sel); len(got) != 0 {
 			t.Fatalf("selection %#v leaked bindings %v", sel, got)
 		}
 	}
-	if got := layerResources(LayerSelection{OrgID: "org-1", SceneKey: "cidGroup"}); len(got) != 1 || got[0] != ResourceConnector+":"+f.connectorID {
+	if got := layerResources(LayerSelection{OrgID: "org-1", SceneID: "aaaaaaaa-0000-4000-8000-000000000003"}); len(got) != 1 || got[0] != ResourceConnector+":"+f.connectorID {
 		t.Fatalf("scene-only resources = %v", got)
 	}
 
@@ -158,7 +158,7 @@ func TestStoreOffersGateTaskBindings(t *testing.T) {
 	if got := layerResources(full); len(got) != 1 || got[0] != ResourceSkill+":"+f.skillID {
 		t.Fatalf("offer removal did not disable binding: %v", got)
 	}
-	rows, err := ListScopeBindings(ctx, f.tx, f.workspaceID, f.agentID, ScopeScene, "org-1", "cidGroup")
+	rows, err := ListScopeBindings(ctx, f.tx, f.workspaceID, f.agentID, ScopeScene, "org-1", "aaaaaaaa-0000-4000-8000-000000000003")
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("scope bindings keep raw rows: %#v %v", rows, err)
 	}
@@ -187,7 +187,7 @@ func TestStoreCredentialsAndSummaries(t *testing.T) {
 		t.Fatalf("get: %#v %v", got, err)
 	}
 	sceneKey := key
-	sceneKey.ScopeType, sceneKey.ScopeKey = ScopeScene, "cidGroup"
+	sceneKey.ScopeType, sceneKey.ScopeKey = ScopeScene, "aaaaaaaa-0000-4000-8000-000000000003"
 	if _, err := UpsertCredential(ctx, f.tx, sceneKey, []byte("sealed-scene"), "••••", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestStoreCredentialsAndSummaries(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Ciphertext != nil {
 		t.Fatalf("list must not load ciphertext: %#v %v", list, err)
 	}
-	task, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"})
+	task, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-1", SceneID: "aaaaaaaa-0000-4000-8000-000000000003", PersonKey: "staff-1"})
 	if err != nil || len(task) != 2 || task[0].ScopeType != ScopePerson || len(task[0].Ciphertext) == 0 {
 		t.Fatalf("task credentials: %#v %v", task, err)
 	}
@@ -207,7 +207,7 @@ func TestStoreCredentialsAndSummaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := UpsertBinding(ctx, f.tx, BindingWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-1",
-		ScopeKey: "cidGroup", ScopeTitle: "Group title", ResourceType: ResourceConnector, ResourceID: f.connectorID, Enabled: true}); err != nil {
+		ScopeKey: "aaaaaaaa-0000-4000-8000-000000000003", ScopeTitle: "Group title", ResourceType: ResourceConnector, ResourceID: f.connectorID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	summaries, err := ListScopeSummaries(ctx, f.tx, f.workspaceID, f.agentID)
@@ -236,7 +236,7 @@ func TestStoreGrantsAndLinks(t *testing.T) {
 	user := uuid.NewString()
 
 	grant := Grant{UserID: user, WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-1",
-		ScopeKey: "cidGroup", ScopeTitle: "Group", Source: GrantSourceAgentLink}
+		ScopeKey: "aaaaaaaa-0000-4000-8000-000000000003", ScopeTitle: "Group", Source: GrantSourceAgentLink}
 	long, err := UpsertGrant(ctx, f.tx, grant, GrantTTLScene)
 	if err != nil || long.ExpiresAt.Before(time.Now().Add(29*24*time.Hour)) {
 		t.Fatalf("grant: %#v %v", long, err)
@@ -247,10 +247,10 @@ func TestStoreGrantsAndLinks(t *testing.T) {
 	if err != nil || !renewed.ExpiresAt.Equal(long.ExpiresAt) || renewed.ScopeTitle != "Group" || renewed.Source != GrantSourceJSAPI {
 		t.Fatalf("renewal shortened expiry or lost title: %#v %v", renewed, err)
 	}
-	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-1", "cidGroup"); err != nil {
+	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-1", "aaaaaaaa-0000-4000-8000-000000000003"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-2", "cidGroup"); !errors.Is(err, ErrNotFound) {
+	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-2", "aaaaaaaa-0000-4000-8000-000000000003"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("grant crossed org: %v", err)
 	}
 	if list, err := ListLiveGrantsForUser(ctx, f.tx, user, ""); err != nil || len(list) != 1 {
@@ -262,7 +262,7 @@ func TestStoreGrantsAndLinks(t *testing.T) {
 	if _, err := f.tx.Exec(ctx, `UPDATE context_config_grant SET expires_at = now() - interval '1 second' WHERE user_id = $1::uuid`, user); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-1", "cidGroup"); !errors.Is(err, ErrNotFound) {
+	if _, err := GetLiveGrant(ctx, f.tx, user, f.agentID, ScopeScene, "org-1", "aaaaaaaa-0000-4000-8000-000000000003"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired grant is live: %v", err)
 	}
 
@@ -282,7 +282,7 @@ func TestStoreGrantsAndLinks(t *testing.T) {
 	sceneToken, _ := NewLinkToken()
 	sourceTask := uuid.NewString()
 	if _, err := InsertLink(ctx, f.tx, Link{TokenHash: HashLinkToken(sceneToken), WorkspaceID: f.workspaceID, AgentID: f.agentID,
-		ScopeType: ScopeScene, OrgID: "org-1", ScopeKey: "cidGroup", SourceTaskID: sourceTask}, LinkTTLScene); err != nil {
+		ScopeType: ScopeScene, OrgID: "org-1", ScopeKey: "aaaaaaaa-0000-4000-8000-000000000003", SourceTaskID: sourceTask}, LinkTTLScene); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {

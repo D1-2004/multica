@@ -48,6 +48,9 @@ type TaskService struct {
 	Analytics analytics.Client
 	Metrics   *obsmetrics.BusinessMetrics
 	Wakeup    TaskWakeupNotifier
+	// SceneRoutines posts a scene routine run's end notice from the terminal
+	// transaction; nil leaves every task ordinary.
+	SceneRoutines SceneRoutines
 	// FeatureFlags is the server-side toggle router. Nil is valid and returns
 	// each call site's default.
 	FeatureFlags *featureflag.Service
@@ -2700,7 +2703,10 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// across two statements, the `cancelled` status becomes visible to every
 		// other connection while the pointer still names the previous turn's
 		// session, and a queued follow-up can resume that older session.
-		err = s.runInTx(ctx, func(qtx *db.Queries) error {
+		err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+			if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+				return err
+			}
 			if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 				return err
 			}
@@ -2708,7 +2714,13 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			if err != nil {
 				return err
 			}
+			if err := s.recordEmployeeRunInTx(ctx, terminalTx, cancelled, "cancelled", nil, cancelled.Error.String); err != nil {
+				return err
+			}
 			task = cancelled
+			if _, err := enqueueSteerCallbackCompletions(ctx, qtx, cancelled, "canceled", nil, "", ""); err != nil {
+				return err
+			}
 			if !cancelled.ChatSessionID.Valid {
 				return nil
 			}
@@ -2811,6 +2823,37 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 			(targetBefore.Status != "deferred" && targetBefore.Status != "queued") {
 			return errors.New("steer target is not a pending task in the IM chat")
 		}
+		pending, err := qtx.HasUnacknowledgedTaskCancellation(ctx, db.HasUnacknowledgedTaskCancellationParams{AgentID: agentID, ChatSessionID: chatSessionID})
+		if err != nil {
+			return err
+		}
+		if pending {
+			successor, lookupErr := qtx.GetSteerChatSuccessor(ctx, db.GetSteerChatSuccessorParams{ChatSessionID: chatSessionID, AgentID: agentID, ExcludeTaskID: targetTaskID})
+			if lookupErr == nil {
+				mergedContext, mergeErr := mergeSteerCorrectionContext(successor.Context, targetBefore.Context)
+				if mergeErr != nil {
+					return mergeErr
+				}
+				if err = qtx.MergeSteerChatInput(ctx, db.MergeSteerChatInputParams{SuccessorID: successor.ID, CorrectionTaskID: targetTaskID}); err != nil {
+					return err
+				}
+				if err = qtx.DetachSteerCorrectionCallback(ctx, targetTaskID); err != nil {
+					return err
+				}
+				if _, err = qtx.CancelAgentTask(ctx, targetTaskID); err != nil {
+					return err
+				}
+				if err = qtx.SetSteerSuccessorContext(ctx, db.SetSteerSuccessorContextParams{ID: successor.ID, CorrectionContext: mergedContext}); err != nil {
+					return err
+				}
+				targetTaskID = successor.ID
+				targetBefore = successor
+				return nil
+			}
+			if !errors.Is(lookupErr, pgx.ErrNoRows) {
+				return lookupErr
+			}
+		}
 
 		activeID, activeErr := qtx.GetActiveAgentDispatchChatTaskForSteer(
 			ctx,
@@ -2832,15 +2875,21 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 		); err != nil {
 			return fmt.Errorf("promote steer target: %w", err)
 		}
+		if err := qtx.SetSteerSuccessorContext(ctx, db.SetSteerSuccessorContextParams{ID: targetTaskID, CorrectionContext: []byte(`{}`)}); err != nil {
+			return err
+		}
 		if errors.Is(activeErr, pgx.ErrNoRows) {
 			return nil
 		}
 
-		active, err := qtx.CancelAgentTask(ctx, activeID)
+		active, err := qtx.CancelAgentTaskForSteer(ctx, activeID)
 		if err != nil {
 			return fmt.Errorf("cancel active IM task for steer: %w", err)
 		}
 		cancelled = &active
+		if _, err := enqueueSteerCallbackCompletions(ctx, qtx, active, "canceled", nil, "", ""); err != nil {
+			return err
+		}
 		_, err = freezeTaskExecutionUpdateResultMessage(ctx, qtx, active.ID, nil)
 		if err != nil {
 			return fmt.Errorf("freeze steered task execution update: %w", err)
@@ -3339,7 +3388,7 @@ func (s *TaskService) broadcastChatCancelFinalized(ctx context.Context, task db.
 
 // ClaimTask atomically claims the next queued task for an agent,
 // respecting max_concurrent_tasks.
-func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	outcome := "unknown"
 	var getAgentMs, countRunningMs, claimAgentMs, reanchorMs, updateStatusMs, dispatchMs int64
@@ -3372,8 +3421,9 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 
 		t0 = time.Now()
 		task, err := qtx.ClaimAgentTask(ctx, db.ClaimAgentTaskParams{
-			AgentID:          agentID,
-			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+			EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+			AgentID:                  agentID,
+			PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 		})
 		claimAgentMs = time.Since(t0).Milliseconds()
 		if err != nil {
@@ -3444,7 +3494,7 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 // ClaimTaskByIDForRuntime claims a specific queued task for a run-once runtime.
 // FC/E2B launches choose a sandbox from the triggering task's chat/issue scope,
 // so the daemon must not claim a different queued task on the same runtime.
-func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, taskID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome                                                              = "unknown"
@@ -3497,9 +3547,10 @@ func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, ta
 
 		t0 = time.Now()
 		task, err := qtx.ClaimAgentTaskByID(ctx, db.ClaimAgentTaskByIDParams{
-			ID:               taskID,
-			RuntimeID:        runtimeID,
-			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+			EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+			ID:                       taskID,
+			RuntimeID:                runtimeID,
+			PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 		})
 		claimAgentMs = time.Since(t0).Milliseconds()
 		if err != nil {
@@ -3549,7 +3600,7 @@ func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, ta
 // without touching Postgres. The cache is invalidated synchronously on
 // every enqueue (notifyTaskAvailable), so a queued task becomes
 // claimable on the next call rather than waiting for the TTL.
-func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome          = "no_task"
@@ -3583,9 +3634,10 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	// Check this before EmptyClaim: a lost claim response moves the task out of
 	// `queued`, so the empty-queued cache cannot represent recoverability.
 	stale, err := s.Queries.ReclaimStaleDispatchedTaskForRuntime(ctx, db.ReclaimStaleDispatchedTaskForRuntimeParams{
-		RuntimeID:         runtimeID,
-		ClaimRecoverySecs: claimResponseRecoveryWindow.Seconds(),
-		PrepareLeaseSecs:  prepareLeaseDuration.Seconds(),
+		EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+		RuntimeID:                runtimeID,
+		ClaimRecoverySecs:        claimResponseRecoveryWindow.Seconds(),
+		PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 	})
 	if err == nil {
 		outcome = "reclaimed_dispatched"
@@ -3641,7 +3693,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		triedAgents[agentKey] = struct{}{}
 		tried++
 
-		task, err := s.ClaimTask(ctx, candidate.AgentID)
+		task, err := s.ClaimTask(ctx, candidate.AgentID, authorization...)
 		if err != nil {
 			loopMs = time.Since(loopStart).Milliseconds()
 			outcome = "error_claim"
@@ -3787,7 +3839,7 @@ func (s *TaskService) RequeueTaskAfterClaimFailure(ctx context.Context, task db.
 // The returned slice contains both reclaimed and freshly-claimed tasks, each
 // already carrying its runtime_id so the daemon routes it to the matching
 // runtime locally.
-func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int, authorization ...TaskClaimAuthorization) ([]db.AgentTaskQueue, error) {
 	if len(runtimeIDs) == 0 || maxTasks <= 0 {
 		return nil, nil
 	}
@@ -3834,10 +3886,11 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 
 	// 2. Reclaim lost-response dispatched tasks across the set, up to maxTasks.
 	reclaimed, err := s.Queries.ReclaimStaleDispatchedTasksForRuntimes(ctx, db.ReclaimStaleDispatchedTasksForRuntimesParams{
-		RuntimeIds:        uniqueIDs,
-		ClaimRecoverySecs: claimResponseRecoveryWindow.Seconds(),
-		PrepareLeaseSecs:  prepareLeaseDuration.Seconds(),
-		MaxTasks:          int32(maxTasks),
+		EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+		RuntimeIds:               uniqueIDs,
+		ClaimRecoverySecs:        claimResponseRecoveryWindow.Seconds(),
+		PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
+		MaxTasks:                 int32(maxTasks),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reclaim stale dispatched tasks: %w", err)
@@ -3917,7 +3970,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		}
 		triedAgents[agentKey] = struct{}{}
 
-		task, err := s.ClaimTask(ctx, candidates[i].AgentID)
+		task, err := s.ClaimTask(ctx, candidates[i].AgentID, authorization...)
 		if err != nil {
 			// Each ClaimTask commits in its own transaction, so earlier
 			// iterations (and step-2 reclaims) are already dispatched
@@ -4131,7 +4184,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+			return err
+		}
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4203,7 +4259,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}
 			chatAssistantMsg = msg
 		}
-		queued, err := s.enqueueTaskCompletionInTx(ctx, qtx, t, "completed", result, "", "")
+		queued, err := s.enqueueTaskCompletionInTx(ctx, qtx, terminalTx, t, "completed", result, "", "")
 		if err != nil {
 			return fmt.Errorf("enqueue task completion: %w", err)
 		}
@@ -4649,28 +4705,12 @@ func (s *TaskService) failTask(
 	// retry. The overlay build can do network I/O (Composio), so we resolve it
 	// here — before the transaction — and only for retryable failures, so the
 	// common agent_error path skips this work entirely.
-	var (
-		wantRetry        bool
-		retryOverlay     runtimeMCPOverlayData
-		retryFireAt      pgtype.Timestamptz
-		retryMaxAttempts pgtype.Int4
-	)
+	var retryOverlay runtimeMCPOverlayData
 	if retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
 		} else if retryEligible(failureReason, parent) {
-			wantRetry = true
-			// Persist the reason-aware effective budget into the child so the
-			// retry chain self-describes (e.g. provider_network → max_attempts=3),
-			// rather than leaking a contradictory attempt=N/max_attempts=2 row.
-			retryMaxAttempts = pgtype.Int4{Int32: retryAttemptCeiling(failureReason, parent.MaxAttempts), Valid: true}
-			// Defer this attempt when the reason's schedule calls for a backoff
-			// (provider_network's final attempt waits ~5s); a zero delay leaves
-			// fire_at NULL so the child is created immediately-claimable.
-			if delay := retryDelayForAttempt(failureReason, parent.Attempt); delay > 0 {
-				retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
-			}
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
 				// Best-effort: a missing overlay is not retry-fatal — the child
 				// simply runs without the Composio overlay.
@@ -4685,9 +4725,13 @@ func (s *TaskService) failTask(
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
+	var retryCreated bool
 	var completionQueued bool
 	var executionUpdateReady bool
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+			return err
+		}
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4797,22 +4841,13 @@ func (s *TaskService) failTask(
 			}
 		}
 
-		// Create the retry child atomically with the fail. CreateRetryTask reads
-		// the just-failed parent row (same tx), so it inherits chat_input_task_id
-		// and the bumped chat-retry priority; broadcast/notify happen after commit.
-		if wantRetry {
-			child, cerr := qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-				ID:                   taskID,
-				FireAt:               retryFireAt,
-				MaxAttempts:          retryMaxAttempts,
-				RuntimeMcpOverlay:    retryOverlay.Overlay,
-				RuntimeConnectedApps: retryOverlay.ConnectedApps,
-			})
-			if cerr != nil {
-				return fmt.Errorf("create retry task: %w", cerr)
-			}
-			retried = &child
-		} else {
+		// FailAgentTask holds the parent row lock. Re-read its persisted
+		// eligibility and child receipt through the same boundary as recovery.
+		retried, retryCreated, err = retryChildForLockedTask(ctx, qtx, terminalTx, t, retryOverlay)
+		if err != nil {
+			return err
+		}
+		if retried == nil {
 			if t.ChatSessionID.Valid {
 				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, nil)
 				if freezeErr != nil {
@@ -4823,6 +4858,7 @@ func (s *TaskService) failTask(
 			queued, completionErr := s.enqueueTaskCompletionInTx(
 				ctx,
 				qtx,
+				terminalTx,
 				t,
 				"failed",
 				nil,
@@ -4908,7 +4944,7 @@ func (s *TaskService) failTask(
 	// ordering rationale. A deferred child (backoff armed via fire_at) is NOT
 	// queued yet: PromoteDueDeferredTasksForRuntime emits its queued event and
 	// daemon wakeup when fire_at arrives, so announcing it here would be wrong.
-	if retried != nil {
+	if retryCreated && retried != nil {
 		slog.Info("task auto-retry enqueued",
 			"parent_task_id", util.UUIDToString(task.ID),
 			"child_task_id", util.UUIDToString(retried.ID),
@@ -5101,90 +5137,42 @@ func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 // Autopilot tasks are NOT auto-retried here; the autopilot scheduler owns
 // its own re-run cadence and we don't want to double-fire it.
 func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentTaskQueue) (*db.AgentTaskQueue, error) {
-	if parent.Status != "failed" {
-		return nil, nil
-	}
-	reason := ""
-	if parent.FailureReason.Valid {
-		reason = parent.FailureReason.String
-	}
-	if !retryableReasons[reason] {
-		return nil, nil
-	}
-	// Use the reason-aware ceiling, not the raw max_attempts column, so an
-	// orphaned provider_network task recovered on its 2nd attempt is still
-	// allowed its deferred 3rd attempt (retryAttemptCeiling raises the ceiling
-	// to 3). Kept in sync with retryEligible below, which applies the same
-	// ceiling to the primary FailTask path.
-	if parent.Attempt >= retryAttemptCeiling(reason, parent.MaxAttempts) {
-		slog.Info("task auto-retry skipped: budget exhausted",
-			"task_id", util.UUIDToString(parent.ID),
-			"attempt", parent.Attempt,
-			"max_attempts", parent.MaxAttempts,
-			"ceiling", retryAttemptCeiling(reason, parent.MaxAttempts),
-		)
-		return nil, nil
-	}
-	// Autopilot has its own retry semantics (don't double-trigger) and a task
-	// with no issue/chat link has nowhere to report its retry — retryEligible
-	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
-	if !retryEligible(reason, parent) {
-		return nil, nil
-	}
-
-	var runtimeMCPOverlay runtimeMCPOverlayData
-	agent, agentErr := s.Queries.GetAgent(ctx, parent.AgentID)
-	if agentErr != nil {
-		// Best-effort: failing to resolve the agent for the overlay is not
-		// retry-fatal. Log and continue — the daemon will reject the claim
-		// later if the agent is genuinely gone.
-		slog.Warn("task auto-retry: load agent for overlay failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"agent_id", util.UUIDToString(parent.AgentID),
-			"error", agentErr,
-		)
-	} else {
-		runtimeMCPOverlay = s.buildRuntimeMCPOverlay(ctx, parent.OriginatorUserID, agent)
-	}
-	// Mirror FailTask's in-tx backoff + effective-budget persistence: defer the
-	// final provider_network attempt ~5s via fire_at (zero delay leaves fire_at
-	// NULL for an immediate child), and write the reason-aware ceiling into the
-	// child's max_attempts so the retry chain stays self-consistent.
-	var retryFireAt pgtype.Timestamptz
-	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
-		retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
-	}
-	child, err := s.Queries.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-		ID:                   parent.ID,
-		FireAt:               retryFireAt,
-		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
-		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
-		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
-	})
+	// The supplied snapshot identifies the parent only. Prepare external MCP
+	// facts outside the lock, then decide from its current persisted row.
+	current, err := s.Queries.GetAgentTask(ctx, parent.ID)
 	if err != nil {
-		slog.Warn("task auto-retry failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"error", err,
-		)
 		return nil, err
 	}
-	slog.Info("task auto-retry enqueued",
-		"parent_task_id", util.UUIDToString(parent.ID),
-		"child_task_id", util.UUIDToString(child.ID),
-		"reason", reason,
-		"attempt", child.Attempt,
-		"max_attempts", child.MaxAttempts,
-		"status", child.Status,
-	)
-	// A queued child transitions ∅ → queued (same as EnqueueTaskFor*): broadcast
-	// queued first, then notify the daemon — see EnqueueTaskForIssue for ordering
-	// rationale. A deferred child (backoff armed) stays inert until
-	// PromoteDueDeferredTasksForRuntime fires its queued event + wakeup.
-	if child.Status == "queued" {
-		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
-		s.NotifyTaskEnqueued(ctx, child)
+	var overlay runtimeMCPOverlayData
+	if current.Status == "failed" && retryEligible(current.FailureReason.String, current) {
+		if agent, agentErr := s.Queries.GetAgent(ctx, current.AgentID); agentErr != nil {
+			slog.Warn("task auto-retry: load agent for overlay failed",
+				"parent_task_id", util.UUIDToString(current.ID), "error", agentErr)
+		} else {
+			overlay = s.buildRuntimeMCPOverlay(ctx, current.OriginatorUserID, agent)
+		}
 	}
-	return &child, nil
+	var child *db.AgentTaskQueue
+	var created bool
+	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, tx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, tx, parent.ID); err != nil {
+			return err
+		}
+		locked, err := qtx.GetAgentTaskForCompletionFinalization(ctx, parent.ID)
+		if err != nil {
+			return err
+		}
+		child, created, err = retryChildForLockedTask(ctx, qtx, tx, locked, overlay)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if created && child != nil && child.Status == "queued" {
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, *child)
+		s.NotifyTaskEnqueued(ctx, *child)
+	}
+	return child, nil
 }
 
 // RerunIssue creates a fresh queued task for an agent on the issue. Used by
@@ -5668,16 +5656,24 @@ func (s *TaskService) runInTxWithHandle(ctx context.Context, fn func(*db.Queries
 
 // ReportProgress broadcasts a progress update via the event bus.
 func (s *TaskService) ReportProgress(ctx context.Context, task db.AgentTaskQueue, workspaceID string, summary string, step, total int) {
-	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+	recipientUserID := ""
+	if IsEmployeeDirectTask(task) {
+		route, ok := s.humanRealtimeRouteForTask(ctx, task)
+		if !ok {
+			return
+		}
+		workspaceID, recipientUserID = route.workspaceID, route.recipientUserID
+	} else if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
 		return
 	}
 	taskID := util.UUIDToString(task.ID)
 	s.Bus.Publish(events.Event{
-		Type:        protocol.EventTaskProgress,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		TaskID:      taskID,
+		Type:            protocol.EventTaskProgress,
+		WorkspaceID:     workspaceID,
+		RecipientUserID: recipientUserID,
+		ActorType:       "system",
+		ActorID:         "",
+		TaskID:          taskID,
 		Payload: protocol.TaskProgressPayload{
 			TaskID:  taskID,
 			Summary: summary,
@@ -5745,27 +5741,46 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 	return result
 }
 
+// TaskExecutionSurface controls platform-owned skill injection. It does not
+// filter explicitly bound skills, which remain owned by workspace/context authors.
+type TaskExecutionSurface string
+
+const (
+	TaskExecutionSurfacePlatform TaskExecutionSurface = "platform"
+	TaskExecutionSurfaceDirect   TaskExecutionSurface = "employee_direct"
+)
+
+// ExecutionSurfaceForTask is shared by claim and subsequent bundle resolution.
+func ExecutionSurfaceForTask(task db.AgentTaskQueue) TaskExecutionSurface {
+	if IsEmployeeDirectTask(task) {
+		return TaskExecutionSurfaceDirect
+	}
+	return TaskExecutionSurfacePlatform
+}
+
 // LoadAgentExecutionSkills returns every skill that should be visible to an
 // agent during task execution: runtime-compatible workspace-bound skills,
 // platform built-ins, and runtime-specific skills implied by the exact Runtime
 // that claimed the task.
 func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
-	return s.LoadTaskExecutionSkills(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+	return s.LoadTaskExecutionSkills(ctx, agentID, nil, runtime, taskBackend, TaskExecutionSurfacePlatform, messagePolicy...)
 }
 
 // LoadTaskExecutionSkills is LoadAgentExecutionSkills for one claimed task:
 // the agent's enabled skills plus extraSkillIDs (scene / personal context
 // skills), deduplicated by skill id with agent rows first. Extra skills are
 // loaded only from the runtime's workspace and pass the same runtime filter;
-// unknown or foreign ids are skipped. Built-ins and the DWS skill follow as
-// usual.
-func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
+// unknown or foreign ids are skipped. Direct omits automatic platform built-ins;
+// runtime DWS identity/message rules still apply on either execution surface.
+func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, surface TaskExecutionSurface, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
 	workspaceSkills := s.LoadAgentSkills(ctx, agentID)
 	if len(extraSkillIDs) > 0 {
 		workspaceSkills = append(workspaceSkills, s.loadWorkspaceSkillsByID(ctx, runtime.WorkspaceID, extraSkillIDs, workspaceSkills)...)
 	}
 	skills := filterAgentSkillsForRuntime(workspaceSkills, runtime, taskBackend)
-	skills = append(skills, s.BuiltinSkills()...)
+	if surface != TaskExecutionSurfaceDirect {
+		skills = append(skills, s.BuiltinSkills()...)
+	}
 	if CloudSandboxRuntimeHasCapability(runtime, "dws") {
 		var policy *protocol.DingTalkMessagePolicy
 		if len(messagePolicy) > 0 {
@@ -5779,12 +5794,12 @@ func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtyp
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
-	return s.LoadTaskSkillBundles(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+	return s.LoadTaskSkillBundles(ctx, agentID, nil, runtime, taskBackend, TaskExecutionSurfacePlatform, messagePolicy...)
 }
 
 // LoadTaskSkillBundles is LoadAgentSkillBundles over LoadTaskExecutionSkills.
-func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
-	return BuildAgentSkillBundles(s.LoadTaskExecutionSkills(ctx, agentID, extraSkillIDs, runtime, taskBackend, messagePolicy...))
+func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, surface TaskExecutionSurface, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
+	return BuildAgentSkillBundles(s.LoadTaskExecutionSkills(ctx, agentID, extraSkillIDs, runtime, taskBackend, surface, messagePolicy...))
 }
 
 // loadWorkspaceSkillsByID loads skills of workspaceID by id with their files,
@@ -6302,6 +6317,14 @@ func nextQueuedTaskForTerminal(terminal db.AgentTaskQueue, candidates []db.Agent
 }
 
 func sameTaskSerializationGroup(a, b db.AgentTaskQueue) bool {
+	// Keep the Direct/quick-create boundary aligned with ClaimAgentTask and
+	// ClaimAgentTaskByID. Queue rows for independent EmployeeTasks may execute
+	// together; only the same durable task identity needs this writer barrier.
+	if IsEmployeeDirectTask(a) || IsEmployeeDirectTask(b) {
+		directA, okA := ParseDirectTaskContext(a)
+		directB, okB := ParseDirectTaskContext(b)
+		return okA && okB && directA.EmployeeTaskID == directB.EmployeeTaskID
+	}
 	if a.IssueID.Valid {
 		return b.IssueID.Valid && b.IssueID == a.IssueID
 	}
@@ -6459,10 +6482,29 @@ type humanRealtimeRoute struct {
 }
 
 // humanRealtimeRouteForTask keeps ordinary events on their existing workspace
-// fanout while routing visible A2A chat events only to the endpoint owner who
+// fanout while routing Direct events only to a verified current originator,
+// and visible A2A chat events only to the endpoint owner who
 // owns the backing chat_session. A2A tasks without a visible chat session, or
 // any failed owner lookup, remain suppressed.
 func (s *TaskService) humanRealtimeRouteForTask(ctx context.Context, task db.AgentTaskQueue) (humanRealtimeRoute, bool) {
+	if IsEmployeeDirectTask(task) {
+		direct, ok := ParseDirectTaskContext(task)
+		if !ok || s == nil || s.Queries == nil || !task.OriginatorUserID.Valid {
+			return humanRealtimeRoute{}, false
+		}
+		workspaceID, parseErr := util.ParseUUID(direct.WorkspaceID)
+		if parseErr != nil {
+			return humanRealtimeRoute{}, false
+		}
+		agent, agentErr := s.Queries.GetAgent(ctx, task.AgentID)
+		if agentErr != nil || agent.WorkspaceID != workspaceID {
+			return humanRealtimeRoute{}, false
+		}
+		if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{WorkspaceID: workspaceID, UserID: task.OriginatorUserID}); err != nil {
+			return humanRealtimeRoute{}, false
+		}
+		return humanRealtimeRoute{workspaceID: direct.WorkspaceID, recipientUserID: util.UUIDToString(task.OriginatorUserID)}, true
+	}
 	isA2A, err := s.isA2AHumanProjectionTask(ctx, task)
 	if err != nil {
 		slog.Error("A2A task realtime route lookup failed; suppressing human projection",
@@ -6707,6 +6749,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 				return util.UUIDToString(ap.WorkspaceID)
 			}
 		}
+	}
+	if direct, ok := ParseDirectTaskContext(task); ok {
+		return direct.WorkspaceID
 	}
 	// Quick-create tasks have no issue / chat / autopilot link — workspace
 	// lives in the context JSONB. Returning "" here is what blocked

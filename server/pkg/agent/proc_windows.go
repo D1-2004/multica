@@ -54,3 +54,6 @@ func signalProcessGroup(p *os.Process, _ syscall.Signal) {
 }
 
 func waitProcessGroupGone(_ *os.Process, _ time.Duration) bool { return false }
+
+// Windows cannot prove descendant exit until processes use Job Objects.
+func finishProcessGroup(_ *os.Process) bool { return false }

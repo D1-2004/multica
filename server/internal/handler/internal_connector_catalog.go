@@ -194,7 +194,7 @@ func (h *Handler) connectorCatalogApps(ctx context.Context, workspaceID string) 
 	}
 	out := []catalogAppView{}
 	for _, app := range connectorCatalog.Apps() {
-		view := catalogAppView{catalogAppFacts: h.catalogAppFactsView(app), MCPURL: app.MCPURL}
+		view := catalogAppView{catalogAppFacts: h.catalogAppFactsFor(ctx, workspaceID, app), MCPURL: app.MCPURL}
 		if id, ok := added[app.Slug]; ok {
 			id := id
 			view.ConnectorID = &id
@@ -220,7 +220,36 @@ func (h *Handler) loadInternalConnector(ctx context.Context, workspaceID, connec
 	if errors.Is(err, pgx.ErrNoRows) {
 		return internalConnector{}, errConnectorNotFound
 	}
-	return c, err
+	if err != nil {
+		return internalConnector{}, err
+	}
+	return h.alignLegacyCatalogURL(ctx, c), nil
+}
+
+// asanaLegacyMCPURL is the v1 path stored before the catalog moved to
+// Asana MCP v2. A token for /v2 is rejected by this path.
+const asanaLegacyMCPURL = "https://mcp.asana.com/mcp"
+
+// alignLegacyCatalogURL moves an Asana connector still pointed at the v1
+// MCP path onto the current catalog URL. Other mismatches are left alone
+// so a drifted custom URL stays visible to the caller that checks it.
+func (h *Handler) alignLegacyCatalogURL(ctx context.Context, c internalConnector) internalConnector {
+	if c.CatalogSlug != "asana" || c.UpstreamURL != asanaLegacyMCPURL {
+		return c
+	}
+	app, ok := catalogApp(c.CatalogSlug)
+	if !ok || app.MCPURL == c.UpstreamURL || app.MCPURL == "" {
+		return c
+	}
+	tag, err := h.DB.Exec(ctx, `UPDATE internal_connector SET upstream_url = $3, updated_at = now()
+		WHERE id = $1::uuid AND workspace_id = $2::uuid AND upstream_url = $4`,
+		c.ID, c.WorkspaceID, app.MCPURL, asanaLegacyMCPURL)
+	if err != nil || tag.RowsAffected() != 1 {
+		slog.WarnContext(ctx, "asana connector URL was not moved to v2", "connector_id", c.ID, "error", err)
+		return c
+	}
+	c.UpstreamURL = app.MCPURL
+	return c
 }
 
 // createCatalogConnector adds the official app slug to the workspace's
@@ -326,6 +355,22 @@ func pinnedCatalogTools(discovered []discoveredConnectorTool, writeEnabled bool)
 	return out
 }
 
+// pinnedCatalogToolsForSlug applies the same cap, and for GitHub drops tools
+// outside the Contents / Pull requests / Issues / Metadata set before the cap
+// so a write the connector does use is not pushed out by Copilot or reactions.
+func pinnedCatalogToolsForSlug(slug string, discovered []discoveredConnectorTool, writeEnabled bool) []string {
+	if slug != "github" {
+		return pinnedCatalogTools(discovered, writeEnabled)
+	}
+	kept := make([]discoveredConnectorTool, 0, len(discovered))
+	for _, tool := range discovered {
+		if githubProductTool(tool.Name) {
+			kept = append(kept, tool)
+		}
+	}
+	return pinnedCatalogTools(kept, writeEnabled)
+}
+
 // catalogSessionKey scopes a cached MCP session to one connector and one
 // access token, so a refreshed or different account never reuses it.
 func catalogSessionKey(connectorID, token string) string {
@@ -369,6 +414,10 @@ func (h *Handler) discoverCatalogConnectorTools(ctx context.Context, c *internal
 	if c.CatalogSlug == "" {
 		return catalogToolRefresh{}, errConnectorNotCatalog
 	}
+	// Outlook tools are fixed. Listing them must not POST the catalog URL.
+	if c.CatalogSlug == outlookCatalogSlug {
+		return h.storeCatalogConnectorTools(ctx, c, outlookDiscoveredTools())
+	}
 	mcp, _, err := catalogConnectorMCP(*c)
 	if err != nil {
 		return catalogToolRefresh{}, err
@@ -387,14 +436,14 @@ func (h *Handler) discoverCatalogConnectorTools(ctx context.Context, c *internal
 	if err != nil {
 		return catalogToolRefresh{}, credentialFailure(err)
 	}
-	listed, truncated, err := mcp.ListTools(ctx, catalogSessionKey(c.ID, token), bearerHeader(token), maxDiscoveredConnectorTools)
+	listed, truncated, err := mcp.ListTools(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, token), catalogMCPHeaders(c.CatalogSlug, token), maxDiscoveredConnectorTools)
 	var status *remotemcp.StatusError
 	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
 		next, refreshErr := h.freshConnectorToken(ctx, c, token)
 		if refreshErr != nil {
 			return catalogToolRefresh{}, credentialFailure(refreshErr)
 		}
-		listed, truncated, err = mcp.ListTools(ctx, catalogSessionKey(c.ID, next), bearerHeader(next), maxDiscoveredConnectorTools)
+		listed, truncated, err = mcp.ListTools(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, next), catalogMCPHeaders(c.CatalogSlug, next), maxDiscoveredConnectorTools)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "official app tool discovery failed", "connector_id", c.ID, "catalog_slug", c.CatalogSlug, "failure_class", connectorTestFailureMessage(catalogUpstreamError(err)))
@@ -426,7 +475,7 @@ func (h *Handler) storeCatalogConnectorTools(ctx context.Context, c *internalCon
 	} else if err != nil {
 		return catalogToolRefresh{}, err
 	}
-	allowed := pinnedCatalogTools(discovered, writeEnabled)
+	allowed := pinnedCatalogToolsForSlug(c.CatalogSlug, discovered, writeEnabled)
 	discoveredRaw, err := json.Marshal(discovered)
 	if err != nil {
 		return catalogToolRefresh{}, err
@@ -548,7 +597,7 @@ func (h *Handler) setCatalogConnectorWriteEnabled(ctx context.Context, workspace
 	if slug == "" {
 		return nil, errConnectorNotCatalog
 	}
-	allowed := pinnedCatalogTools(decodeDiscoveredTools(discoveredRaw), enabled)
+	allowed := pinnedCatalogToolsForSlug(slug, decodeDiscoveredTools(discoveredRaw), enabled)
 	allowedRaw, err := json.Marshal(allowed)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,14 @@
+/* The root layout locks the document (body is h-full overflow-hidden), so
+   the page scrolls inside its shell. Mobile WebViews scrolled the document
+   anyway; the DingTalk desktop side panel (pc_slide) did not. */
 .shell {
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* Viewport units, not 100%: the shell does not depend on every wrapper
+     between it and <body> having a height. */
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Older DingTalk WebViews cannot parse OKLCH, which leaves every token-based

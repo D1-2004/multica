@@ -1,0 +1,37 @@
+{
+  "schema": "el2e.cases.v1",
+  "suite": "BASE-MEMORY",
+  "source": "08-integration-and-release §5 BASE-MEMORY (记住→纠正→DM/group 隔离→忘记→再问); M7",
+  "defaults": {
+    "wait": {"reply": {"timeout_s": 180, "settle_s": 20}, "silence": {"window_s": 50}, "optional": {"window_s": 45, "settle_s": 15}}
+  },
+  "cases": [
+    {
+      "id": "BASE-MEMORY", "title": "记住→纠正→群里不外露→忘记→再问不知道", "scene": "dm+group", "conversation": "dm_zhujue",
+      "roles": {"主管": "zhujue"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "remember", "actor": "主管", "text": "记一下，我常用的会议室是 {ROOM}。", "wait": {"mode": "reply"}},
+        {"id": "correct", "actor": "主管", "text": "更正一下，常用会议室换成 {ROOM_ALT} 了。", "wait": {"mode": "reply"}},
+        {"id": "recall", "actor": "主管", "text": "我常用哪个会议室？只回会议室。", "wait": {"mode": "reply"}},
+        {"id": "group", "actor": "主管", "conversation": "group_mem_base", "at": ["employee"], "text": "我常用哪个会议室来着？", "wait": {"mode": "reply"}},
+        {"id": "forget", "actor": "主管", "text": "常用会议室那条不用记了。", "wait": {"mode": "reply"}},
+        {"id": "again", "actor": "主管", "text": "我常用哪个会议室？", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "纠正后只答 {ROOM_ALT}；群里不报出私聊里记的会议室；忘记后再问说不知道，旧值和新值都不复活；全程不建任务。",
+        "checks": [
+          {"steps": ["recall"], "replies": [1, 1], "include_all": ["{ROOM_ALT}"], "exclude": ["{ROOM}"]},
+          {"steps": ["group"], "replies": [1, 1], "exclude": ["{ROOM}", "{ROOM_ALT}"]},
+          {"steps": ["forget"], "replies": [1, 1], "exclude": ["{ROOM_ALT}"]},
+          {"steps": ["again"], "replies": [1, 1], "exclude": ["{ROOM}", "{ROOM_ALT}"]},
+          {"evidence": "memory_block", "step": "recall", "include": ["{ROOM_ALT}"], "exclude": ["{ROOM}"]},
+          {"evidence": "memory_block", "step": "group", "exclude": ["{ROOM_ALT}"]},
+          {"evidence": "history", "step": "again", "exclude": ["{ROOM_ALT}"]},
+          {"evidence": "no_effect_for_step", "step": "remember"},
+          {"evidence": "no_effect_for_step", "step": "again"}
+        ],
+        "semantic": ["纠正后只给新值", "群里不外露私聊记的值", "忘记后如实说不知道"]
+      }
+    }
+  ]
+}

@@ -67,6 +67,37 @@ type AssocTools struct {
 	Service       *assoc.Service
 	Issues        IssueAccess
 	CommentWriter IssueCommentWriter
+	// Scenes resolves a conversation id the model named (other than the
+	// turn's own) to the agent's registered work scene. Nil limits recall
+	// and bind to the turn's scene.
+	Scenes SceneLookup
+}
+
+// SceneLookup finds the agent's registered work scene of a conversation id
+// in the turn's tenant org (docs/agent-scene.md). It never registers a
+// scene: a conversation the agent has not seen has no scene. A miss is
+// (zero, false, nil).
+type SceneLookup interface {
+	LookupConversationScene(ctx context.Context, turn Turn, conversationID string) (assoc.SceneNode, bool, error)
+}
+
+// sceneNodeFor resolves cid for the graph: the turn's own conversation is the
+// turn's scene, any other goes through Scenes.
+func (t *AssocTools) sceneNodeFor(ctx context.Context, turn Turn, cid string) (assoc.SceneNode, bool, error) {
+	cid = assoc.NormalizeConversationID(cid)
+	if cid == "" {
+		return assoc.SceneNode{}, false, nil
+	}
+	if cid == assoc.NormalizeConversationID(turn.ConversationID) {
+		if sceneID := strings.TrimSpace(turn.SceneID); sceneID != "" {
+			return assoc.SceneNode{SceneID: sceneID, ConversationID: cid, Kind: strings.TrimSpace(turn.Kind)}, true, nil
+		}
+		return assoc.SceneNode{}, false, nil
+	}
+	if t == nil || t.Scenes == nil {
+		return assoc.SceneNode{}, false, nil
+	}
+	return t.Scenes.LookupConversationScene(ctx, turn, cid)
 }
 
 type recallArgs struct {
@@ -186,9 +217,23 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 		Q:              needle,
 		Limit:          limit + 1,
 	}
-	result, err := t.Service.Recall(ctx, q)
-	if err != nil {
-		return "", err
+	var result assoc.Result
+	if cid != "" {
+		node, ok, lookupErr := t.sceneNodeFor(ctx, turn, cid)
+		if lookupErr != nil {
+			return "", lookupErr
+		}
+		q.SceneID = node.SceneID
+		if !ok && issue == "" && needle == "" {
+			// A conversation without a registered scene has no graph links.
+			result = assoc.Result{ReadThis: assoc.RecallReadThis, Since: since, Until: now, ConversationID: cid, Items: []assoc.Item{}, Events: []assoc.EventRef{}}
+		}
+	}
+	if result.ReadThis == "" {
+		result, err = t.Service.Recall(ctx, q)
+		if err != nil {
+			return "", err
+		}
 	}
 	view := newCoordinatorRecallView(result, limit)
 	view.Scope.PersonID = q.PersonID
@@ -219,36 +264,55 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	if err != nil {
 		return "", hintWrap("purpose must name 委托人, 事件, and 目的, such as 冬翔委托：向辰驷确认明天几点打球", hintPurpose, err)
 	}
-	kind := firstNonEmpty(args.Kind, turn.Kind)
+	node, ok, err := t.sceneNodeFor(ctx, turn, cid)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", hintErr("conversation_id is not a scene of this agent; bind only the inbound conversation or one assoc_recall returned", hintConversation)
+	}
 	display := firstNonEmpty(args.DisplayName, turn.SenderName)
 	waitingOn := strings.TrimSpace(args.WaitingOn)
+	var waitingNode *assoc.SceneNode
+	if waitingOn != "" {
+		wait, found, waitErr := t.sceneNodeFor(ctx, turn, waitingOn)
+		if waitErr != nil {
+			return "", waitErr
+		}
+		if found {
+			waitingNode = &wait
+		}
+	}
 	payload := map[string]any{
+		"scene_id":        node.SceneID,
 		"conversation_id": cid,
 		"purpose":         purpose,
 		"delegator":       delegator,
 		"intent":          intent,
 		"intent_label":    assoc.IntentLabel(intent),
-		"kind":            kind,
+		"kind":            node.Kind,
 		"display_name":    display,
 		"waiting_on":      waitingOn,
 		"person_id":       firstNonEmpty(args.PersonID, turn.PersonID),
+	}
+	if waitingOn != "" && waitingNode == nil {
+		payload["waiting_on_unresolved"] = true
 	}
 	if place := strings.TrimSpace(args.Place); place != "" && place != "地点未说明" {
 		payload["place"] = place
 	}
 	if err := t.Service.AssociateIssueConversation(ctx, assoc.AssociateInput{
-		WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),
-		AgentID:        util.UUIDToString(turn.AgentID),
-		IssueID:        issueID,
-		IssueTitle:     purpose,
-		Purpose:        purpose,
-		Intent:         intent,
-		ConversationID: cid,
-		EvidenceID:     firstNonEmpty(args.EvidenceID, turn.EvidenceID),
-		PersonID:       firstNonEmpty(args.PersonID, turn.PersonID),
-		DisplayName:    display,
-		Kind:           kind,
-		WaitingOn:      waitingOn,
+		WorkspaceID: strings.TrimSpace(turn.WorkspaceID),
+		AgentID:     util.UUIDToString(turn.AgentID),
+		IssueID:     issueID,
+		IssueTitle:  purpose,
+		Purpose:     purpose,
+		Intent:      intent,
+		Scene:       node,
+		EvidenceID:  firstNonEmpty(args.EvidenceID, turn.EvidenceID),
+		PersonID:    firstNonEmpty(args.PersonID, turn.PersonID),
+		DisplayName: display,
+		WaitingOn:   waitingNode,
 	}); err != nil {
 		return "", err
 	}

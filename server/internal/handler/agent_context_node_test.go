@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,19 +15,11 @@ import (
 )
 
 const (
-	nodeDirect      = "cidContextNodeDirect=="
+	// nodeDirect is the scene id of Dora's 1:1 chat with the agent.
+	nodeDirect      = "d0d0d0d0-0000-4000-8000-000000000001"
+	nodeDirectCID   = "cidContextNodeDirect=="
 	nodeDirectStaff = "staff-context-node-dora"
 )
-
-// registerGroupScene records a group scene the agent has seen (an
-// agent_scene_config row) under orgID.
-func registerGroupScene(t *testing.T, agentID, orgID, sceneKey, title string) {
-	t.Helper()
-	if _, err := testPool.Exec(context.Background(), `INSERT INTO agent_scene_config (workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title)
-		VALUES ($1, $2, 'dingtalk', $3, $4, 'group', $5)`, testWorkspaceID, agentID, orgID, sceneKey, title); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // jsonNull reports whether a decoded JSON value is null or absent.
 func jsonNull(raw json.RawMessage) bool {
@@ -110,7 +101,7 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 	} {
 		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(ctxcapScene)+"/mcp-config", body), http.StatusBadRequest, name)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath("cidContextNodeNeverSeen==")+"/mcp-config", map[string]any{"mcp_config": servers}), http.StatusNotFound, "unknown scene")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(ctxcapUnknownScene)+"/mcp-config", map[string]any{"mcp_config": servers}), http.StatusNotFound, "unknown scene")
 	member := createPermissionTestMember(t, "context-node-member-"+uuid.NewString()[:8]+"@example.test")
 	owner := createPermissionTestMember(t, "context-node-owner-"+uuid.NewString()[:8]+"@example.test")
 	t.Cleanup(func() {
@@ -124,113 +115,60 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 		t.Fatalf("clear response = %s", w.Body.String())
 	}
 
-	// A 1:1 chat whose person is unknown: no configuration, writes refused.
-	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, agentID, ctxcapOrg, nodeDirect, "Dora"); err != nil {
-		t.Fatal(err)
-	}
+	// A 1:1 chat is a scene like a group (docs/agent-scene.md): its own
+	// scope keyed by its scene id, which managers configure. The person's
+	// personal scope is a separate node and is never the chat's.
+	registerFixedScene(t, agentID, ctxcapOrg, "dm", nodeDirect, nodeDirectCID, "Dora", time.Minute)
 	node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, nodeDirect)
-	if node.Scope != nil || node.CanConnect || len(ctxNodeEnabled(node)) != 0 || !jsonNull(node.MCPConfig) || node.Scene == nil || node.Scene.Kind != "dm" {
-		t.Fatalf("DM of an unknown person = %+v", node)
+	if node.Scope == nil || *node.Scope != (agentContextScopeDTO{Type: contextcap.ScopeScene, OrgID: ctxcapOrg, Key: nodeDirect, Title: "Dora"}) ||
+		!node.CanConnect || node.Rights != contextCapSceneRights || node.Scene == nil || node.Scene.Kind != "dm" || node.Scene.SceneID != nodeDirect {
+		t.Fatalf("DM scene node = %+v", node)
 	}
-	for name, w := range map[string]*httptest.ResponseRecorder{
-		"mcp config": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/mcp-config", map[string]any{"mcp_config": servers}),
-		"binding": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/bindings",
-			map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}),
-		"prompts": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
-			map[string]any{"prompts": []map[string]any{{"name": "a", "text": "b"}}}),
-	} {
-		if w.Code != http.StatusConflict || catalogErrorCode(t, w) != contextCapErrDMPersonUnknown {
-			t.Fatalf("%s write to a DM of an unknown person: %d %s", name, w.Code, w.Body.String())
-		}
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
+		map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}), http.StatusOK, "manager DM prompts")
+	if prompts, err := contextcap.ListPromptComponents(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, nodeDirect); err != nil ||
+		len(prompts) != 1 || prompts[0].Text != "Be brief." {
+		t.Fatalf("DM prompts not in the DM scene: %+v %v", prompts, err)
 	}
+	if prompts, err := contextcap.ListPromptComponents(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil || len(prompts) != 0 {
+		t.Fatalf("DM prompts leaked into the person scope: %+v %v", prompts, err)
+	}
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/mcp-config", map[string]any{"mcp_config": servers}), http.StatusOK, "manager DM MCP config")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/credentials",
+		map[string]string{"connector_id": f.scene, "bearer": "dm-scene-token"}), http.StatusOK, "manager DM credential")
 
-	// Dora writes in the chat: her personal scope is the DM's configuration.
-	// A manager reads it but changes nothing there (contextCapScopeRights).
-	f.coordinatorDMJob(t, nodeDirect, "Dora", nodeDirectStaff, time.Minute)
-	node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, nodeDirect)
-	if node.Scope == nil || *node.Scope != (agentContextScopeDTO{Type: contextcap.ScopePerson, OrgID: ctxcapOrg, Key: nodeDirectStaff, Title: "Dora"}) ||
-		node.CanConnect || node.CanEdit || node.Rights != (contextCapRights{}) {
-		t.Fatalf("DM of Dora for a manager = %+v", node)
+	// Dora's person node is her personal scope: a manager reads it, only
+	// she changes it.
+	f.coordinatorDMJob(t, nodeDirectCID, "Dora", nodeDirectStaff, time.Minute)
+	person := ctxNode(t, router, "", agentID, contextcap.ScopePerson, nodeDirectStaff)
+	if person.Scope == nil || person.Scope.Type != contextcap.ScopePerson || person.Scope.Key != nodeDirectStaff ||
+		person.CanConnect || person.Rights != (contextCapRights{}) || len(person.Prompts) != 0 {
+		t.Fatalf("person node for a manager = %+v", person)
 	}
-	for name, w := range map[string]*httptest.ResponseRecorder{
-		"mcp config": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/mcp-config", map[string]any{"mcp_config": servers}),
-		"prompts": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
-			map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}),
-		"binding": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/bindings",
-			map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}),
-		"person node prompts": scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, nodeDirectStaff)+"/prompts",
-			map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}),
-	} {
-		if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
-			t.Fatalf("manager %s write to Dora's scope: %d %s", name, w.Code, w.Body.String())
-		}
+	w = scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, nodeDirectStaff)+"/prompts",
+		map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}})
+	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
+		t.Fatalf("manager write to Dora's person scope: %d %s", w.Code, w.Body.String())
 	}
-	// Dora herself writes it on the configure page through her 1:1 chat; it
-	// lands in her person scope.
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, "staff-nobody"), nil), http.StatusNotFound, "unknown person")
+	// Dora writes her own scope on the configure page.
 	dora := uuid.NewString()
 	f.grant(t, dora, contextcap.ScopePerson, nodeDirectStaff, "Dora")
 	mobile := ctxcapRouter(f.h)
-	doraWrites := func(what string, body map[string]any) *httptest.ResponseRecorder {
-		body["scope_type"], body["scope_key"] = contextcap.ScopeScene, nodeDirect
-		return ctxcapMobile(t, mobile, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/"+what, dora, body)
-	}
-	ctxcapExpectStatus(t, doraWrites("mcp-config", map[string]any{"mcp_config": servers}), http.StatusOK, "DM MCP config")
-	if _, err := contextcap.GetScopeMCPConfig(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil {
-		t.Fatalf("DM MCP config not in the person scope: %v", err)
-	}
-	ctxcapExpectStatus(t, doraWrites("prompts", map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}), http.StatusOK, "DM prompts")
+	ctxcapExpectStatus(t, ctxcapMobile(t, mobile, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/prompts", dora,
+		map[string]any{"scope_type": contextcap.ScopePerson, "scope_key": nodeDirectStaff, "prompts": []map[string]any{{"name": "语气", "text": "Mine."}}}), http.StatusOK, "Dora's prompts")
 	if prompts, err := contextcap.ListPromptComponents(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil ||
-		len(prompts) != 1 || prompts[0].Text != "Be brief." {
-		t.Fatalf("DM prompts not in the person scope: %+v %v", prompts, err)
+		len(prompts) != 1 || prompts[0].Text != "Mine." {
+		t.Fatalf("Dora's prompts: %+v %v", prompts, err)
 	}
-	ctxcapExpectStatus(t, doraWrites("bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusOK, "DM binding")
-	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil ||
-		!ctxcapStoredBinding(stored, f.person, true, dora) {
-		t.Fatalf("DM binding not in the person scope: %+v %v", stored, err)
+	// Holding the DM's scene through her link lets Dora change the DM's
+	// scene configuration too (whoever may open a scene changes it).
+	f.grant(t, dora, contextcap.ScopeScene, nodeDirect, "Dora")
+	w = ctxcapMobile(t, mobile, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/prompts", dora,
+		map[string]any{"scope_type": contextcap.ScopeScene, "scope_key": nodeDirect, "prompts": []map[string]any{{"name": "x", "text": "y"}}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("link holder write to the DM scene: %d %s", w.Code, w.Body.String())
 	}
-	// The person node is the same scope, with Dora's 1:1 chat as its scene.
-	person := ctxNode(t, router, "", agentID, contextcap.ScopePerson, nodeDirectStaff)
-	if person.Scope == nil || person.Scope.Key != nodeDirectStaff || person.Scene == nil || person.Scene.SceneKey != nodeDirect ||
-		len(person.Prompts) != 1 || !ctxNodeEnabled(person)[f.person] {
-		t.Fatalf("person node = %+v", person)
-	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, "staff-nobody"), nil), http.StatusNotFound, "unknown person")
-	// A manager never stores or connects Dora's own account.
-	w = scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/credentials", map[string]string{"connector_id": f.scene, "bearer": "manager-token"})
-	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
-		t.Fatalf("manager credential on a person: %d %s", w.Code, w.Body.String())
-	}
-
-	// Dora's own account: its hint reaches workspace admins and Dora, not
-	// an agent owner who is only a member.
-	key := contextcap.CredentialBinding{WorkspaceID: testWorkspaceID, AgentID: agentID, ConnectorID: f.scene,
-		ScopeType: contextcap.ScopePerson, OrgID: ctxcapOrg, ScopeKey: nodeDirectStaff}
-	sealed, err := contextcap.SealCredential(f.box, key, "dora-personal-token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := contextcap.UpsertCredential(ctx, testPool, key, sealed, contextcap.Hint("dora-personal-token"), ""); err != nil {
-		t.Fatal(err)
-	}
-	node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, nodeDirect)
-	if got := ctxNodeConnector(t, node, f.scene).Credential; got != (agentSceneCredentialDTO{Connected: true, Account: "••••oken"}) || !strings.Contains(string(node.MCPConfig), "docs") {
-		t.Fatalf("DM node for a workspace admin: credential=%+v mcp=%s", got, node.MCPConfig)
-	}
-	if _, err := testPool.Exec(ctx, `UPDATE agent SET owner_id = $1 WHERE id = $2`, owner, agentID); err != nil {
-		t.Fatal(err)
-	}
-	node = ctxNode(t, router, owner, agentID, contextcap.ScopeScene, nodeDirect)
-	if got := ctxNodeConnector(t, node, f.scene).Credential; got != (agentSceneCredentialDTO{Connected: true}) || node.CanConnect {
-		t.Fatalf("DM node for the agent owner: credential=%+v can_connect=%v", got, node.CanConnect)
-	}
-	// Dora is the agent owner: her own account and connect.
-	f.grant(t, owner, contextcap.ScopePerson, nodeDirectStaff, "Dora")
-	node = ctxNode(t, router, owner, agentID, contextcap.ScopeScene, nodeDirect)
-	if got := ctxNodeConnector(t, node, f.scene).Credential; got.Account != "••••oken" || !node.CanConnect || node.Rights != contextCapAllRights {
-		t.Fatalf("DM node for Dora: credential=%+v can_connect=%v", got, node.CanConnect)
-	}
-	ctxcapExpectStatus(t, scenesAs(t, router, owner, http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, nodeDirectStaff)+"/credentials",
-		map[string]string{"connector_id": f.scene, "bearer": "dora-new-token"}), http.StatusOK, "Dora replaces her token")
 
 	// A workspace that always redacts secrets withholds custom MCP servers.
 	var settings []byte
@@ -470,7 +408,7 @@ func TestAgentContextNodeRevokesGrants(t *testing.T) {
 	ctx := context.Background()
 	const (
 		victimStaff = "staff-context-node-victim"
-		victimDM    = "cidContextNodeVictimDM=="
+		victimDM    = "d0d0d0d0-0000-4000-8000-000000000002"
 	)
 	mallory, alice := uuid.NewString(), uuid.NewString()
 
@@ -482,7 +420,7 @@ func TestAgentContextNodeRevokesGrants(t *testing.T) {
 	}
 	if _, err := contextcap.InsertLink(ctx, testPool, contextcap.Link{
 		TokenHash: contextcap.HashLinkToken(token), WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopePerson,
-		OrgID: ctxcapOrg, ScopeKey: victimStaff, ScopeTitle: "Victim", ExtraSceneKey: victimDM,
+		OrgID: ctxcapOrg, ScopeKey: victimStaff, ScopeTitle: "Victim", ExtraSceneID: victimDM,
 	}, contextcap.LinkTTL(contextcap.ScopePerson)); err != nil {
 		t.Fatal(err)
 	}

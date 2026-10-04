@@ -18,6 +18,10 @@ const base = "https://pre.example.test";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const connectorId = "22222222-2222-4222-8222-222222222222";
 const skillId = "33333333-3333-4333-8333-333333333333";
+// Agent work scenes are keyed by scene_id; the DingTalk conversation id is
+// display-only.
+const groupSceneId = "66666666-6666-4666-8666-666666666666";
+const dmSceneId = "77777777-7777-4777-8777-777777777777";
 const opts = { endpoint: "test", includeReceived: false };
 
 function stubFetch(body: unknown, status = 200) {
@@ -104,14 +108,14 @@ describe("tenants", () => {
   it("maps a tenant's people and tolerates a missing 1:1 chat", () => {
     const persons = AgentTenantPersonsSchema.parse({
       persons: [
-        { staff_id: "staff-1", title: "Ada", dm_scene_key: "cidDm==", last_active_at: "t" },
+        { staff_id: "staff-1", title: "Ada", dm_scene_key: dmSceneId, last_active_at: "t" },
         { staff_id: "staff-2", title: null },
         { staff_id: "staff-2", title: "dup" },
         { title: "no id" },
       ],
     });
     expect(persons).toEqual([
-      { staffId: "staff-1", title: "Ada", dmSceneKey: "cidDm==", lastActiveAt: "t" },
+      { staffId: "staff-1", title: "Ada", dmSceneKey: dmSceneId, lastActiveAt: "t" },
       { staffId: "staff-2", title: "dup", dmSceneKey: "", lastActiveAt: "" },
     ]);
     expect(AgentTenantPersonsSchema.parse({ persons: "x" })).toEqual([]);
@@ -120,16 +124,20 @@ describe("tenants", () => {
 
 describe("Context Builder node", () => {
   const body = {
-    scope: { type: "scene", org_id: "dingA", key: "cidGroup==", title: "Release crew" },
+    scope: { type: "scene", org_id: "dingA", key: groupSceneId, title: "Release crew" },
     scene: {
-      scene_key: "cidGroup==",
+      scene_id: groupSceneId,
+      scene_key: groupSceneId,
+      conversation_id: "cidGroup==",
       kind: "group",
       title: "Release crew",
       org_id: "dingA",
       last_active_at: "t",
       inbound_session_id: "s1",
       inbound_count: 2,
-      memory_id: "m1",
+      memory_id: groupSceneId,
+      has_memory: true,
+      has_prompt: true,
     },
     prompts: [
       { id: "p2", name: "Format", order: 2, text: "Use lists.", updated_by_name: "Bob", updated_at: "t2" },
@@ -174,17 +182,21 @@ describe("Context Builder node", () => {
 
   it("maps the node, sorts prompts by order and keeps private fields out", () => {
     const node = parseWithFallback<ContextNodeDetail | null>(body, ContextNodeDetailSchema, null, opts);
-    expect(node?.scope).toEqual({ type: "scene", orgId: "dingA", key: "cidGroup==", title: "Release crew" });
+    expect(node?.scope).toEqual({ type: "scene", orgId: "dingA", key: groupSceneId, title: "Release crew" });
     // The node's chat: its inbound session and memory.
     expect(node?.scene).toEqual({
-      sceneKey: "cidGroup==",
+      sceneId: groupSceneId,
+      sceneKey: groupSceneId,
+      conversationId: "cidGroup==",
       kind: "group",
       title: "Release crew",
       orgId: "dingA",
       lastActiveAt: "t",
       inboundSessionId: "s1",
       inboundCount: 2,
-      memoryId: "m1",
+      memoryId: groupSceneId,
+      hasMemory: true,
+      hasPrompt: true,
     });
     expect(node?.prompts.map((prompt) => prompt.name)).toEqual(["Tone", "Format"]);
     expect(node?.prompts[0]).toEqual({
@@ -244,6 +256,33 @@ describe("Context Builder node", () => {
       { name: "docs", layer: "org", overridden: true, overriddenBy: "scene" },
       { name: "docs", layer: "scene", overridden: false, overriddenBy: null },
     ]);
+  });
+
+  it("reads a 1:1 chat node as its own scene, and a person node's scene as their 1:1 chat", () => {
+    const dm = {
+      scene_id: dmSceneId,
+      scene_key: dmSceneId,
+      conversation_id: "cidDm==",
+      kind: "dm",
+      title: "Ada",
+      org_id: "dingA",
+      has_memory: true,
+    };
+    const sceneNode = ContextNodeDetailSchema.parse({
+      scope: { type: "scene", org_id: "dingA", key: dmSceneId, title: "Ada" },
+      scene: dm,
+      rights: { toggle: true, connect: true, edit_prompts: true, edit_mcp: true },
+    });
+    expect(sceneNode.scope).toEqual({ type: "scene", orgId: "dingA", key: dmSceneId, title: "Ada" });
+    expect(sceneNode.scene).toMatchObject({ sceneId: dmSceneId, kind: "dm", memoryId: dmSceneId, hasMemory: true });
+    expect(sceneNode.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false });
+
+    const personNode = ContextNodeDetailSchema.parse({
+      scope: { type: "person", org_id: "dingA", key: "staff-1", title: "Ada" },
+      scene: dm,
+    });
+    expect(personNode.scope?.type).toBe("person");
+    expect(personNode.scene?.sceneId).toBe(dmSceneId);
   });
 
   it("tolerates malformed fields without losing the node", () => {
@@ -310,8 +349,8 @@ describe("Context Builder node", () => {
 });
 
 describe("tenant and Context Builder client", () => {
-  const node = { orgId: "dingA", scopeType: "scene" as const, scopeKey: "cid+/=" };
-  const nodePath = `${base}/api/agents/${agentId}/tenants/dingA/context/scene/cid%2B%2F%3D`;
+  const node = { orgId: "ding+A", scopeType: "scene" as const, scopeKey: groupSceneId };
+  const nodePath = `${base}/api/agents/${agentId}/tenants/ding%2BA/context/scene/${groupSceneId}`;
 
   it("lists tenants with a pinned workspace", async () => {
     const fetch = stubFetch({ tenants: [{ org_id: "dingA", name: "Acme" }] });
@@ -356,11 +395,14 @@ describe("tenant and Context Builder client", () => {
   });
 
   it("pages a tenant's groups and lists its people", async () => {
-    const groups = stubFetch({ scenes: [{ scene_key: "cid1" }], has_more: true });
+    const groups = stubFetch({
+      scenes: [{ scene_id: groupSceneId, scene_key: groupSceneId, conversation_id: "cid1", kind: "group" }],
+      has_more: true,
+    });
     const client = new ApiClient(base);
     const page = await client.listAgentTenantGroups("ws-1", agentId, "dingA", { limit: 50, offset: 100 });
     expect(requestOf(groups).url).toBe(`${base}/api/agents/${agentId}/tenants/dingA/groups?limit=50&offset=100`);
-    expect(page).toMatchObject({ hasMore: true, scenes: [{ sceneKey: "cid1" }] });
+    expect(page).toMatchObject({ hasMore: true, scenes: [{ sceneId: groupSceneId, conversationId: "cid1" }] });
 
     const persons = stubFetch({ persons: [{ staff_id: "staff-1", title: "Ada" }] });
     expect(await client.listAgentTenantPersons("ws-1", agentId, "dingA")).toHaveLength(1);

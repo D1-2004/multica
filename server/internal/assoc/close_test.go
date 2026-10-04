@@ -14,41 +14,38 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 	svc := NewService(store)
 
 	a, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-a",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
-		Kind:           "dm",
-		Purpose:        "向冬翔确认今天吃什么",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-a",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
+		Purpose:     "向冬翔确认今天吃什么",
 	})
 	if err != nil || !a.Linked {
 		t.Fatalf("bind A: %+v err=%v", a, err)
 	}
 	b, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-b",
-		IssueTitle:     "向须莫确认明天打球",
-		ConversationID: "cid-b",
-		EvidenceID:     "msg-out-b",
-		Kind:           "dm",
-		Purpose:        "向须莫确认明天打球",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-b",
+		IssueTitle:  "向须莫确认明天打球",
+		Scene:       sceneOf("cid-b"),
+		EvidenceID:  "msg-out-b",
+		Purpose:     "向须莫确认明天打球",
 	})
 	if err != nil || !b.Linked {
 		t.Fatalf("bind B: %+v err=%v", b, err)
 	}
 	if err := AssociateIssueConversation(ctx, store, AssociateInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-a",
-		IssueTitle:     "向冬翔确认今天吃什么",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-in-a",
-		PersonID:       "uid-a",
-		Kind:           "dm",
-		Purpose:        "向冬翔确认今天吃什么",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-a",
+		IssueTitle:  "向冬翔确认今天吃什么",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-in-a",
+		PersonID:    "uid-a",
+		Purpose:     "向冬翔确认今天吃什么",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +57,7 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 		EvidenceID:  "msg-in-a",
 		Body:        "7点",
 		OccurredAt:  now,
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 		PersonKey:   "uid-a",
 	}); err != nil {
 		t.Fatal(err)
@@ -72,6 +69,7 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 	before, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-time.Hour),
 	})
@@ -82,7 +80,7 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 		t.Fatal("expected cid-a to recall a matter before reset")
 	}
 
-	got, err := svc.CloseSceneAssociations(ctx, "ws", "ag", "cid-a")
+	got, err := svc.CloseSceneAssociations(ctx, "ws", "ag", sceneIDOf("cid-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +94,7 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 	after, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-time.Hour),
 	})
@@ -122,6 +121,7 @@ func TestCloseSceneAssociationsDropsRecallAndKeepsEvents(t *testing.T) {
 	other, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-b"),
 		ConversationID: "cid-b",
 		Since:          now.Add(-time.Hour),
 	})

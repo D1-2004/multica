@@ -156,12 +156,24 @@ describe("connected apps list", () => {
 });
 
 describe("connected app detail", () => {
+  const groupSceneId = "66666666-6666-4666-8666-666666666666";
+  const dmSceneId = "77777777-7777-4777-8777-777777777777";
   const detailWire = {
     ...githubWire,
     scenes: [
-      { scene_key: "cidGroup==", title: "Release crew", kind: "group", enabled: true, connected: true, account: "@team" },
-      { scene_key: "cidDm==", title: null, kind: "dm", enabled: false, connected: "true", account: null },
+      {
+        scene_id: groupSceneId,
+        scene_key: groupSceneId,
+        title: "Release crew",
+        kind: "group",
+        enabled: true,
+        connected: true,
+        account: "@team",
+      },
+      // An older shape without scene_id: scene_key carries the scene_id.
+      { scene_key: dmSceneId, title: null, kind: "dm", enabled: false, connected: "true", account: null },
       { scene_key: "", title: "no key" },
+      { scene_id: null, title: "no id" },
     ],
     persons: [
       { scope_key: "staff-1", title: "Ada", enabled: true, connected: false, account: "", share_in_groups: true },
@@ -183,8 +195,16 @@ describe("connected app detail", () => {
     );
     expect(detail).toMatchObject({ slug: "github", globalEnabled: true, sharedAccount: { connected: true }, canAdmin: true });
     expect(detail?.scenes).toEqual([
-      { sceneKey: "cidGroup==", title: "Release crew", kind: "group", enabled: true, connected: true, account: "@team" },
-      { sceneKey: "cidDm==", title: "", kind: "dm", enabled: false, connected: false, account: "" },
+      {
+        sceneId: groupSceneId,
+        sceneKey: groupSceneId,
+        title: "Release crew",
+        kind: "group",
+        enabled: true,
+        connected: true,
+        account: "@team",
+      },
+      { sceneId: dmSceneId, sceneKey: dmSceneId, title: "", kind: "dm", enabled: false, connected: false, account: "" },
     ]);
     expect(detail?.persons).toEqual([
       { scopeKey: "staff-1", title: "Ada", enabled: true, connected: false, account: "", shareInGroups: true },

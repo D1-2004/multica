@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS employee_task_source_idx ON employee_task (workspace_id, agent_id, tenant_org_id, scope_kind, (COALESCE(scene_id, legacy_id)), source_namespace, source_key);

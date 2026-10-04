@@ -54,7 +54,7 @@ export function AgentMessageSettings({
           canEdit={canEdit}
           onSave={(next) => onUpdate({ chat_session_resume: next })}
         />
-        {agent.inbound_coordinator === true ? (
+        {agent.inbound_coordinator === true && (agent.coordination_mode ?? "coordinator") === "coordinator" ? (
           <BooleanSetting
             agentId={agent.id}
             label={t(($) => $.inspector.prop_task_finished_loop)}
@@ -79,6 +79,9 @@ export function InboundCoordinatorSetting({
   onUpdate: (data: Record<string, unknown>) => Promise<void>;
 }) {
   const { t } = useT("agents");
+  const mode = agent.coordination_mode ?? "coordinator";
+  const knownMode = mode !== "unknown";
+  const ready = mode !== "employee" || agent.employee_loop_ready === true;
 
   return (
     <SettingsSection
@@ -86,25 +89,67 @@ export function InboundCoordinatorSetting({
       description={t(($) => $.tab_body.digital_employee.inbound_hint)}
     >
       <SettingsCard>
+        <CoordinationModeSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
         <BooleanSetting
           agentId={agent.id}
           label={t(($) => $.inspector.prop_inbound_coordinator)}
           description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
           enabled={agent.inbound_coordinator === true}
-          canEdit={canEdit}
+          canEdit={canEdit && knownMode && (ready || agent.inbound_coordinator === true)}
           onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, inbound_coordinator_user_decision_mode: "off", event_trigger_enabled: false })}
         />
-        <UserDecisionSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
+        {mode === "coordinator" ? <UserDecisionSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} /> : null}
         <BooleanSetting
           agentId={agent.id}
           label={t(($) => $.inspector.prop_event_trigger)}
           description={t(($) => $.inspector.prop_event_trigger_hint)}
           enabled={agent.event_trigger_enabled === true}
-          canEdit={canEdit}
+          canEdit={canEdit && knownMode && (ready || agent.event_trigger_enabled === true)}
           onSave={(next) => onUpdate(next ? { event_trigger_enabled: true, inbound_coordinator: true } : { event_trigger_enabled: false })}
         />
       </SettingsCard>
     </SettingsSection>
+  );
+}
+
+function CoordinationModeSetting({ agent, canEdit, onUpdate }: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const [saving, setSaving] = useState(false);
+  const mode = agent.coordination_mode ?? "coordinator";
+  const hintId = useId();
+  return (
+    <SettingsRow label={t(($) => $.inspector.prop_coordination_mode)} description={t(($) => $.inspector.prop_coordination_mode_hint)} size="text" align="start">
+      <div className="space-y-3">
+        <RadioGroup
+          aria-label={t(($) => $.inspector.prop_coordination_mode)}
+          aria-describedby={hintId}
+          value={mode}
+          disabled={!canEdit || saving || mode === "unknown"}
+          onValueChange={(next) => {
+            if (!canEdit || saving || mode === "unknown" || next === mode || (next !== "coordinator" && next !== "employee") || (next === "employee" && agent.employee_loop_ready !== true)) return;
+            setSaving(true);
+            void onUpdate({ coordination_mode: next }).catch(() => undefined).finally(() => setSaving(false));
+          }}
+          className="gap-3"
+        >
+          <label className="flex items-center gap-3">
+            <RadioGroupItem value="coordinator" aria-labelledby={`${hintId}-coordinator`} />
+            <span id={`${hintId}-coordinator`} className="text-body">Coordinator</span>
+          </label>
+          <label className="flex items-center gap-3">
+            <RadioGroupItem value="employee" aria-labelledby={`${hintId}-employee`} disabled={agent.employee_loop_ready !== true} />
+            <span id={`${hintId}-employee`} className="text-body">EmployeeLoop</span>
+          </label>
+        </RadioGroup>
+        <p id={hintId} className="text-caption leading-5 text-muted-foreground">
+          {mode === "unknown" ? t(($) => $.inspector.prop_coordination_mode_unknown) : agent.employee_loop_ready !== true ? t(($) => $.inspector.prop_employee_loop_unavailable) : t(($) => $.inspector.prop_coordination_mode_confirmed)}
+        </p>
+      </div>
+    </SettingsRow>
   );
 }
 

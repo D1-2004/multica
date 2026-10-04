@@ -65,6 +65,7 @@ type preMigrationHook func(ctx context.Context, pool *pgxpool.Pool) error
 // 259 does not know that fork-owned value and installs a NOT VALID constraint
 // without it; the hook widens the constraint before migration 260 validates it.
 var preMigrationHooks = map[string]preMigrationHook{
+	"10041_employee_first_feedback_identity_idx": cleanupInvalidConcurrentIndexHook("employee_first_feedback_identity_idx"),
 	// An interrupted build leaves an INVALID unique index that IF NOT EXISTS
 	// would accept as done.
 	"9461_agent_dws_native_subscription_account_idx": cleanupInvalidConcurrentIndexHook("idx_agent_dws_native_subscription_account"),
@@ -91,6 +92,36 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// and name (ON CONFLICT arbiters).
 	"9421_agent_tenant_org_idx":              cleanupInvalidConcurrentIndexHook("agent_tenant_org_idx"),
 	"9423_context_prompt_component_name_idx": cleanupInvalidConcurrentIndexHook("context_prompt_component_name_idx"),
+	// One OAuth application per scene and provider (ON CONFLICT arbiter).
+	"9741_context_connector_app_scope_idx": cleanupInvalidConcurrentIndexHook("context_connector_app_scope_idx"),
+	// Unique connector-app indexes. An interrupted build leaves an INVALID
+	// index that IF NOT EXISTS would accept, so uniqueness would not hold.
+	"9435_connector_app_workspace_provider_client_idx": cleanupInvalidConcurrentIndexHook("connector_app_workspace_provider_client_idx"),
+	"9438_connector_auth_binding_app_scope_idx":        cleanupInvalidConcurrentIndexHook("connector_auth_binding_app_scope_idx"),
+	// One scene routine per autopilot, and one per scene and dedupe key (ON
+	// CONFLICT arbiters).
+	"9521_context_scope_routine_autopilot_idx":    cleanupInvalidConcurrentIndexHook("context_scope_routine_autopilot_idx"),
+	"9522_context_scope_routine_scene_dedupe_idx": cleanupInvalidConcurrentIndexHook("context_scope_routine_scene_dedupe_idx"),
+	// EmployeeTask lifecycle v2: one wait per task kind/ref, and at most one
+	// goal completion per goal revision.
+	"9902_employee_task_wait_id_idx":          cleanupInvalidConcurrentIndexHook("employee_task_wait_id_idx"),
+	"9903_employee_task_wait_ref_idx":         cleanupInvalidConcurrentIndexHook("employee_task_wait_ref_idx"),
+	"9904_employee_task_entry_completion_idx": cleanupInvalidConcurrentIndexHook("employee_task_entry_completion_idx"),
+	// One Task-to-Task link per task, relation and related task.
+	"9861_employee_task_link_idx": cleanupInvalidConcurrentIndexHook("employee_task_link_idx"),
+	// Cross-scene collection ledger (taskinput): ids, one collection per task
+	// source, one invitation per slot, one input per source and version, and
+	// one ready intent per collection revision (ON CONFLICT arbiters).
+	"9921_employee_task_collection_id_idx":     cleanupInvalidConcurrentIndexHook("employee_task_collection_id_idx"),
+	"9922_employee_task_collection_source_idx": cleanupInvalidConcurrentIndexHook("employee_task_collection_source_idx"),
+	"9923_employee_task_invitation_id_idx":     cleanupInvalidConcurrentIndexHook("employee_task_invitation_id_idx"),
+	"9924_employee_task_invitation_slot_idx":   cleanupInvalidConcurrentIndexHook("employee_task_invitation_slot_idx"),
+	"9926_employee_task_input_source_idx":      cleanupInvalidConcurrentIndexHook("employee_task_input_source_idx"),
+	"9927_employee_task_input_version_idx":     cleanupInvalidConcurrentIndexHook("employee_task_input_version_idx"),
+	"9928_employee_task_ready_intent_idx":      cleanupInvalidConcurrentIndexHook("employee_task_ready_intent_idx"),
+	"10021_eval_report_id_idx":                 cleanupInvalidConcurrentIndexHook("eval_report_id_idx"),
+	"10022_eval_report_run_idx":                cleanupInvalidConcurrentIndexHook("eval_report_run_idx"),
+	"10023_eval_report_workspace_time_idx":     cleanupInvalidConcurrentIndexHook("eval_report_workspace_time_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {
@@ -161,6 +192,8 @@ type migrationVersionAlias struct {
 // both stems: the new binary skips replaying the migration, while a binary
 // rollback still sees the historical stem it understands.
 var migrationVersionAliases = []migrationVersionAlias{
+	{Legacy: "9821_employee_routine_occurrence_decision", Current: "9996_employee_routine_occurrence_decision"},
+	{Legacy: "271_task_completion_canceled_status", Current: "9540_task_completion_canceled_status"},
 	{Legacy: "175_webhook_delivery_worker", Current: "176_webhook_delivery_worker"},
 	{Legacy: "176_autopilot_run_webhook_delivery_index", Current: "177_autopilot_run_webhook_delivery_index"},
 	{Legacy: "177_webhook_delivery_queue_index", Current: "178_webhook_delivery_queue_index"},
@@ -443,7 +476,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 
 	existsSQL := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE version = $1)", tableIdent)
 	insertSQL := fmt.Sprintf("INSERT INTO %s (version) VALUES ($1)", tableIdent)
-	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE version = $1", tableIdent)
+	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE version = ANY($1::text[])", tableIdent)
 
 	for _, file := range opts.Files {
 		version := migrations.ExtractVersion(file)
@@ -492,7 +525,15 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		if opts.Direction == "up" {
 			_, err = conn.Exec(ctx, insertSQL, version)
 		} else {
-			_, err = conn.Exec(ctx, deleteSQL, version)
+			// A reverted migration must lose every historical name too;
+			// otherwise up would reconcile an alias and skip restoring it.
+			versions := []string{version}
+			for _, alias := range migrationVersionAliases {
+				if alias.Current == version {
+					versions = append(versions, alias.Legacy)
+				}
+			}
+			_, err = conn.Exec(ctx, deleteSQL, versions)
 		}
 		if err != nil {
 			return fmt.Errorf("record migration %q: %w", version, err)

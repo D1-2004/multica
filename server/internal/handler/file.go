@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -453,6 +454,27 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 
 		uploaderType, uploaderID := h.resolveActor(r, userID, workspaceID)
+		// Task-origin uploads choose their storage domain from the authenticated
+		// task before considering optional form bindings.
+		if r.Header.Get("X-Actor-Source") == "task_token" {
+			boundID, ok := parseUUIDOrBadRequest(w, r.Header.Get("X-Task-ID"), "authenticated task_id")
+			if !ok {
+				return
+			}
+			boundTask, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{ID: boundID, WorkspaceID: parseUUID(workspaceID)})
+			if err != nil {
+				writeError(w, http.StatusForbidden, "task source is unavailable")
+				return
+			}
+			if service.IsEmployeeDirectTask(boundTask) {
+				if !strings.EqualFold(strings.TrimSpace(r.FormValue("task_id")), uuidToString(boundTask.ID)) || uploaderType != "agent" || uploaderID != uuidToString(boundTask.AgentID) {
+					writeError(w, http.StatusForbidden, "Direct upload requires its authenticated task_id")
+					return
+				}
+				h.uploadEmployeeTaskArtifact(w, r, boundTask, header.Filename, contentType, data)
+				return
+			}
+		}
 
 		params := db.CreateAttachmentParams{
 			ID:           pgtype.UUID{Bytes: id, Valid: true},
@@ -656,6 +678,15 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if artifact, direct, err := h.authorizeEmployeeArtifact(r, att); direct {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "attachment not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, h.employeeArtifactRef(artifact))
+		return
+	}
+
 	// Always signed, regardless of what the caller advertised: this endpoint is
 	// the single source of fresh, natively-loadable URLs. Stable-mode callers
 	// (CLI `attachment download`, the web inline-media re-sign hook) exchange a
@@ -730,6 +761,9 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 		return db.Attachment{}, false
 	}
 
+	if !h.checkEmployeeArtifactAccess(w, r, att) {
+		return db.Attachment{}, false
+	}
 	return att, true
 }
 
@@ -776,6 +810,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
+	if !h.checkEmployeeArtifactAccess(w, r, att) {
+		return db.Attachment{}, false
+	}
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
 		return att, true
 	}
@@ -806,6 +843,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	att, ok := h.loadAttachmentForDownload(w, r)
 	if !ok {
+		return
+	}
+	if h.serveEmployeeArtifact(w, r, att, false) {
 		return
 	}
 	if h.Storage == nil {
@@ -1238,6 +1278,9 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.serveEmployeeArtifact(w, r, att, true) {
+		return
+	}
 	attachmentID := uuidToString(att.ID)
 
 	if !isTextPreviewable(att.ContentType, att.Filename) {
@@ -1389,6 +1432,10 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+
+	if h.deleteEmployeeTaskArtifact(w, r, att) {
 		return
 	}
 

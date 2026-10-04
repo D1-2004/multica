@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_scene_member_roster_scene_idx;

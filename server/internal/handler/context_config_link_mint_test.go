@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 )
 
@@ -30,6 +32,26 @@ func coordinatorLinkToken(t *testing.T, link inboundcoord.ConfigLink) string {
 	return token
 }
 
+// ctxcapDWSDispatch is the dispatch context a DingTalk digital employee (DWS)
+// writes: the sender carries only its openDingTalkId and display name, never
+// a staffId, and the conversation has no title. A fixture scene id resolves
+// to its SceneRef and conversation id as in ctxcapDispatch.
+func ctxcapDWSDispatch(conversationType, sceneOrCID string) []byte {
+	cid := sceneOrCID
+	payload := map[string]any{"dispatch_source": map[string]any{"platform": "dingtalk", "type": "digital_employee"}}
+	if registered, ok := ctxcapDispatchCIDs[sceneOrCID]; ok {
+		cid = registered
+		payload["agent_scene"] = map[string]any{"scene_id": sceneOrCID}
+	}
+	payload["dispatch_event_data"] = map[string]any{
+		"conversation": map[string]any{"openConversationId": cid, "type": conversationType},
+		"sender":       map[string]any{"displayName": "冬翔", "openDingTalkId": "DpJnOpenSender"},
+		"messages":     []map[string]any{{"openMsgId": "m-dws", "senderOpenDingTalkId": "DpJnOpenSender"}},
+	}
+	raw, _ := json.Marshal(payload)
+	return raw
+}
+
 type coordinatorStoredLink struct {
 	scopeType, orgID, scopeKey, title, sourceTask, extraScene string
 }
@@ -47,8 +69,9 @@ func coordinatorStoredLinkFor(t *testing.T, token string) coordinatorStoredLink 
 
 // The Coordinator's capability answer mints the same links as the executor's
 // create_context_config_link tool: the scene is taken from the inbound turn's
-// dispatch context, a group gets the reusable 30-minute scene link and a 1:1
-// chat the single-use 15-minute personal link that also grants the 1:1 scene.
+// dispatch context, and a group and a 1:1 chat alike get the reusable
+// 30-minute link of their own scene, keyed by the scene_id of the
+// conversation, never by the sender.
 func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.h.cfg.AppURL = "https://app.multica.example/"
@@ -67,7 +90,7 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 
 	// Group chat: the scene link.
 	scene, err := issue(ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
-	if err != nil || scene.Scope != contextcap.ScopeScene || scene.ValidFor != contextcap.LinkTTLScene || scene.SingleUse {
+	if err != nil || scene.Scope != contextcap.ScopeScene || scene.SceneKind != contextcap.SceneKindGroup || scene.ValidFor != contextcap.LinkTTLScene {
 		t.Fatalf("group link=%+v err=%v", scene, err)
 	}
 	ctxcapExpiresWithin(t, scene.ExpiresAt.UTC().Format(time.RFC3339), contextcap.LinkTTLScene)
@@ -82,38 +105,78 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 		ctxcapExpectStatus(t, redeem(user, sceneToken), http.StatusOK, "coordinator scene link redeem")
 	}
 
-	// 1:1 chat: the single-use personal link, which also grants the DM scene.
-	person, err := issue(ctxcapDispatch("single", ctxcapCoordinatorDirect, ctxcapStaff, ctxcapStaff))
-	if err != nil || person.Scope != contextcap.ScopePerson || person.ValidFor != contextcap.LinkTTLPerson || !person.SingleUse {
-		t.Fatalf("1:1 link=%+v err=%v", person, err)
+	// 1:1 chat (冬翔 2026-10-03): the chat's Host-appended link also carries
+	// the chat's person, keyed by TriggerPersonKey (the staffId, else "odt:" + the
+	// openDingTalkId), and opens their own level for the first account that
+	// opens it; that account may open it again, nobody else may. A merged
+	// window of several speakers names no person: the plain scene link.
+	f.registerDirectScene(t)
+	for _, tc := range []struct {
+		name, personKey, title string
+		dispatch               []byte
+	}{
+		{"robot sender with staffId", ctxcapStaff, "Alice", ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff)},
+		{"digital employee without staffId", "odt:DpJnOpenSender", "冬翔", ctxcapDWSDispatch("single", ctxcapDirectScene)},
+		{"merged window of several speakers", "", "Ctxcap group", ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)},
+	} {
+		// The Coordinator appends the link itself, so a 1:1 chat's carries
+		// its person and lives as long as a person link.
+		ttl := contextcap.LinkTTLPerson
+		if tc.personKey == "" {
+			ttl = contextcap.LinkTTLScene
+		}
+		direct, err := issue(tc.dispatch)
+		if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM || direct.ValidFor != ttl {
+			t.Fatalf("%s: 1:1 link=%+v err=%v", tc.name, direct, err)
+		}
+		ctxcapExpiresWithin(t, direct.ExpiresAt.UTC().Format(time.RFC3339), ttl)
+		token := coordinatorLinkToken(t, direct)
+		got := coordinatorStoredLinkFor(t, token)
+		if tc.personKey == "" {
+			if got.scopeType != contextcap.ScopeScene || got.scopeKey != ctxcapDirectScene || got.extraScene != "" || got.title != tc.title {
+				t.Fatalf("%s: stored 1:1 link=%+v", tc.name, got)
+			}
+			for _, user := range []string{alice, bob} {
+				ctxcapExpectStatus(t, redeem(user, token), http.StatusOK, tc.name+": 1:1 scene link redeem")
+			}
+			continue
+		}
+		if got.scopeType != contextcap.ScopePerson || got.orgID != ctxcapOrg || got.scopeKey != tc.personKey ||
+			got.extraScene != ctxcapDirectScene || got.title != tc.title {
+			t.Fatalf("%s: stored 1:1 link=%+v", tc.name, got)
+		}
+		ctxcapExpectStatus(t, redeem(alice, token), http.StatusOK, tc.name+": first account")
+		ctxcapExpectStatus(t, redeem(alice, token), http.StatusOK, tc.name+": the same account again")
+		ctxcapExpectStatus(t, redeem(bob, token), http.StatusGone, tc.name+": another account")
+		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopePerson, ctxcapOrg, tc.personKey); err != nil {
+			t.Fatalf("%s: the person was not granted: %v", tc.name, err)
+		}
 	}
-	ctxcapExpiresWithin(t, person.ExpiresAt.UTC().Format(time.RFC3339), contextcap.LinkTTLPerson)
-	personToken := coordinatorLinkToken(t, person)
-	if got := coordinatorStoredLinkFor(t, personToken); got != (coordinatorStoredLink{
-		scopeType: contextcap.ScopePerson, orgID: ctxcapOrg, scopeKey: ctxcapStaff, title: "Alice", extraScene: ctxcapCoordinatorDirect,
-	}) {
-		t.Fatalf("stored person link=%+v", got)
+	for _, user := range []string{alice, bob} {
+		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, user, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapDirectScene); err != nil {
+			t.Fatalf("the 1:1 link did not grant the 1:1 scene: %v", err)
+		}
 	}
-	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "coordinator person link redeem")
-	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusGone, "coordinator person link reuse")
-	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapCoordinatorDirect); err != nil {
-		t.Fatalf("personal link did not grant the 1:1 scene: %v", err)
+	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, bob, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
+		t.Fatal("another account took the person")
 	}
 }
 
 // decideDispatchCoordinator hands the Coordinator dispatchRuntimeContext, the
-// same envelope the resulting task stores; the issuer reads scene and person
-// from it, and a dispatch recorded under another org gets no link.
+// same envelope the resulting task stores; the issuer reads the scene from
+// it, and a dispatch recorded under another org gets no link.
 func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.h.cfg.AppURL = "https://app.multica.example"
 	f.cleanupGrantsAndLinks(t)
-	command := func(conversationType, cid, orgID string) DispatchCommand {
+	f.registerDirectScene(t)
+	command := func(conversationType, sceneID, orgID string) DispatchCommand {
 		return DispatchCommand{
 			SchemaVersion: "2.0",
+			AgentScene:    &scene.Ref{SceneID: sceneID},
 			Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 			Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
-				Conversation: DispatchConversation{OpenConversationID: cid, Type: conversationType, Title: "Envelope group"},
+				Conversation: DispatchConversation{OpenConversationID: ctxcapDispatchCIDs[sceneID], Type: conversationType, Title: "Envelope group"},
 				Sender:       DispatchSender{StaffID: ctxcapStaff, DisplayName: "Alice", UID: "uid-alice"},
 				Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "你有哪些能力？", SenderStaffID: ctxcapStaff, SenderUID: "uid-alice"}},
 			}},
@@ -132,12 +195,29 @@ func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, group)); got.scopeKey != ctxcapScene || got.title != "Envelope group" || got.orgID != ctxcapOrg {
 		t.Fatalf("group envelope stored=%+v", got)
 	}
-	direct, err := issue(command("single", ctxcapCoordinatorDirect, ctxcapOrg))
-	if err != nil || direct.Scope != contextcap.ScopePerson {
+	// A digital employee's 1:1 chat: the sender has no staffId, so the
+	// link carries the person by "odt:" + openDingTalkId, with the chat as
+	// its extra scene; with a proved staffId, by the staffId.
+	dws := command("single", ctxcapDirectScene, ctxcapOrg)
+	dws.Event.Data.Sender = DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "DpJnOpenSender"}
+	dws.Event.Data.Messages = []DispatchMessage{{OpenMsgID: "msg-dws", Text: "给我你的场域配置链接", SenderOpenDingTalkID: "DpJnOpenSender"}}
+	direct, err := issue(dws)
+	if err != nil || direct.Scope != contextcap.ScopeScene || direct.SceneKind != contextcap.SceneKindDM {
 		t.Fatalf("1:1 envelope link=%+v err=%v", direct, err)
 	}
-	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeKey != ctxcapStaff || got.extraScene != ctxcapCoordinatorDirect {
+	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeType != contextcap.ScopePerson ||
+		got.scopeKey != "odt:DpJnOpenSender" || got.extraScene != ctxcapDirectScene {
 		t.Fatalf("1:1 envelope stored=%+v", got)
+	}
+	dws.Event.Data.Sender.StaffID = ctxcapStaff
+	dws.Event.Data.Messages[0].SenderStaffID = ctxcapStaff
+	direct, err = issue(dws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeType != contextcap.ScopePerson ||
+		got.scopeKey != ctxcapStaff || got.extraScene != ctxcapDirectScene {
+		t.Fatalf("1:1 envelope with a proved staffId stored=%+v", got)
 	}
 	if link, err := issue(command("group", ctxcapScene, "org-someone-else")); err == nil {
 		t.Fatalf("dispatch under another org minted %+v", link)
@@ -159,11 +239,21 @@ func TestCoordinatorConfigLinkIssuerFailsClosed(t *testing.T) {
 	request := func(dispatch []byte) inboundcoord.ConfigLinkRequest {
 		return inboundcoord.ConfigLinkRequest{WorkspaceID: testWorkspaceID, AgentID: agentID, DispatchContext: dispatch}
 	}
-	// Unknown or shared conversation types, merged senders, replayed
-	// contexts and missing context never yield a link.
+	// A conversation without a scene of this agent (unknown type, a channel,
+	// a 1:1 chat that never resolved one), replayed contexts and missing
+	// context never yield a link.
 	refuse("unknown conversation type", request(ctxcapDispatch("", "", ctxcapStaff, ctxcapStaff)))
-	refuse("channel conversation", request(ctxcapDispatch("channel", ctxcapScene, ctxcapStaff, ctxcapStaff)))
-	refuse("multi-sender 1:1", request(ctxcapDispatch("single", ctxcapCoordinatorDirect, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)))
+	refuse("channel conversation", request(ctxcapDispatch("channel", "cidCtxcapChannel==", ctxcapStaff, ctxcapStaff)))
+	refuse("1:1 chat without a scene", request(ctxcapDWSDispatch("single", ctxcapCoordinatorDirect)))
+	// A SceneRef the agent's directory does not hold in the turn's org is
+	// dropped by the use-time fence: no link for it.
+	var unknownRef map[string]any
+	if err := json.Unmarshal(ctxcapDWSDispatch("single", ctxcapCoordinatorDirect), &unknownRef); err != nil {
+		t.Fatal(err)
+	}
+	unknownRef["agent_scene"] = map[string]any{"scene_id": ctxcapUnknownScene}
+	unknownRaw, _ := json.Marshal(unknownRef)
+	refuse("scene the agent does not have", request(unknownRaw))
 	refuse("replayed dispatch", request(ctxcapReplayed(ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))))
 	refuse("no dispatch context", request(nil))
 	refuse("malformed dispatch context", request([]byte(`{"dispatch_event_data":`)))

@@ -1,0 +1,89 @@
+{
+  "app_id": 342160,
+  "environment": "pre",
+  "server_origin": "https://pre-fde-workbench.dingtalk.com",
+  "pipeline_id": 66,
+  "run_id": 3110376103,
+  "mix_flow_instance_id": 243968418,
+  "instance_url": "https://cd.aone.alibaba-inc.com/unite/micro/publish/app/342160?flowId=1005452",
+  "status": "WAITING",
+  "stages": [
+    {
+      "name": "代码合并",
+      "status": "SUCCESS"
+    },
+    {
+      "name": "构建",
+      "status": "SUCCESS"
+    },
+    {
+      "name": "预发部署",
+      "status": "SUCCESS"
+    },
+    {
+      "name": "预发集成测试",
+      "status": "SUCCESS"
+    },
+    {
+      "name": "预发验证",
+      "status": "RUNNING"
+    }
+  ],
+  "functional_commit": "bc747806c3",
+  "source_commit": "4674169c3d475b3178c7091aecb871fd47a930f9",
+  "resolved_release_commit": "3af0ba7a63ffdc04574d9d0d5e862e3fdcce80dc",
+  "built_commit": "6a86b3101b54ec82144c691f8fe646c683f3e181",
+  "build_job_id": 174190350,
+  "artifacts": [
+    {
+      "artifactName": "hub.docker.alibaba-inc.com/aone/dt-fde-multica:20261004120128074043_prepub",
+      "artifactType": "DOCKER",
+      "fileSize": "1331439872",
+      "resourceUrl": "docker://hub.docker.alibaba-inc.com/aone/dt-fde-multica:20261004120128074043_prepub@sha256:7a1b12561faa19971c99c91ed026889eb7cfcf02f124d160a726ae30919639a6",
+      "source": "APP_ARTIFACT"
+    }
+  ],
+  "fence": {
+    "state": "normal",
+    "revision": 15
+  },
+  "live_replicas": [
+    {
+      "instance_id": "dt-fde-multica033008056137.pre.na620",
+      "build_id": "dev@unknown [coordinator-plan:window-plan-v1] [event-router:1] [employee-loop:19] [webhook-source:1] [employee-memory:1] [employee-memory:2] [employee-memory:3]",
+      "last_seen_at": "2026-10-04T12:10:25.177462+08:00"
+    },
+    {
+      "instance_id": "dt-fde-multica033060149134.pre.na620",
+      "build_id": "dev@unknown [coordinator-plan:window-plan-v1] [event-router:1] [employee-loop:19] [webhook-source:1] [employee-memory:1] [employee-memory:2] [employee-memory:3]",
+      "last_seen_at": "2026-10-04T12:10:23.710891+08:00"
+    }
+  ],
+  "startups": [
+    {
+      "instance_id": "dt-fde-multica033008056137.pre.na620",
+      "started_at": "2026-10-04T12:08:50+08:00",
+      "log": "12:08:50.904 INF server starting port=8080"
+    },
+    {
+      "instance_id": "dt-fde-multica033060149134.pre.na620",
+      "started_at": "2026-10-04T12:07:39+08:00",
+      "log": "12:07:39.719 INF server starting port=8080"
+    }
+  ],
+  "health": {
+    "path": "/health",
+    "http_status": 200,
+    "body": "success"
+  },
+  "local_release_verification": {
+    "server_build": "pass",
+    "handler_tests": 40,
+    "boundary": "local isolated PostgreSQL and simulated model/executor"
+  },
+  "runtime_changed": false,
+  "remote_configuration_changed": false,
+  "real_im_canary": "not_run",
+  "reason": "User authorized pre-release publication; no new test messages or background tasks were sent.",
+  "cleanup": "isolated local database dropped; private operator trait cache removed after read-only verification."
+}

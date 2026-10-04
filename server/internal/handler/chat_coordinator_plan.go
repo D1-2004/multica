@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -45,6 +46,9 @@ func (h *Handler) persistWebCoordinatorPlan(ctx context.Context, session db.Chat
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, session.WorkspaceID); err != nil {
+		return nil, decision, err
+	}
 	if _, err := qtx.LockChatSessionForRuntimeBind(ctx, session.ID); err != nil {
 		return nil, decision, fmt.Errorf("lock coordinator chat session: %w", err)
 	}
@@ -61,6 +65,7 @@ func (h *Handler) persistWebCoordinatorPlan(ctx context.Context, session db.Chat
 	txTasks := &service.TaskService{Queries: qtx, TxStarter: tx, Bus: bufferedBus, FeatureFlags: h.TaskService.FeatureFlags, Composio: h.TaskService.Composio}
 	txIssues := service.NewIssueService(qtx, tx, bufferedBus, analyticsBuffer, txTasks)
 	txComments := service.NewIssueCommentService(qtx, bufferedBus, txTasks)
+	issueBackend := service.NewEmployeeIssueBackend(txIssues, txComments)
 	committed := decision
 	committed.IssueResults = nil
 	committed.CompletedActionKeys = nil
@@ -87,22 +92,22 @@ func (h *Handler) persistWebCoordinatorPlan(ctx context.Context, session db.Chat
 			if err != nil || issue.AssigneeID != session.AgentID || issue.AssigneeType.String != "agent" {
 				return nil, decision, errors.New("continuation target is not owned by this chat agent")
 			}
-			result, err := txComments.CreateExternalFollowUp(ctx, service.IssueCommentCreateParams{
+			result, err := issueBackend.ContinueInTx(ctx, tx, service.EmployeeIssueContinueParams{Comment: service.IssueCommentCreateParams{
 				Issue: issue, AuthorID: userID, Content: inboundcoord.ContinuationContent(item), DispatchContext: raw,
 				IdempotencyKey: "web:" + util.UUIDToString(session.ID) + ":" + trace.TraceID + ":" + item.ActionKey,
-			}, service.IssueCommentCreateOpts{})
+			}, ActorRef: "member:" + util.UUIDToString(userID)})
 			if err != nil {
 				return nil, decision, err
 			}
 			task = result.Task
 			outcome = protocol.ChatCoordinatorIssueResult{Action: "issue_commented", IssueID: util.UUIDToString(issue.ID), IssueIdentifier: service.IssueIdentifier(prefix, issue.Number), IssueTitle: issue.Title, CommentID: util.UUIDToString(result.Comment.ID), TaskID: util.UUIDToString(task.ID)}
 		} else {
-			result, err := txIssues.Create(ctx, service.IssueCreateParams{
+			result, err := issueBackend.CreateInTx(ctx, tx, service.EmployeeIssueCreateParams{Intent: employeetask.CreateParams{Scope: employeetask.Scope{WorkspaceID: util.UUIDToString(session.WorkspaceID), AgentID: util.UUIDToString(session.AgentID), Kind: employeetask.ScopeLegacyChat, LegacyID: util.UUIDToString(session.ID)}, OwnerLoop: employeetask.LoopCoordinator, DispatchMode: employeetask.DispatchIssue, RequesterRef: "member:" + util.UUIDToString(userID), Definition: employeetask.Definition{Goal: inboundcoord.IssueTitle(itemDecision, itemContent)}, Input: itemContent, Source: employeetask.Source{Namespace: "coordinator_web", Key: trace.TraceID + ":" + item.ActionKey}}, Issue: service.IssueCreateParams{
 				WorkspaceID: session.WorkspaceID, Title: inboundcoord.IssueTitle(itemDecision, itemContent),
 				Description: pgtype.Text{String: inboundcoord.IssueDescription(itemDecision, itemContent), Valid: true},
 				Status:      "todo", Priority: "none", AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: session.AgentID,
 				CreatorType: "member", CreatorID: userID, AllowDuplicate: true, DispatchContext: raw,
-			}, service.IssueCreateOpts{ActorID: util.UUIDToString(userID), AnalyticsAgentID: util.UUIDToString(session.AgentID), Platform: "web"})
+			}, Options: service.IssueCreateOpts{ActorID: util.UUIDToString(userID), AnalyticsAgentID: util.UUIDToString(session.AgentID), Platform: "web"}})
 			if err != nil {
 				return nil, decision, err
 			}
@@ -132,7 +137,10 @@ func (h *Handler) persistWebCoordinatorPlan(ctx context.Context, session db.Chat
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, event)
 	}
 	for _, task := range tasks {
-		h.TaskService.NotifyTaskEnqueued(ctx, task)
+		if task.Status == "queued" {
+			h.TaskService.NotifySteerPredecessor(ctx, task)
+			h.TaskService.NotifyTaskEnqueued(ctx, task)
+		}
 	}
 	inboundcoord.RecordDecision(ctx, committed)
 	return turn, committed, nil

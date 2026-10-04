@@ -116,7 +116,7 @@ func TestPromptComponentEnabledStore(t *testing.T) {
 	tenantMigrated(t, f)
 	ctx := context.Background()
 	actor := f.bindIdentity(t, "org-home", "")
-	write := PromptComponentsWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-home", ScopeKey: "cidEnabled",
+	write := PromptComponentsWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-home", ScopeKey: "aaaaaaaa-0000-4000-8000-000000000002",
 		Components: []PromptComponentInput{{Name: "on", Text: "applies"}, {Name: "off", Order: 1, Text: "stored only", Disabled: true}}}
 	stored, err := ReplacePromptComponents(ctx, f.tx, write)
 	if err != nil || len(stored) != 2 || stored[0].Name != "on" || stored[0].Disabled || stored[1].Name != "off" || !stored[1].Disabled || stored[1].UpdatedBy != "" {
@@ -134,7 +134,7 @@ func TestPromptComponentEnabledStore(t *testing.T) {
 	if _, err := ReplacePromptComponents(ctx, f.tx, write); err != nil {
 		t.Fatal(err)
 	}
-	layers, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneKey: "cidEnabled"})
+	layers, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneID: "aaaaaaaa-0000-4000-8000-000000000002"})
 	if err != nil || len(layers) != 1 || len(layers[0].Prompts) != 1 || !layers[0].Prompts[0].Disabled {
 		t.Fatalf("layers=%+v err=%v", layers, err)
 	}

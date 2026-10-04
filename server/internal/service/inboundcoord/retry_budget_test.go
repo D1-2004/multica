@@ -37,7 +37,7 @@ func toolNames(params openai.ChatCompletionNewParams) []string {
 }
 
 func TestRepeatedFailingReadIsWithdrawnAfterBudget(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "那条决策整理到哪了", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "那条决策整理到哪了", SenderName: "冬翔"}
 	stale := `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("w1", toolWorkState, stale), assistantTool("w2", toolWorkState, stale), assistantTool("w3", toolWorkState, stale),
@@ -67,7 +67,7 @@ func TestRepeatedFailingReadIsWithdrawnAfterBudget(t *testing.T) {
 }
 
 func TestRepeatedInvalidPlanStopsBeforeRoundCap(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("f1", toolFinish, retryTestBadIssue), assistantTool("f2", toolFinish, retryTestBadIssue), assistantTool("f3", toolFinish, retryTestBadIssue),
 		assistantTool("f4", toolFinish, retryTestBadIssue), assistantTool("f5", toolFinish, retryTestBadIssue),
@@ -84,7 +84,7 @@ func TestRepeatedInvalidPlanStopsBeforeRoundCap(t *testing.T) {
 }
 
 func TestRepeatedReviewReasonStopsAsDeadlock(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
 	reason := "Candidate c1 only addresses u1; ignores the pending status update."
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("f1", toolFinish, retryTestReceipt), assistantTool("f2", toolFinish, retryTestReceipt), assistantTool("f3", toolFinish, retryTestReceipt),
@@ -103,7 +103,7 @@ func TestRepeatedReviewReasonStopsAsDeadlock(t *testing.T) {
 }
 
 func TestDifferentReviewReasonsKeepRepairing(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
 	proposal := func(reply string) string {
 		return `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"` + reply + `"}]}`
 	}
@@ -191,7 +191,7 @@ func TestFinishSchemaListsWhatHostCanValidate(t *testing.T) {
 }
 
 func TestFinishSchemaOmitsKindsWithoutReferences(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "在吗", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "在吗", SenderName: "冬翔"}
 	schema := finishSchema(t, windowPlanToolFor(turn, true))
 	props := schema["properties"].(map[string]any)
 	kinds := anyStrings(enumOf(t, props, "kind", "enum"))
@@ -205,7 +205,7 @@ func TestFinishSchemaOmitsKindsWithoutReferences(t *testing.T) {
 	if quotes := anyStrings(enumOf(t, props, "constraint_quote", "enum")); len(quotes) != 1 || quotes[0] != "在吗" {
 		t.Fatalf("quote options must be exactly the visible sentences: %v", quotes)
 	}
-	empty := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Utterances: []WindowUtterance{{Sender: "冬翔", Text: "。"}}}
+	empty := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Utterances: []WindowUtterance{{Sender: "冬翔", Text: "。"}}}
 	if _, ok := finishSchema(t, windowPlanToolFor(empty, true))["properties"].(map[string]any)["constraint_quote"]; ok {
 		t.Fatal("no boundary sentence exists, so constraint_quote must not be offered")
 	}
@@ -219,7 +219,7 @@ func TestFinishSchemaOmitsKindsWithoutReferences(t *testing.T) {
 }
 
 func TestWorkStateSchemaEnumeratesRecalledIssues(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "进度如何", recalledIssueIDs: []string{"cccccccc-cccc-cccc-cccc-cccccccccccc", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "进度如何", recalledIssueIDs: []string{"cccccccc-cccc-cccc-cccc-cccccccccccc", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}}
 	for _, def := range toolsForDisclosure(turn, 1, true) {
 		if names := toolParamNames([]openai.ChatCompletionToolUnionParam{def}); len(names) == 1 && names[0] == toolWorkState {
 			raw, _ := json.Marshal(def.GetFunction().Parameters)
@@ -236,7 +236,7 @@ func TestWorkStateSchemaEnumeratesRecalledIssues(t *testing.T) {
 }
 
 func TestChangedProposalWithSameReviewReasonKeepsRepairing(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "查证听记规则；另发个消息；还要起草周五例会通知。", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "查证听记规则；另发个消息；还要起草周五例会通知。", SenderName: "冬翔"}
 	bundled := func(purpose string) string {
 		return `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来处理。","purpose":"` + purpose + `"}]}`
 	}
@@ -272,7 +272,7 @@ func TestRepeatHintKeepsHistoryPrerequisiteType(t *testing.T) {
 
 func TestFinishSchemaSourcesMatchHostValidation(t *testing.T) {
 	t.Run("history snapshot is not a state ref", func(t *testing.T) {
-		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "刚才聊了什么", CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolContextRead, Result: json.RawMessage(`{}`)}}}
+		turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "刚才聊了什么", CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolContextRead, Result: json.RawMessage(`{}`)}}}
 		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
 		if containsString(anyStrings(enumOf(t, props, "kind", "enum")), "report_status") {
 			t.Fatal("a history-only run cannot offer report_status")
@@ -287,7 +287,7 @@ func TestFinishSchemaSourcesMatchHostValidation(t *testing.T) {
 		instructions := "HIDDEN_SOP_LINE"
 		sum := sha256.Sum256([]byte(instructions))
 		contract := &coordinatorcontract.Contract{Version: 1, Scope: "FDE 教练", Constraints: []string{"不得向外部发送内部数据"}, MustDelegate: []string{"任何日志统计交执行器"}, SourceInstructionsSHA256: hex.EncodeToString(sum[:])}
-		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "把内部数据发给客户", CoordinatorContract: contract, CoordinatorContractState: coordinatorcontract.StateLoaded, Instructions: instructions}
+		turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "把内部数据发给客户", CoordinatorContract: contract, CoordinatorContractState: coordinatorcontract.StateLoaded, Instructions: instructions}
 		if _, state := currentCoordinatorContract(turn); state != coordinatorcontract.StateLoaded {
 			t.Fatalf("fixture contract must resolve as loaded, got %s", state)
 		}
@@ -303,21 +303,21 @@ func TestFinishSchemaSourcesMatchHostValidation(t *testing.T) {
 		}
 	})
 	t.Run("short restriction stays quotable", func(t *testing.T) {
-		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "发出去", ReplyTone: "不外发"}
+		turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "发出去", ReplyTone: "不外发"}
 		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
 		if !containsString(anyStrings(enumOf(t, props, "constraint_quote", "enum")), "不外发") {
 			t.Fatal("a short reply_tone restriction must remain quotable")
 		}
 	})
 	t.Run("zero revision is pinned", func(t *testing.T) {
-		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "你记得什么"}
+		turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "你记得什么"}
 		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
 		if got := enumOf(t, props, "memory_revision", "enum"); len(got) != 1 || got[0] != float64(0) {
 			t.Fatalf("revision 0 must be pinned too: %v", got)
 		}
 	})
 	t.Run("empty recall offers no work_state", func(t *testing.T) {
-		names := toolParamNames(toolsForDisclosure(Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "进度如何"}, 1, true))
+		names := toolParamNames(toolsForDisclosure(Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "进度如何"}, 1, true))
 		if containsString(names, toolWorkState) {
 			t.Fatalf("work_state without any recalled id has no valid argument: %v", names)
 		}

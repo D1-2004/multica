@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 // Scope types stored in context_capability_binding.scope_type. ScopeOrg is
@@ -118,16 +120,13 @@ type Scope struct {
 	// DingTalk identity nor a recorded dispatch org: its scene and person
 	// layers live under org "" and it has no org layer.
 	OrgID string
-	// SceneKey is the group's openConversationId; empty outside a valid group.
-	SceneKey   string
+	// SceneID is the task's Agent work scene (agent_scene.id, the SceneRef
+	// the dispatch resolved; docs/agent-scene.md), a group or a 1:1 chat;
+	// empty when the dispatch had none. The scene layer is keyed by it.
+	SceneID    string
 	SceneTitle string
-	// DirectSceneKey is the openConversationId of a positively 1:1
-	// conversation (IsDirectConversationType), empty otherwise. A DM is a
-	// scene for configuration (a personal link minted there also grants it),
-	// but runtime resolution does not apply DM scenes yet: HasScene and
-	// SceneKey stay group-only.
-	DirectSceneKey string
-	// PersonKey is the trigger person's staffId; empty when the run merged
+	// PersonKey is the trigger person's key (TriggerPersonKey): the sender's
+	// staffId, else "odt:" + their openDingTalkId; empty when the run merged
 	// messages from several senders or the sender is unknown.
 	PersonKey  string
 	PersonName string
@@ -146,7 +145,7 @@ type Scope struct {
 func (s Scope) HasOrg() bool { return s.Dispatched && s.OrgID != "" }
 
 // HasScene reports whether the task carries a scene layer.
-func (s Scope) HasScene() bool { return s.SceneKey != "" }
+func (s Scope) HasScene() bool { return s.SceneID != "" }
 
 // HasPerson reports whether the task carries a personal layer.
 func (s Scope) HasPerson() bool { return s.PersonKey != "" }
@@ -157,7 +156,7 @@ func (s Scope) HasLayers() bool { return s.HasOrg() || s.HasScene() || s.HasPers
 // Selection returns the layers of the scope for LoadLayers and
 // LayerCredentials.
 func (s Scope) Selection() LayerSelection {
-	return LayerSelection{OrgID: s.OrgID, Org: s.HasOrg(), SceneKey: s.SceneKey, PersonKey: s.PersonKey}
+	return LayerSelection{OrgID: s.OrgID, Org: s.HasOrg(), SceneID: s.SceneID, PersonKey: s.PersonKey}
 }
 
 // ValidOpenConversationID accepts a DingTalk openConversationId: non-empty,
@@ -167,9 +166,41 @@ func ValidOpenConversationID(id string) bool {
 	return strings.HasPrefix(id, "cid") && validScopeKey(id)
 }
 
-// ValidStaffID accepts a DingTalk staffId used as a personal scope key.
+// ValidStaffID accepts a personal scope key: a DingTalk staffId or, for a
+// sender a dispatch names only by openDingTalkId, "odt:" + that id
+// (TriggerPersonKey).
 func ValidStaffID(id string) bool {
 	return validScopeKey(id)
+}
+
+// PersonKeyOpenDingTalkPrefix marks a personal scope key that is an
+// openDingTalkId, so it never equals a staffId.
+const PersonKeyOpenDingTalkPrefix = "odt:"
+
+// TriggerPersonKey is the personal scope key of a message sender: the
+// sender's staffId when the dispatch carries one (Router deliveries), else
+// "odt:" + the sender's openDingTalkId. A DWS native subscription event
+// names its sender only by openDingTalkId; that id is relative to the
+// receiving DingTalk account (another account sees another id for the same
+// person) and stays the same in that account's 1:1 chats and groups, so it
+// keys the person's capabilities with this agent. A staffId that carries the
+// prefix is refused rather than confused with one. "" when neither is a
+// valid key.
+func TriggerPersonKey(staffID, openDingTalkID string) string {
+	if staffID = strings.TrimSpace(staffID); staffID != "" {
+		if ValidStaffID(staffID) && !strings.HasPrefix(staffID, PersonKeyOpenDingTalkPrefix) {
+			return staffID
+		}
+		return ""
+	}
+	openDingTalkID = strings.TrimSpace(openDingTalkID)
+	if openDingTalkID == "" || strings.EqualFold(openDingTalkID, "null") {
+		return ""
+	}
+	if key := PersonKeyOpenDingTalkPrefix + openDingTalkID; ValidStaffID(key) {
+		return key
+	}
+	return ""
 }
 
 // ValidOrgID accepts a DingTalk org id used as an org scope key or as the org
@@ -180,15 +211,22 @@ func ValidOrgID(id string) bool {
 	return validScopeKey(id)
 }
 
+// ValidSceneID accepts a scene scope key: an agent_scene id in canonical
+// lowercase UUID form (docs/agent-scene.md).
+func ValidSceneID(id string) bool {
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed != uuid.Nil && parsed.String() == id
+}
+
 // ValidScopeKey reports whether key is acceptable for scopeType: a valid org
-// id for the org scope, a valid openConversationId for scenes and a valid
-// staffId for persons.
+// id for the org scope, a scene_id for scenes and a valid staffId for
+// persons.
 func ValidScopeKey(scopeType, key string) bool {
 	switch scopeType {
 	case ScopeOrg:
 		return ValidOrgID(key)
 	case ScopeScene:
-		return ValidOpenConversationID(key)
+		return ValidSceneID(key)
 	case ScopePerson:
 		return ValidStaffID(key)
 	default:
@@ -225,6 +263,17 @@ type taskContextMessage struct {
 type taskContextEnvelope struct {
 	// Replayed is ReplayedDispatchContextKey.
 	Replayed bool `json:"replayed_dispatch_context"`
+	// AgentScene is the dispatch's SceneRef (protocol.AgentSceneContextKey).
+	AgentScene *struct {
+		SceneID string `json:"scene_id"`
+	} `json:"agent_scene"`
+	// SceneRoutine is the Host-frozen binding of a scene routine run
+	// (protocol.SceneRoutineContextKey). Such a run has no dispatch event:
+	// it is scoped by AgentScene and the routine's tenant org.
+	SceneRoutine *struct {
+		TenantOrgID string `json:"tenant_org_id"`
+		Kind        string `json:"kind"`
+	} `json:"scene_routine"`
 	// FollowUpCommentIDs lists the Coordinator follow-up comments coalesced
 	// into one issue task (service/coordinator_follow_up.go); more than one
 	// entry means the run may combine several speakers' follow-ups.
@@ -252,11 +301,13 @@ type taskContextEnvelope struct {
 // ScopeFromTaskContext derives the scene and trigger person from a task's
 // server-written DingTalk dispatch context (agent_task_queue.context).
 //
-//   - SceneKey is conversation.openConversationId, only when conversation.type
-//     is "group" and the id passes ValidOpenConversationID.
-//   - PersonKey is sender.staffId, only when the run positively comes from
-//     that one person (see singleTriggerPerson), so one person's credentials
-//     never serve a merged run that contains someone else's message.
+//   - SceneID is the dispatch's SceneRef (agent_scene.scene_id), a group or a
+//     1:1 chat; the caller checks it is the agent's scene in the task's org.
+//   - PersonKey is the sender's TriggerPersonKey (sender.staffId, else
+//     "odt:" + the sender's openDingTalkId), only when the run positively
+//     comes from that one person (singleTriggerPerson, singleTriggerOpenID),
+//     so one person's credentials never serve a merged run that contains
+//     someone else's message.
 //
 // Dispatched is set for every context with dispatch_event_data. A context
 // marked with ReplayedDispatchContextKey (a manual rerun) yields the zero
@@ -269,8 +320,11 @@ func ScopeFromTaskContext(raw []byte) Scope {
 		return Scope{}
 	}
 	var envelope taskContextEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.EventData == nil || envelope.Replayed {
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Replayed {
 		return Scope{}
+	}
+	if envelope.EventData == nil {
+		return routineScope(envelope)
 	}
 	data := envelope.EventData
 	conversation := data.Conversation
@@ -280,9 +334,8 @@ func ScopeFromTaskContext(raw []byte) Scope {
 		DispatchOrgID:    strings.TrimSpace(envelope.ExternalIdentity.DWS.OrgID),
 	}
 
-	cid := strings.TrimSpace(conversation.OpenConversationID)
-	if scope.ConversationType == ConversationTypeGroup && ValidOpenConversationID(cid) {
-		scope.SceneKey = cid
+	if envelope.AgentScene != nil && ValidSceneID(strings.TrimSpace(envelope.AgentScene.SceneID)) {
+		scope.SceneID = strings.TrimSpace(envelope.AgentScene.SceneID)
 		scope.SceneTitle = firstNonEmpty(
 			conversation.Title,
 			conversation.ConversationTitle,
@@ -291,14 +344,60 @@ func ScopeFromTaskContext(raw []byte) Scope {
 			conversation.SnakeTitle,
 		)
 	}
-	if IsDirectConversationType(scope.ConversationType) && ValidOpenConversationID(cid) {
-		scope.DirectSceneKey = cid
-	}
 
-	if staffID := strings.TrimSpace(data.Sender.StaffID); ValidStaffID(staffID) &&
-		singleTriggerPerson(staffID, data.Sender, data.Messages, len(envelope.FollowUpCommentIDs) > 1) {
-		scope.PersonKey = staffID
-		scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
+	coalesced := len(envelope.FollowUpCommentIDs) > 1
+	if staffID := strings.TrimSpace(data.Sender.StaffID); staffID != "" {
+		if key := TriggerPersonKey(staffID, ""); key != "" && singleTriggerPerson(staffID, data.Sender, data.Messages, coalesced) {
+			scope.PersonKey = key
+			scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
+		}
+	} else if openID := senderOpenDingTalkID(data.Sender); openID != "" {
+		if key := TriggerPersonKey("", openID); key != "" && singleTriggerOpenID(openID, data.Sender, data.Messages, coalesced) {
+			scope.PersonKey = key
+			scope.PersonName = strings.TrimSpace(data.Sender.DisplayName)
+		}
+	}
+	return scope
+}
+
+// senderOpenDingTalkID is the sender's openDingTalkId, "" when the two
+// fields that carry it disagree.
+func senderOpenDingTalkID(sender taskContextSender) string {
+	openID := strings.TrimSpace(sender.OpenDingTalkID)
+	other := strings.TrimSpace(sender.SenderOpenDingTalkID)
+	switch {
+	case openID == "":
+		return other
+	case other != "" && other != openID:
+		return ""
+	}
+	return openID
+}
+
+// routineScope is the scope of a scene routine run: the routine's scene and
+// its tenant org as the dispatch org. A routine never carries a person, in a
+// group or a 1:1 chat, whoever created it: it runs with the scene's
+// capabilities only (a person_staff_id left in an older run context is
+// ignored). Anything incomplete yields the zero Scope (no layers), never a
+// guessed scene.
+func routineScope(envelope taskContextEnvelope) Scope {
+	routine := envelope.SceneRoutine
+	if routine == nil || envelope.AgentScene == nil {
+		return Scope{}
+	}
+	sceneID := strings.TrimSpace(envelope.AgentScene.SceneID)
+	orgID := strings.TrimSpace(routine.TenantOrgID)
+	if !ValidSceneID(sceneID) || orgID == "" {
+		return Scope{}
+	}
+	scope := Scope{Dispatched: true, SceneID: sceneID, DispatchOrgID: orgID}
+	switch strings.TrimSpace(routine.Kind) {
+	case SceneKindGroup:
+		scope.ConversationType = ConversationTypeGroup
+	case SceneKindDM:
+		scope.ConversationType = "single"
+	default:
+		return Scope{}
 	}
 	return scope
 }
@@ -313,10 +412,17 @@ func ScopeFromTaskContext(raw []byte) Scope {
 //     message must not name anyone else (staffId, uid or openDingTalkId).
 //   - Otherwise every message must carry senderStaffId == staffID and must
 //     not name anyone else.
+//   - A sender with an openDingTalkId and no uid (DWS native) additionally
+//     needs every message stamped with that openDingTalkId.
 func singleTriggerPerson(staffID string, sender taskContextSender, messages []taskContextMessage, coalesced bool) bool {
 	senderUID := strings.TrimSpace(sender.UID)
 	senderOpenID := firstNonEmpty(sender.OpenDingTalkID, sender.SenderOpenDingTalkID)
 	requireStaffID := coalesced || len(messages) > 1
+	// A sender named by openDingTalkId without a uid (a DWS native
+	// subscription event, whose staffId the server looked up) is proved only
+	// by messages stamped with that id: a work item cut from a merged window
+	// keeps the window's sender, and an anonymous line must not inherit it.
+	requireOpenID := senderUID == "" && senderOpenID != ""
 	if coalesced && len(messages) == 0 {
 		return false
 	}
@@ -331,7 +437,36 @@ func singleTriggerPerson(staffID string, sender taskContextSender, messages []ta
 		if uid := strings.TrimSpace(message.SenderUID); uid != "" && senderUID != "" && uid != senderUID {
 			return false
 		}
-		if openID := strings.TrimSpace(message.SenderOpenDingTalkID); openID != "" && senderOpenID != "" && openID != senderOpenID {
+		openID := strings.TrimSpace(message.SenderOpenDingTalkID)
+		if openID != "" && senderOpenID != "" && openID != senderOpenID {
+			return false
+		}
+		if requireOpenID && openID == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// singleTriggerOpenID is singleTriggerPerson for a sender named only by
+// openDingTalkID (no staffId anywhere). It is stricter: every message must
+// carry senderOpenDingTalkId == openDingTalkID, one alone included, and none
+// may carry a staffId or another uid. A work item cut from a merged window
+// keeps the window's data-level sender, so a message whose own sender is
+// unknown (a group event without an openDingTalkId) proves nothing.
+func singleTriggerOpenID(openDingTalkID string, sender taskContextSender, messages []taskContextMessage, coalesced bool) bool {
+	senderUID := strings.TrimSpace(sender.UID)
+	if coalesced && len(messages) == 0 {
+		return false
+	}
+	for _, message := range messages {
+		if strings.TrimSpace(message.SenderStaffID) != "" {
+			return false
+		}
+		if strings.TrimSpace(message.SenderOpenDingTalkID) != openDingTalkID {
+			return false
+		}
+		if uid := strings.TrimSpace(message.SenderUID); uid != "" && senderUID != "" && uid != senderUID {
 			return false
 		}
 	}

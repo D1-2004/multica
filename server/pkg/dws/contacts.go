@@ -79,3 +79,65 @@ func (s *ContactService) Search(ctx context.Context, keyword string) ([]Person, 
 	}
 	return people, nil
 }
+
+// StaffIDOf returns the org userId (staffId) of the person the identity
+// sees as openDingTalkID, "" with a nil error when the address book has no
+// such colleague (a member of another org, an account it does not list).
+// The address book is searched by each name in turn (the message's sender
+// name first, then, when conversationID names a group, the member's nick
+// and group nick there) and only an entry with exactly that openDingTalkId
+// counts: a name only narrows the search, it never decides who someone is.
+func (s *ContactService) StaffIDOf(ctx context.Context, openDingTalkID string, names []string, conversationID string) (string, error) {
+	openDingTalkID = strings.TrimSpace(openDingTalkID)
+	if openDingTalkID == "" {
+		return "", invalid("staff id lookup needs an openDingTalkId")
+	}
+	tried := map[string]bool{}
+	search := func(name string) (string, error) {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.EqualFold(name, "null") || tried[name] {
+			return "", nil
+		}
+		tried[name] = true
+		people, err := s.Search(ctx, name)
+		if err != nil {
+			return "", err
+		}
+		for _, p := range people {
+			userID := strings.TrimSpace(p.UserID)
+			if p.OpenDingTalkID == openDingTalkID && userID != "" && !strings.EqualFold(userID, "null") {
+				return userID, nil
+			}
+		}
+		return "", nil
+	}
+	for _, name := range names {
+		if id, err := search(name); err != nil || id != "" {
+			return id, err
+		}
+	}
+	if conversationID = strings.TrimSpace(conversationID); conversationID == "" {
+		return "", nil
+	}
+	members, err := s.c.Groups.MembersByIDs(ctx, conversationID, []string{openDingTalkID})
+	var denied *Error
+	if errors.As(err, &denied) && denied.Code == "FORBIDDEN" {
+		// A group that refuses its member list (an internal group of
+		// another org) names nobody further: a miss, not a failure.
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, m := range members {
+		if m.OpenDingTalkID != openDingTalkID {
+			continue
+		}
+		for _, name := range []string{m.Name, m.GroupNick} {
+			if id, err := search(name); err != nil || id != "" {
+				return id, err
+			}
+		}
+	}
+	return "", nil
+}

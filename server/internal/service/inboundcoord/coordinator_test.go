@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
@@ -81,18 +82,31 @@ func (s *coordQueriesStub) ListEnabledAgentSkillCardMetadata(_ context.Context, 
 	return s.skills, nil
 }
 
+// sceneMemoryStub serves Scene Memory by scene_id (docs/agent-scene.md).
 type sceneMemoryStub struct {
-	rows map[string]db.SceneMemory
-	last scenememory.Identity
+	rows map[string]scenememory.Memory
+	last string
 }
 
-func (s *sceneMemoryStub) Get(_ context.Context, id scenememory.Identity) (db.SceneMemory, error) {
-	s.last = id
-	row, ok := s.rows[id.SceneKey]
+func (s *sceneMemoryStub) GetByScene(_ context.Context, _, _, sceneID pgtype.UUID) (scenememory.Memory, error) {
+	s.last = util.UUIDToString(sceneID)
+	row, ok := s.rows[s.last]
 	if !ok {
-		return db.SceneMemory{}, context.Canceled
+		return scenememory.Memory{}, context.Canceled
 	}
 	return row, nil
+}
+
+// testSceneID is the scene_id the Host resolved for a test conversation.
+func testSceneID(conversationID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("scene:"+conversationID)).String()
+}
+
+func memRow(conversationID, text string, revision int64) scenememory.Memory {
+	return scenememory.Memory{
+		AgentSceneMemory: db.AgentSceneMemory{SceneID: util.MustParseUUID(testSceneID(conversationID)), MemoryText: text, MemoryRevision: revision},
+		Scene:            db.AgentScene{ID: util.MustParseUUID(testSceneID(conversationID)), ExternalSceneID: conversationID},
+	}
 }
 
 func testAgentID() pgtype.UUID {
@@ -293,8 +307,9 @@ func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
 		SrcType:     assoc.NodeTask,
 		SrcID:       task.ID,
 		DstType:     assoc.NodeScene,
-		DstID:       "cid-dongxiang",
+		DstID:       testSceneID("cid-dongxiang"),
 		Rel:         assoc.RelOutreach,
+		Props:       map[string]any{"conversation_id": "cid-dongxiang"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +317,7 @@ func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
 	got := c.injectRelatedTasks(ctx, Turn{
 		WorkspaceID:    "ws",
 		AgentID:        agent,
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 	})
 	if !strings.Contains(got.RelatedTasks, "向冬翔确认今晚吃什么") {
@@ -564,9 +580,9 @@ func TestBuildUserPromptHostFactOutsideLastNHistory(t *testing.T) {
 }
 
 func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
-	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
-		"cid-a": {SceneKey: "cid-a", MemoryText: "GAMMA-A-881 是报表工具", MemoryRevision: 2},
-		"cid-b": {SceneKey: "cid-b", MemoryText: "这个群还没有口径", MemoryRevision: 1},
+	mem := &sceneMemoryStub{rows: map[string]scenememory.Memory{
+		testSceneID("cid-a"): memRow("cid-a", "GAMMA-A-881 是报表工具", 2),
+		testSceneID("cid-b"): memRow("cid-b", "这个群还没有口径", 1),
 	}}
 	c := &Coordinator{
 		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
@@ -577,6 +593,7 @@ func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
 		ChatType:       "group",
 		AgentID:        testAgentID(),
 		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		SceneID:        testSceneID("cid-b"),
 		ConversationID: "cid-b",
 		DWSOrgID:       "org-1",
 	}
@@ -587,14 +604,14 @@ func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
 	if strings.Contains(turn.SceneMemory, "报表工具") {
 		t.Fatal("group A leaked into group B")
 	}
-	if mem.last.SceneKind != scenememory.KindGroup || mem.last.SceneKey != "cid-b" {
-		t.Fatalf("lookup identity=%+v", mem.last)
+	if mem.last != testSceneID("cid-b") {
+		t.Fatalf("lookup scene=%s", mem.last)
 	}
 }
 
 func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
-	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
-		"cid-a": {SceneKey: "cid-a", MemoryText: strings.Join([]string{
+	mem := &sceneMemoryStub{rows: map[string]scenememory.Memory{
+		testSceneID("cid-a"): memRow("cid-a", strings.Join([]string{
 			"## 场域定位",
 			"冬翔",
 			"成员：冬翔",
@@ -604,7 +621,7 @@ func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
 			"- 回复偏好：简短直接 (来自东翔测试号, 9月3日 17:27的发言)",
 			"## 纠正信号",
 			"## 待确认",
-		}, "\n"), MemoryRevision: 18},
+		}, "\n"), 18),
 	}}
 	c := &Coordinator{
 		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
@@ -615,6 +632,7 @@ func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
 		ChatType:       "p2p",
 		AgentID:        testAgentID(),
 		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		SceneID:        testSceneID("cid-a"),
 		ConversationID: "cid-a",
 		DWSOrgID:       "org-1",
 	}
@@ -631,8 +649,8 @@ func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
 }
 
 func TestPrefetchSceneMemoryDropsDigitalEmployeeCitesOnGroup(t *testing.T) {
-	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
-		"cid-a": {SceneKey: "cid-a", MemoryText: strings.Join([]string{
+	mem := &sceneMemoryStub{rows: map[string]scenememory.Memory{
+		testSceneID("cid-a"): memRow("cid-a", strings.Join([]string{
 			"## 场域定位",
 			"VOC群",
 			"成员：璟琦、金龙",
@@ -642,7 +660,7 @@ func TestPrefetchSceneMemoryDropsDigitalEmployeeCitesOnGroup(t *testing.T) {
 			"- 随风统一处理大模型技术问题 (来自璟琦, 9月7日 14:13的发言)",
 			"## 纠正信号",
 			"## 待确认",
-		}, "\n"), MemoryRevision: 7},
+		}, "\n"), 7),
 	}}
 	c := &Coordinator{
 		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}, accountDisplayName: "金龙"},
@@ -654,6 +672,7 @@ func TestPrefetchSceneMemoryDropsDigitalEmployeeCitesOnGroup(t *testing.T) {
 		AgentID:        testAgentID(),
 		AgentName:      "VOC数字员工突击队",
 		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		SceneID:        testSceneID("cid-a"),
 		ConversationID: "cid-a",
 		DWSOrgID:       "org-1",
 	}
@@ -667,8 +686,8 @@ func TestPrefetchSceneMemoryDropsDigitalEmployeeCitesOnGroup(t *testing.T) {
 }
 
 func TestPrefetchSceneMemorySkippedWhenRecallDisabled(t *testing.T) {
-	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
-		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	mem := &sceneMemoryStub{rows: map[string]scenememory.Memory{
+		testSceneID("cid-a"): memRow("cid-a", "不该出现", 4),
 	}}
 	c := &Coordinator{
 		Queries:     &coordQueriesStub{},
@@ -679,6 +698,7 @@ func TestPrefetchSceneMemorySkippedWhenRecallDisabled(t *testing.T) {
 		ChatType:       "p2p",
 		AgentID:        testAgentID(),
 		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		SceneID:        testSceneID("cid-a"),
 		ConversationID: "cid-a",
 		DWSOrgID:       "org-1",
 	}
@@ -689,8 +709,8 @@ func TestPrefetchSceneMemorySkippedWhenRecallDisabled(t *testing.T) {
 }
 
 func TestPrefetchSceneMemorySkippedForWebAndRobot(t *testing.T) {
-	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
-		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	mem := &sceneMemoryStub{rows: map[string]scenememory.Memory{
+		testSceneID("cid-a"): memRow("cid-a", "不该出现", 4),
 	}}
 	c := &Coordinator{
 		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
@@ -702,6 +722,7 @@ func TestPrefetchSceneMemorySkippedForWebAndRobot(t *testing.T) {
 			ChatType:       "p2p",
 			AgentID:        testAgentID(),
 			WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			SceneID:        testSceneID("cid-a"),
 			ConversationID: "cid-a",
 			DWSOrgID:       "org-1",
 		}
@@ -754,4 +775,21 @@ func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 	if err != nil || got.Action != ActionIssue {
 		t.Fatalf("news must stay issue, got %s", got.Action)
 	}
+}
+
+func testSceneNode(conversationID string) assoc.SceneNode {
+	return assoc.SceneNode{SceneID: testSceneID(conversationID), ConversationID: conversationID, Kind: "dm"}
+}
+
+func testWaitingNode(conversationID string) *assoc.SceneNode {
+	node := testSceneNode(conversationID)
+	return &node
+}
+
+// testScenes resolves every conversation id to its test scene, as an agent
+// that has seen each conversation would.
+type testScenes struct{}
+
+func (testScenes) LookupConversationScene(_ context.Context, _ Turn, conversationID string) (assoc.SceneNode, bool, error) {
+	return testSceneNode(conversationID), true, nil
 }

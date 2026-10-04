@@ -319,3 +319,99 @@ func TestCredentialVersionRestartsTheStream(t *testing.T) {
 		t.Fatalf("stream identity = %+v", got)
 	}
 }
+
+// An optional key joins an identity's stream only after the account's probe
+// subscription succeeded; a refused one stays out and never fails the sweep
+// or the identity's other keys. Outcomes are cached for every replica and
+// the probes of one sweep are bounded.
+func TestOptionalKeyJoinsOnlyAfterProbe(t *testing.T) {
+	client := newRedisTestClient(t)
+	ok := dwsclient.Identity{AgentID: "agent-ok", UID: "1", OrgID: "org"}
+	refused := dwsclient.Identity{AgentID: "agent-refused", UID: "2", OrgID: "org"}
+	var probed []string
+	probe := func(_ context.Context, id dwsclient.Identity, key string) error {
+		probed = append(probed, id.UID+":"+key)
+		if id.UID == refused.UID {
+			return errors.New("subscription refused for this account")
+		}
+		return nil
+	}
+	newSource := func() *Source {
+		s, err := New(Config{Redis: client, Deployment: "https://pre.example",
+			Mint: func(context.Context, dwsclient.Identity) (dwsclient.Credential, error) { return dwsclient.Credential{}, nil },
+			Consumers: []Consumer{
+				{EventKey: dws.EventIMAt, Identities: identities(ok, refused)},
+				{EventKey: dws.EventIMAllGroups, Identities: identities(ok, refused), Optional: true},
+			},
+			Probe: probe})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	fingerprints := func(s *Source) map[string]string {
+		got, err := s.targets(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, target := range got {
+			out[target.Value.(subscription).Identity.UID] = target.Fingerprint
+		}
+		return out
+	}
+	first := fingerprints(newSource())
+	if first["1"] != dws.EventIMAt+","+dws.EventIMAllGroups || first["2"] != dws.EventIMAt {
+		t.Fatalf("fingerprints = %v", first)
+	}
+	// Another replica reads the cached outcomes without probing again.
+	if again := fingerprints(newSource()); again["1"] != first["1"] || again["2"] != first["2"] || len(probed) != 2 {
+		t.Fatalf("again = %v probed = %v", again, probed)
+	}
+	if ttl := client.TTL(context.Background(), newSource().optionalKey(refused, dws.EventIMAllGroups)).Val(); ttl <= 0 || ttl > optionalRefusedTTL {
+		t.Fatalf("refusal ttl = %v", ttl)
+	}
+	if ttl := client.TTL(context.Background(), newSource().optionalKey(ok, dws.EventIMAllGroups)).Val(); ttl <= optionalRefusedTTL || ttl > optionalAllowedTTL {
+		t.Fatalf("allowance ttl = %v", ttl)
+	}
+}
+
+func TestOptionalProbesAreBoundedPerSweep(t *testing.T) {
+	client := newRedisTestClient(t)
+	var ids []dwsclient.Identity
+	for _, uid := range []string{"11", "12", "13", "14", "15"} {
+		ids = append(ids, dwsclient.Identity{AgentID: "agent-" + uid, UID: uid, OrgID: "org"})
+	}
+	probes := 0
+	s, err := New(Config{Redis: client, Deployment: "https://pre.example",
+		Mint:      func(context.Context, dwsclient.Identity) (dwsclient.Credential, error) { return dwsclient.Credential{}, nil },
+		Consumers: []Consumer{{EventKey: dws.EventIMAllGroups, Identities: identities(ids...), Optional: true}},
+		Probe:     func(context.Context, dwsclient.Identity, string) error { probes++; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sweep, want := range []int{2, 4, 5, 5} {
+		got, err := s.targets(context.Background())
+		if err != nil || len(got) != want || probes != want {
+			t.Fatalf("sweep %d: targets=%d probes=%d err=%v", sweep, len(got), probes, err)
+		}
+	}
+}
+
+// Without Redis an optional key is left out (fail closed); the identity's
+// required keys stream unchanged and nothing is probed.
+func TestOptionalKeyFailsClosedWithoutRedis(t *testing.T) {
+	id := dwsclient.Identity{AgentID: "a", UID: "1", OrgID: "o"}
+	s := testSource(t, []Consumer{
+		{EventKey: dws.EventIMAt, Identities: identities(id)},
+		{EventKey: dws.EventIMAllGroups, Identities: identities(id), Optional: true},
+	}, true)
+	s.cfg.Probe = func(context.Context, dwsclient.Identity, string) error {
+		t.Fatal("probed without a cache")
+		return nil
+	}
+	got, err := s.targets(context.Background())
+	if err != nil || len(got) != 1 || got[0].Fingerprint != dws.EventIMAt {
+		t.Fatalf("targets = %+v %v", got, err)
+	}
+}

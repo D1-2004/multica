@@ -1,0 +1,53 @@
+{
+  "schema": "el2e.capabilities.v1",
+  "note": "Harness capabilities describe callable, offline-checked driver support only; they do not prove platform ingestion or delivery. recall/react remain out of scope. All platform/release/ops defaults are false and must be backed by a per-run manifest before override.",
+  "harness": {
+    "var_sets": true,
+    "quote_reply": true,
+    "deap_multi": true,
+    "grader_v2": true,
+    "memory_reset": true,
+    "pg_read": true,
+    "evidence_v2": true,
+    "segments": true,
+    "file_send": true,
+    "file_download": true,
+    "recall": false,
+    "react": false,
+    "forward": true,
+    "combine_forward": true,
+    "at_all": true,
+    "setup_group": true,
+    "burst": true,
+    "negative_observe": true,
+    "webhook": false,
+    "aitable_insert": false,
+    "config_snapshot": false
+  },
+  "platform": {
+    "group_all_delivery": false,
+    "event_trigger": false,
+    "at_all_probe": false,
+    "resource_followup": false,
+    "vision": false,
+    "recall_event": false,
+    "forward_mapping": false,
+    "reaction_event": false,
+    "cross_scene_self": false,
+    "third_party_at": false,
+    "person_memory": false,
+    "member_event": false
+  },
+  "release": {
+    "G_memory": false,
+    "marker13": false,
+    "B3_decision": false,
+    "F2_webhook": false
+  },
+  "ops": {
+    "probe_first": false,
+    "routine_pause": false,
+    "watchdog_override": false,
+    "deploy_freeze": false
+  }
+}

@@ -1403,7 +1403,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extraEnvForTask with LLM trace returned error: %v", err)
 	}
-	if env[llmTraceEnabledEnvKey] != "true" || env[llmTraceSinkURLEnvKey] != "https://trace.example.test/ingest" {
+	if env[llmTraceEnabledEnvKey] != "true" || env[llmTraceSinkURLEnvKey] != "https://multica.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces" {
 		t.Fatalf("LLM trace env = %#v", env)
 	}
 	task.Context = []byte(`{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`)
@@ -1412,7 +1412,7 @@ func TestFCE2BChatIdentityComesOnlyFromAgentBinding(t *testing.T) {
 		t.Fatalf("extraEnvForTask with Router LLM trace returned error: %v", err)
 	}
 	if env[llmTraceSinkURLEnvKey] != "https://multica.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces" ||
-		env[llmTraceTokenEnvKey] != "task-capability" || env[llmTraceExpiresAtEnvKey] != "1786377600000" {
+		env[llmTraceTokenEnvKey] != "" || env[llmTraceExpiresAtEnvKey] != "" {
 		t.Fatalf("Router LLM trace env = %#v", env)
 	}
 	task.Context = nil

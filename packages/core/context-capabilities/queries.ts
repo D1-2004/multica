@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { ContextNodeRef } from "../types/context-capability";
+import type { ContextConfigScopeInput, ContextNodeRef, SceneRoutinesTarget } from "../types/context-capability";
 
 /**
  * Mobile configuration keys. The `/api/context-capabilities/*` routes are
@@ -20,8 +20,17 @@ export const contextConfigKeys = {
     [...contextConfigKeys.details(agentId), orgId] as const,
   scenes: (agentId: string) =>
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
-  scene: (agentId: string, sceneKey: string) =>
-    [...contextConfigKeys.scenes(agentId), sceneKey] as const,
+  scene: (agentId: string, sceneId: string) =>
+    [...contextConfigKeys.scenes(agentId), sceneId] as const,
+  /** A scene's own OAuth application of an official app. */
+  oauthApp: (agentId: string, slug: string, scopeKey: string, orgId: string) =>
+    [...contextConfigKeys.agent(agentId), "oauth-app", slug, scopeKey, orgId] as const,
+  /** GitHub App installations of one configure-page credential. */
+  githubInstallations: (agentId: string, scopeKey: string, orgId: string, connectorId: string) =>
+    [...contextConfigKeys.agent(agentId), "github-installations", scopeKey, orgId, connectorId] as const,
+  /** A scene's routines (例行任务). */
+  sceneRoutines: (agentId: string, sceneId: string) =>
+    [...contextConfigKeys.scene(agentId, sceneId), "routines"] as const,
 };
 
 /**
@@ -54,6 +63,9 @@ export const contextCapabilityKeys = {
       node.scopeType,
       node.scopeKey,
     ] as const,
+  /** A scene node's routines (例行任务), under the node. */
+  contextNodeRoutines: (wsId: string, agentId: string, node: ContextNodeRef) =>
+    [...contextCapabilityKeys.contextNode(wsId, agentId, node), "routines"] as const,
   /** Official apps with this agent's status (连接应用). Nested under the
    * agent, so offer changes refresh them too. */
   connectedApps: (wsId: string, agentId: string) =>
@@ -81,14 +93,14 @@ export function contextConfigAgentOptions(agentId: string, orgId = "") {
   });
 }
 
-/** One scene of the configure page. `orgId` is the scene's tenant ("" for
- * the agent's own org); a cid is unique across orgs, so it is not part of
- * the key. */
-export function contextConfigSceneOptions(agentId: string, sceneKey: string, orgId = "") {
+/** One scene of the configure page, by its scene_id. `orgId` is the
+ * scene's tenant ("" for the agent's own org); a scene_id names one scene of
+ * one org, so it is not part of the key. */
+export function contextConfigSceneOptions(agentId: string, sceneId: string, orgId = "") {
   return queryOptions({
-    queryKey: contextConfigKeys.scene(agentId, sceneKey),
-    queryFn: () => api.getContextConfigScene(agentId, sceneKey, orgId),
-    enabled: Boolean(agentId && sceneKey),
+    queryKey: contextConfigKeys.scene(agentId, sceneId),
+    queryFn: () => api.getContextConfigScene(agentId, sceneId, orgId),
+    enabled: Boolean(agentId && sceneId),
   });
 }
 
@@ -110,7 +122,8 @@ export function agentTenantsOptions(wsId: string, agentId: string) {
   });
 }
 
-/** A tenant's group chats, newest activity first, paged by offset. */
+/** A tenant's scenes (group chats and 1:1 chats), newest activity first,
+ * paged by offset. */
 export function agentTenantGroupsOptions(wsId: string, agentId: string, orgId: string) {
   return infiniteQueryOptions({
     queryKey: contextCapabilityKeys.tenantGroups(wsId, agentId, orgId),
@@ -176,5 +189,71 @@ export function agentConnectedAppOptions(wsId: string, agentId: string, slug: st
     queryFn: () => api.getAgentConnectedApp(wsId, agentId, slug),
     enabled: Boolean(wsId && agentId && slug),
     refetchOnWindowFocus: "always",
+  });
+}
+
+/** The query key of a scene's routines on the configure page or an admin
+ * scene node. */
+export function sceneRoutinesKey(target: SceneRoutinesTarget) {
+  return target.kind === "node"
+    ? contextCapabilityKeys.contextNodeRoutines(target.wsId, target.agentId, target.node)
+    : contextConfigKeys.sceneRoutines(target.agentId, target.sceneId);
+}
+
+function sceneRoutinesTargetReady(target: SceneRoutinesTarget): boolean {
+  return target.kind === "node"
+    ? Boolean(target.wsId && target.agentId && target.node.orgId && target.node.scopeKey)
+    : Boolean(target.agentId && target.sceneId);
+}
+
+/** A scene's own OAuth application of an official app. */
+export function contextConfigOAuthAppOptions(agentId: string, slug: string, scope: ContextConfigScopeInput) {
+  return queryOptions({
+    queryKey: contextConfigKeys.oauthApp(agentId, slug, scope.scopeKey, scope.orgId ?? ""),
+    queryFn: () => api.getContextConfigOAuthApp(agentId, slug, scope),
+    enabled: Boolean(agentId && slug && scope.scopeKey),
+  });
+}
+
+/** GitHub App installations covered by one credential. One authorization
+ * already covers every installation the token can access. */
+export function contextConfigGitHubInstallationsOptions(
+  agentId: string,
+  scope: ContextConfigScopeInput,
+  connectorId: string,
+) {
+  return queryOptions({
+    queryKey: contextConfigKeys.githubInstallations(agentId, scope.scopeKey, scope.orgId ?? "", connectorId),
+    queryFn: () => api.listContextGitHubInstallations(agentId, scope, connectorId),
+    enabled: Boolean(agentId && scope.scopeKey && connectorId),
+    staleTime: 30_000,
+    // GitHub's installation settings page does not return here. Coming back
+    // to this tab has to pick up a repository that was just added or removed.
+    refetchOnWindowFocus: "always",
+  });
+}
+
+/** A routine's run history, under its scene's routines key so every
+ * routine write refreshes it too. */
+export function sceneRoutineRunsOptions(target: SceneRoutinesTarget, routineId: string) {
+  return queryOptions({
+    queryKey: [...sceneRoutinesKey(target), routineId, "runs"] as const,
+    queryFn: () => api.listSceneRoutineRuns(target, routineId),
+    enabled: sceneRoutinesTargetReady(target) && Boolean(routineId),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
+  });
+}
+
+/** A scene's routines with their next runs and last result. Refetched on
+ * focus and every minute while shown, so a run started elsewhere (cron,
+ * webhook, the agent) shows its result. */
+export function sceneRoutinesOptions(target: SceneRoutinesTarget) {
+  return queryOptions({
+    queryKey: sceneRoutinesKey(target),
+    queryFn: () => api.listSceneRoutines(target),
+    enabled: sceneRoutinesTargetReady(target),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
   });
 }

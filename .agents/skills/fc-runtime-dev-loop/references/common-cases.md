@@ -1,5 +1,12 @@
 # Common FC Runtime development cases
 
+Use this page for the selected runtime milestone in the parent SKILL.md.
+Required paths below describe operational FC/local acceptance when those
+running surfaces are in scope. Source review or build-only delivery does not
+create Agents/Issues, switch a Runtime or run real canaries; report those
+milestones unverified. Operational completion claims still require all
+applicable gates and real task evidence.
+
 Use this table before choosing commands. The main failure mode is applying the right command to the wrong deployment surface.
 
 | Case | Required path | Why |

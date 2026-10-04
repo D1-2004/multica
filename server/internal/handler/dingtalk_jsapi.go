@@ -88,7 +88,8 @@ func (h *Handler) dingTalkJSAPISignedURL(raw string) (string, error) {
 		return "", errors.New("invalid url")
 	}
 	origin := strings.ToLower(u.Scheme + "://" + u.Host)
-	match := false
+	_, publicTarget := h.connectorOAuthPublicReturn(raw)
+	match := publicTarget != ""
 	for _, candidate := range h.dingTalkJSAPIAppOrigins() {
 		if candidate == origin {
 			match = true

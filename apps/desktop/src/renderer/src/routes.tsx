@@ -26,6 +26,7 @@ import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { InternalConnectorsPage } from "@multica/views/agents";
 import { DshPluginsPage } from "@multica/views/dsh-plugins";
+import { TagPage } from "@multica/views/tag";
 import { DshPluginDetailPage } from "./pages/dsh-plugin-detail-page";
 import { ProductFeatureListPage } from "@multica/views/product-features";
 import { ProductFeatureDetailPage } from "./pages/product-feature-detail-page";
@@ -271,6 +272,7 @@ export const appRoutes: RouteObject[] = [
             element: <AgentDetailPage />,
             handle: { title: "Agent" },
           },
+          { path: "tag", element: <TagPage />, handle: { title: "Tag" } },
           {
             path: "members/:id",
             element: <MemberDetailPage />,

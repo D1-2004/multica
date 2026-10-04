@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,14 +40,14 @@ func TestValidateAgentA2AForwardRPCURL(t *testing.T) {
 
 func TestSignAgentA2AForwardRegistrationBindsTimestampAndBody(t *testing.T) {
 	secret := []byte("forward-registration-secret-0123456789abcdef")
-	base := signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":1}`))
-	if base != signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":1}`)) {
+	base := forwarding.SignRegistration(secret, "100", []byte(`{"a":1}`))
+	if base != forwarding.SignRegistration(secret, "100", []byte(`{"a":1}`)) {
 		t.Fatal("signature is not deterministic")
 	}
 	for name, other := range map[string]string{
-		"timestamp": signAgentA2AForwardRegistration(secret, "101", []byte(`{"a":1}`)),
-		"body":      signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":2}`)),
-		"secret":    signAgentA2AForwardRegistration([]byte("another-secret-another-secret-0000"), "100", []byte(`{"a":1}`)),
+		"timestamp": forwarding.SignRegistration(secret, "101", []byte(`{"a":1}`)),
+		"body":      forwarding.SignRegistration(secret, "100", []byte(`{"a":2}`)),
+		"secret":    forwarding.SignRegistration([]byte("another-secret-another-secret-0000"), "100", []byte(`{"a":1}`)),
 	} {
 		if other == base {
 			t.Errorf("signature ignores the %s", name)

@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS employee_run_notice (
+ run_id uuid NOT NULL,
+ workspace_id uuid NOT NULL,
+ agent_id uuid NOT NULL,
+ tenant_org_id text NOT NULL,
+ scene_id uuid NOT NULL,
+ task_id uuid NOT NULL,
+ queue_task_id uuid NOT NULL,
+ job_id uuid,
+ source_ref text NOT NULL,
+ requester_ref text NOT NULL,
+ result_state text NOT NULL CHECK (result_state IN ('succeeded','failed','cancelled')),
+ state text NOT NULL CHECK (state IN ('enqueued','suppressed')),
+ reason text NOT NULL DEFAULT '',
+ body text NOT NULL DEFAULT '',
+ artifacts jsonb NOT NULL DEFAULT '[]',
+ action_id text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ CHECK (state <> 'enqueued' OR action_id IS NOT NULL)
+);

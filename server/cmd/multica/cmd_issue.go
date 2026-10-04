@@ -327,6 +327,13 @@ var issueRunMessagesCmd = &cobra.Command{
 	RunE:  runIssueRunMessages,
 }
 
+var issueRunEventsCmd = &cobra.Command{
+	Use:   "run-events <task-id>",
+	Short: "Read durable execution events for progress consumers",
+	Args:  exactArgs(1),
+	RunE:  runIssueRunEvents,
+}
+
 var issueUsageCmd = &cobra.Command{
 	Use:   "usage <issue-id>",
 	Short: "Show aggregated token usage for an issue",
@@ -429,6 +436,7 @@ func init() {
 	issueCmd.AddCommand(issueSubscriberCmd)
 	issueCmd.AddCommand(issueRunsCmd)
 	issueCmd.AddCommand(issueRunMessagesCmd)
+	issueCmd.AddCommand(issueRunEventsCmd)
 	issueCmd.AddCommand(issueUsageCmd)
 	issueCmd.AddCommand(issueRerunCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
@@ -549,6 +557,11 @@ func init() {
 	issueRunMessagesCmd.Flags().String("output", "json", "Output format: table or json")
 	issueRunMessagesCmd.Flags().Int("since", 0, "Only return messages after this sequence number")
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueRunEventsCmd.Flags().String("output", "json", "Output format: table or json")
+	issueRunEventsCmd.Flags().Int("since", 0, "Exclusive execution sequence cursor")
+	issueRunEventsCmd.Flags().Int("limit", 500, "Page size (1 to 1000)")
+	issueRunEventsCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueRunEventsCmd.Flags().String("session", "", "Filter by the provider session ID")
 
 	// issue comment add
 	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")

@@ -17,6 +17,10 @@ import type {
   ContextCapabilityBinding,
   ContextConfigAccess,
   ContextConfigAgentDetail,
+  ContextConfigAppSetup,
+  ContextConfigCatalogApp,
+  ContextConfigOAuthApp,
+  AddContextConfigAppResult,
   ContextConfigOrgScope,
   ContextConfigScopeContent,
   ContextConfigTenantRef,
@@ -38,6 +42,10 @@ import type {
   ContextNodeScopeType,
   ContextPromptComponent,
   ContextResourceType,
+  ContextRoutine,
+  ContextRoutineRun,
+  ContextRoutineTrigger,
+  ContextRoutineWriteResult,
   ContextSceneKind,
   ContextSceneScope,
   ContextScopeRights,
@@ -131,10 +139,10 @@ function resourceTypeOf(value: string): ContextResourceType | null {
 
 const SceneScopeWireSchema = z.object({ type: z.string(), key: id, title: text });
 
-/** `scope` of a scene read: where the scene page's configuration lives. A
- * missing field (an older backend) means the scene itself; an explicit null
- * means a 1:1 chat whose person is unknown. A malformed value also reads as
- * null, so nothing is ever written to a guessed scope. */
+/** `scope` of a scene read: where the scene page's configuration lives,
+ * the scene itself for a group and a 1:1 chat alike. A missing field (an
+ * older backend) means the scene itself; a null or malformed value reads as
+ * null. */
 function sceneScopeOf(value: unknown, fallback: ContextSceneScope): ContextSceneScope | null {
   if (value === undefined) return fallback;
   const parsed = SceneScopeWireSchema.safeParse(value);
@@ -266,6 +274,7 @@ const scopeRights = z
     connect: strictTrue,
     edit_prompts: strictTrue,
     edit_mcp: strictTrue,
+    edit_routines: strictTrue,
   })
   .transform(
     (value): ContextScopeRights => ({
@@ -273,6 +282,7 @@ const scopeRights = z
       connect: value.connect,
       editPrompts: value.edit_prompts,
       editMcp: value.edit_mcp,
+      editRoutines: value.edit_routines,
     }),
   )
   .nullish()
@@ -357,6 +367,9 @@ export const ContextConfigRedeemSchema = z
     scope_key: text,
     scope_title: text,
     org_id: orgIdOf,
+    // The link was already spent when this arrives: a malformed value is no
+    // scene rather than a lost redemption.
+    extra_scene_id: z.unknown().transform((value) => (typeof value === "string" ? value.trim() : "")),
   })
   .transform(
     (value): ContextConfigRedeemResult => ({
@@ -366,6 +379,7 @@ export const ContextConfigRedeemSchema = z
       scopeKey: value.scope_key,
       scopeTitle: value.scope_title,
       orgId: value.org_id,
+      extraSceneId: value.extra_scene_id,
     }),
   );
 
@@ -376,6 +390,7 @@ export const EMPTY_CONTEXT_CONFIG_REDEEM: ContextConfigRedeemResult = {
   scopeKey: "",
   scopeTitle: "",
   orgId: "",
+  extraSceneId: "",
 };
 
 const AgentSummaryWireSchema = z.object({
@@ -468,6 +483,64 @@ const ConfigOrgScopeSchema = z
     }),
   );
 
+const appSetup = z
+  .unknown()
+  .transform((value): ContextConfigAppSetup =>
+    value === "oauth_app" || value === "unsupported" ? value : "automatic",
+  );
+
+const CatalogAppSchema = z
+  .object({ slug: catalogSlug, name: text, setup: appSetup, ready: strictTrue })
+  .refine((app) => app.slug !== "")
+  .transform(
+    (app): ContextConfigCatalogApp => ({ slug: app.slug, name: app.name || app.slug, setup: app.setup, ready: app.ready }),
+  );
+
+/** An app's OAuth application; null when malformed. */
+export const ContextConfigOAuthAppSchema = z
+  .object({
+    slug: text,
+    name: text,
+    fields: tolerantList(
+      z
+        .object({ key: z.string().min(1), optional: strictTrue, file: strictTrue })
+        .transform((field) => ({ key: field.key, optional: field.optional, file: field.file })),
+    ),
+    docs_url: z.unknown().optional(),
+    callback_url: text,
+    saved: strictTrue,
+    client_id: text,
+    client_secret_set: strictTrue,
+    workspace_ready: strictTrue,
+    ready: strictTrue,
+    can_edit: strictTrue,
+  })
+  .refine((value) => value.slug !== "")
+  .transform(
+    (value): ContextConfigOAuthApp => ({
+      slug: value.slug,
+      name: value.name || value.slug,
+      fields: value.fields,
+      docsUrl: safeExternalUrl(value.docs_url),
+      callbackUrl: safeExternalUrl(value.callback_url),
+      saved: value.saved,
+      clientId: value.client_id,
+      clientSecretSet: value.client_secret_set,
+      workspaceReady: value.workspace_ready,
+      ready: value.ready,
+      canEdit: value.can_edit,
+    }),
+  )
+  .nullable()
+  .catch(null);
+
+/** POST …/apps/{slug}: the connector the level now has; null when malformed. */
+export const AddContextConfigAppResponseSchema = z
+  .object({ connector_id: id, default_on: strictTrue })
+  .transform((value): AddContextConfigAppResult => ({ connectorId: value.connector_id, defaultOn: value.default_on }))
+  .nullable()
+  .catch(null);
+
 export const ContextConfigAgentDetailSchema = z
   .object({
     agent: AgentSummaryWireSchema,
@@ -513,6 +586,7 @@ export const ContextConfigAgentDetailSchema = z
     org: ConfigOrgScopeSchema.nullish().catch(null),
     jsapi_available: strictTrue,
     access: configAccess,
+    apps: tolerantList(CatalogAppSchema),
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -569,6 +643,7 @@ export const ContextConfigAgentDetailSchema = z
       org: value.org ?? null,
       jsapiAvailable: value.jsapi_available,
       access: value.access,
+      apps: [...new Map(value.apps.map((app) => [app.slug, app])).values()],
     }),
   );
 
@@ -579,6 +654,7 @@ export const ContextConfigSceneDetailSchema = z
     credentials: list(CredentialWireSchema),
     scope: z.unknown().optional(),
     can_connect: z.unknown().optional(),
+    scene_oauth_apps: tolerantList(z.string().min(1)),
     ...scopeContentWire,
   })
   .transform(
@@ -594,6 +670,7 @@ export const ContextConfigSceneDetailSchema = z
       }),
       // Only a literal true allows connecting; an older backend sends none.
       canConnect: value.can_connect === undefined ? null : value.can_connect === true,
+      sceneOAuthApps: value.scene_oauth_apps,
     }),
   );
 
@@ -701,29 +778,55 @@ export const AgentContextCapabilitiesSchema = z
 // (/api/agents/{id}/tenants...)
 // ---------------------------------------------------------------------------
 
+/** A scene's identity: scene_id, else scene_key (which carries the same
+ * scene_id). A row naming neither is dropped. */
+const sceneIdentity = {
+  scene_id: text.catch(""),
+  scene_key: text.catch(""),
+};
+
+function sceneIdOf(value: { scene_id: string; scene_key: string }): string {
+  return value.scene_id || value.scene_key;
+}
+
+const hasSceneId = (value: { scene_id: string; scene_key: string }) => sceneIdOf(value) !== "";
+
+/** One Agent work scene (docs/agent-scene.md). The conversation id is
+ * display-only; memory is known from has_memory or a memory_id, and opened
+ * by the scene_id. */
 const AgentSceneSummaryWireSchema = z
   .object({
-    scene_key: id,
+    ...sceneIdentity,
+    conversation_id: text.catch(""),
     kind: sceneKind,
     title: text,
     org_id: text,
     last_active_at: text,
     inbound_session_id: text,
     inbound_count: count,
-    memory_id: text,
+    memory_id: text.catch(""),
+    has_memory: strictTrue,
+    has_prompt: strictTrue,
   })
-  .transform(
-    (value): AgentSceneSummary => ({
-      sceneKey: value.scene_key,
+  .refine(hasSceneId)
+  .transform((value): AgentSceneSummary => {
+    const sceneId = sceneIdOf(value);
+    const hasMemory = value.has_memory || value.memory_id !== "";
+    return {
+      sceneId,
+      sceneKey: sceneId,
+      conversationId: value.conversation_id,
       kind: value.kind,
       title: value.title,
       orgId: value.org_id,
       lastActiveAt: value.last_active_at,
       inboundSessionId: value.inbound_session_id,
       inboundCount: value.inbound_count,
-      memoryId: value.memory_id,
-    }),
-  );
+      memoryId: value.memory_id || (hasMemory ? sceneId : ""),
+      hasMemory,
+      hasPrompt: value.has_prompt,
+    };
+  });
 
 export const EMPTY_AGENT_SCENES_PAGE: AgentScenesPage = { scenes: [], hasMore: false };
 
@@ -1087,16 +1190,18 @@ export const ConnectedAppsListSchema = z
 
 const ConnectedAppSceneWireSchema = z
   .object({
-    scene_key: id,
+    ...sceneIdentity,
     title: text,
     kind: sceneKind,
     enabled: strictTrue,
     connected: strictTrue,
     account: text,
   })
+  .refine(hasSceneId)
   .transform(
     (value): ConnectedAppSceneUsage => ({
-      sceneKey: value.scene_key,
+      sceneId: sceneIdOf(value),
+      sceneKey: sceneIdOf(value),
       title: value.title,
       kind: value.kind,
       enabled: value.enabled,
@@ -1149,3 +1254,127 @@ export const ConnectedAppDetailSchema = ConnectedAppWireSchema.extend({
     canAdmin: value.can_admin,
   }),
 );
+
+// ---------------------------------------------------------------------------
+// Scene routines (GET/POST/PATCH … /routines on the configure page and the
+// admin Context Builder)
+
+const nullableText = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? null);
+
+const RoutineTriggerSchema = z
+  .object({
+    id: text,
+    kind: text,
+    cron: text,
+    timezone: text,
+    run_at: z.string().datetime({ offset: true }).nullish().catch(null).transform((value) => value ?? null),
+    consumed: strictTrue,
+    next_run_at: nullableText,
+    next_runs: list(z.string()),
+    webhook_url_masked: text,
+    webhook_url: text,
+  })
+  .transform(
+    (value): ContextRoutineTrigger => ({
+      id: value.id,
+      kind: value.kind,
+      cron: value.cron,
+      timezone: value.timezone,
+      runAt: value.run_at,
+      consumed: value.consumed,
+      nextRunAt: value.next_run_at,
+      nextRuns: value.next_runs,
+      webhookUrlMasked: value.webhook_url_masked,
+      webhookUrl: value.webhook_url,
+    }),
+  );
+
+const RoutineRunSchema = z
+  .object({
+    id,
+    status: text,
+    source: text,
+    failure_reason: text,
+    created_at: text,
+    completed_at: nullableText,
+  })
+  .transform(
+    (value): ContextRoutineRun => ({
+      id: value.id,
+      status: value.status,
+      source: value.source,
+      failureReason: value.failure_reason,
+      createdAt: value.created_at,
+      completedAt: value.completed_at,
+    }),
+  );
+
+export const ContextRoutineSchema = z
+  .object({
+    id,
+    scene_id: text,
+    scene_kind: text,
+    autopilot_id: text,
+    title: text,
+    instructions: text,
+    enabled: strictTrue,
+    pause_reason: text,
+    trigger: RoutineTriggerSchema,
+    last_run: RoutineRunSchema.nullish().catch(null),
+    created_by_type: text,
+    created_at: text,
+    updated_at: text,
+  })
+  .transform(
+    (value): ContextRoutine => ({
+      id: value.id,
+      sceneId: value.scene_id,
+      sceneKind: value.scene_kind,
+      autopilotId: value.autopilot_id,
+      title: value.title,
+      instructions: value.instructions,
+      enabled: value.enabled,
+      pauseReason: value.pause_reason,
+      trigger: value.trigger,
+      lastRun: value.last_run ?? null,
+      createdByType: value.created_by_type,
+      createdAt: value.created_at,
+      updatedAt: value.updated_at,
+    }),
+  );
+
+/** A scene's routines; a malformed entry is dropped, not the whole list. */
+export const ContextRoutinesListSchema = z
+  .object({ routines: tolerantList(ContextRoutineSchema) })
+  .transform((value): ContextRoutine[] => value.routines);
+
+/** A routine's run history, newest first; malformed rows are dropped. */
+export const ContextRoutineRunsListSchema = z
+  .object({ runs: tolerantList(RoutineRunSchema) })
+  .transform((value): ContextRoutineRun[] => value.runs);
+
+/** Create and edit responses: the stored routine and whether a create
+ * updated an existing one. null when malformed (the caller refetches). */
+export const ContextRoutineWriteSchema = z
+  .object({ routine: ContextRoutineSchema, updated: strictTrue })
+  .transform((value): ContextRoutineWriteResult => ({ routine: value.routine, updated: value.updated }))
+  .nullable()
+  .catch(null);
+
+/** Rotate response: the routine with its new full webhook URL. */
+export const ContextRoutineEnvelopeSchema = z
+  .object({ routine: ContextRoutineSchema })
+  .transform((value): ContextRoutine => value.routine)
+  .nullable()
+  .catch(null);
+
+/** Run-now response: the run it started (null when the run was not created
+ * or the body is malformed). */
+export const ContextRoutineRunEnvelopeSchema = z
+  .object({ run: RoutineRunSchema.nullish() })
+  .transform((value): ContextRoutineRun | null => value.run ?? null)
+  .nullable()
+  .catch(null);

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_first_feedback_identity_idx;

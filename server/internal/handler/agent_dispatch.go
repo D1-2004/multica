@@ -92,15 +92,16 @@ type AgentDispatchRequest struct {
 }
 
 type AgentDispatchResponse struct {
-	Continuation    AgentDispatchContinuation `json:"continuation"`
-	IssueIdentifier string                    `json:"issueIdentifier,omitempty"`
-	CommentID       string                    `json:"commentId,omitempty"`
-	TaskID          string                    `json:"taskId"`
+	ControlResult   *AgentDispatchControlResult `json:"controlResult,omitempty"`
+	Continuation    AgentDispatchContinuation   `json:"continuation"`
+	IssueIdentifier string                      `json:"issueIdentifier,omitempty"`
+	CommentID       string                      `json:"commentId,omitempty"`
+	TaskID          string                      `json:"taskId"`
 }
 
 type AgentChatDispatchResponse struct {
-	Continuation  AgentDispatchContinuation  `json:"continuation"`
-	TaskID        string                     `json:"taskId,omitempty"`
+	Continuation  AgentDispatchContinuation   `json:"continuation"`
+	TaskID        string                      `json:"taskId,omitempty"`
 	ControlResult *AgentDispatchControlResult `json:"controlResult,omitempty"`
 }
 

@@ -426,3 +426,41 @@ func TestFlushPiTextBufferKeepsUnmatchedToolPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// The first running status carries the session file path, so the daemon pins
+// the resume pointer before the run ends and a steered run can be resumed.
+func TestPiExecuteRevealsSessionOnFirstStatus(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+	events := []string{
+		`{"type":"agent_start"}`,
+		`{"type":"turn_start"}`,
+		`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}`,
+		`{"type":"turn_end","message":{"role":"assistant","model":"test","usage":{"input":1,"output":1}}}`,
+	}
+	fakePath := filepath.Join(t.TempDir(), "pi")
+	writeTestExecutable(t, fakePath, []byte(piEventStreamScript(events)))
+	backend, err := New("pi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
+	if err != nil {
+		t.Fatalf("new pi backend: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "prompt", ExecOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var firstStatus *Message
+	for msg := range session.Messages {
+		if msg.Type == MessageStatus && firstStatus == nil {
+			m := msg
+			firstStatus = &m
+		}
+	}
+	result := <-session.Result
+	if firstStatus == nil || firstStatus.SessionID == "" || firstStatus.SessionID != result.SessionID {
+		t.Fatalf("first status must carry the resumable session: status=%+v result session=%q", firstStatus, result.SessionID)
+	}
+}

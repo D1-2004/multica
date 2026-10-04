@@ -44,6 +44,8 @@ type IssueCommentCreateParams struct {
 	// comment and task. Retries return the original result, even after the
 	// task finishes. Delegation uses its separate source-task contract.
 	IdempotencyKey string
+	// QueueMode is explicit, authenticated control; absent preserves enqueue.
+	QueueMode string
 	// AgentMCPClaimID makes an external MCP follow-up recoverable across a
 	// process crash between comment creation and task binding.
 	AgentMCPClaimID pgtype.UUID
@@ -60,9 +62,10 @@ type IssueCommentCreateOpts struct {
 }
 
 type IssueCommentCreateResult struct {
-	Comment     db.Comment
-	Attachments []db.Attachment
-	Task        db.AgentTaskQueue
+	Comment       db.Comment
+	Attachments   []db.Attachment
+	Task          db.AgentTaskQueue
+	PreemptedTask *db.AgentTaskQueue
 }
 
 // CreateExternalFollowUp persists a member comment, binds imported
@@ -76,6 +79,23 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return IssueCommentCreateResult{}, errors.New("issue is not assigned to an agent")
+	}
+	if params.QueueMode == "steer" {
+		return s.createSteeredExternalFollowUp(ctx, params, opts)
+	}
+	// Coordinator projection retains the Host-validated dispatch control in
+	// private context even when it changes a Chat surface into an Issue.
+	var controlContext struct {
+		Control struct{ Action, SessionMode, QueueMode string } `json:"dispatch_control"`
+		Key     string                                          `json:"dispatch_idempotency_key"`
+	}
+	if json.Unmarshal(params.DispatchContext, &controlContext) == nil &&
+		controlContext.Control.Action == "dispatch" && controlContext.Control.SessionMode == "continue" && controlContext.Control.QueueMode == "steer" {
+		params.QueueMode = "steer"
+		if params.IdempotencyKey == "" {
+			params.IdempotencyKey = controlContext.Key
+		}
+		return s.createSteeredExternalFollowUp(ctx, params, opts)
 	}
 	if strings.TrimSpace(params.IdempotencyKey) != "" {
 		if params.Delegation != nil {

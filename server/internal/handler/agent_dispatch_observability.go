@@ -297,6 +297,14 @@ func (h *Handler) requireAgentDispatchTaskAccess(
 		writeError(w, http.StatusNotFound, "task not found")
 		return db.AgentTaskQueue{}, false
 	}
+	if service.IsEmployeeDirectTask(task) {
+		agent, agentErr := h.Queries.GetAgent(r.Context(), task.AgentID)
+		member, memberErr := h.getWorkspaceMember(r.Context(), uuidToString(dispatchContext.UserID), uuidToString(dispatchContext.WorkspaceID))
+		if agentErr != nil || memberErr != nil || agent.WorkspaceID != dispatchContext.WorkspaceID || !memberManagesAgent(agent, member) {
+			writeError(w, http.StatusForbidden, "you do not have access to this task")
+			return db.AgentTaskQueue{}, false
+		}
+	}
 	return task, true
 }
 

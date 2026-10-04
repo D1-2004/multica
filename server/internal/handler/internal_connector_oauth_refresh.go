@@ -33,13 +33,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 	"golang.org/x/sync/singleflight"
@@ -133,6 +133,10 @@ func connectorRefreshKey(c *internalConnector) string {
 // expire; an upstream 401 triggers one forced refresh and one retry (a 401
 // proves the request did not run, so this is safe for tools/call too).
 func (h *Handler) callCatalogConnector(ctx context.Context, c *internalConnector, method string, params map[string]any) (json.RawMessage, error) {
+	// Outlook's catalog URL is not an MCP server. Graph is called directly.
+	if c != nil && c.CatalogSlug == outlookCatalogSlug {
+		return h.callOutlookConnector(ctx, c, method, params)
+	}
 	mcp, _, err := catalogConnectorMCP(*c)
 	if err != nil {
 		return nil, err
@@ -141,14 +145,14 @@ func (h *Handler) callCatalogConnector(ctx context.Context, c *internalConnector
 	if err != nil {
 		return nil, err
 	}
-	result, err := mcp.Call(ctx, catalogSessionKey(c.ID, token), bearerHeader(token), method, params)
+	result, err := mcp.Call(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, token), catalogMCPHeaders(c.CatalogSlug, token), method, params)
 	var status *remotemcp.StatusError
 	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
 		next, refreshErr := h.freshConnectorToken(ctx, c, token)
 		if refreshErr != nil {
 			return nil, refreshErr
 		}
-		result, err = mcp.Call(ctx, catalogSessionKey(c.ID, next), bearerHeader(next), method, params)
+		result, err = mcp.Call(ctx, catalogConnectorSessionKey(c.CatalogSlug, c.ID, next), catalogMCPHeaders(c.CatalogSlug, next), method, params)
 	}
 	if err != nil {
 		return nil, catalogUpstreamError(err)
@@ -419,12 +423,16 @@ type connectorTokenEndpointConfig struct {
 	resource     string
 	redirectURI  string
 	registration remotemcp.OAuthClientRegistration
+	// scene: the client is the scene's own OAuth application.
+	scene bool
 }
 
 // connectorTokenEndpoint returns the token endpoint of a catalog connector
 // for the OAuth client clientID ("" = the current one): the deployment's
 // GitHub App client for GitHub, the connector's dynamic registration (the
-// current one or a kept earlier one) for DCR apps.
+// current one or a kept earlier one) for DCR apps. A scene credential
+// (c.credentialKey) whose token was issued by the scene's own OAuth
+// application uses that application.
 // errConnectorOAuthClientReplaced when clientID is no longer known.
 func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnector, clientID string) (connectorTokenEndpointConfig, error) {
 	app, ok := catalogApp(c.CatalogSlug)
@@ -432,22 +440,85 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 		return connectorTokenEndpointConfig{}, errConnectorNotCatalog
 	}
 	out := connectorTokenEndpointConfig{client: catalogExternalClient(app)}
+	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp || app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+		scene, own, err := h.sceneOAuthClient(ctx, c.credentialKey, app)
+		// Tokens issued before the scene saved its application stay with the
+		// workspace client that issued them; a broken scene application only
+		// fails the tokens it issued.
+		if own && clientID != "" && clientID == scene.ClientID {
+			if err != nil {
+				return connectorTokenEndpointConfig{}, err
+			}
+			out.tokenURL = scene.TokenEndpoint
+			homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
+			forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
+			out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, scene.CallbackMode) + connectorOAuthCallbackPath
+			if app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+				out.resource = app.Resource
+			}
+			out.registration = remotemcp.OAuthClientRegistration{
+				ClientID:                scene.ClientID,
+				ClientSecret:            scene.ClientSecret,
+				TokenEndpointAuthMethod: "client_secret_post",
+			}
+			out.scene = true
+			return out, nil
+		}
+		if err != nil && !own {
+			slog.WarnContext(ctx, "scene OAuth application lookup failed; using the workspace client", "connector_id", c.ID, "error", err)
+		}
+	}
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
-		if !githubUserAuthorizationConfigured() {
+		ghClient, err := h.githubOAuthClient(ctx, c.WorkspaceID)
+		if err != nil || strings.TrimSpace(ghClient.ClientID) == "" || ghClient.ClientSecret == "" {
 			return connectorTokenEndpointConfig{}, errors.New("GitHub App client credentials are not configured")
 		}
-		appClientID := strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID"))
-		if clientID != "" && clientID != appClientID {
+		if clientID != "" && clientID != ghClient.ClientID {
 			return connectorTokenEndpointConfig{}, errConnectorOAuthClientReplaced
 		}
-		out.tokenURL = app.TokenEndpoint
-		// The redirect URI the authorization was requested with (GitHub
-		// checks that it matches on the code exchange).
-		out.redirectURI = h.connectorOAuthRedirectOrigin(connectorOAuthViaGitHub) + connectorOAuthGitHubCallback
+		out.tokenURL = ghClient.TokenEndpoint
+		if out.tokenURL == "" {
+			out.tokenURL = app.TokenEndpoint
+		}
+		// A code exchange prefers the redirect URI stored with the state.
+		// Refresh recomputes it from the app's current callback mode.
+		// Workspace apps use the console callback; the environment client
+		// keeps the GitHub App callback.
+		callbackVia := connectorOAuthViaGitHub
+		callbackPath := connectorOAuthGitHubCallback
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			callbackVia = connectorOAuthViaDCR
+			callbackPath = connectorOAuthCallbackPath
+		}
+		homeOrigin, _ := h.connectorOAuthCallbackTarget(callbackVia)
+		forwarded := h.connectorOAuthRedirectOrigin(callbackVia)
+		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, ghClient.CallbackMode) + callbackPath
 		out.registration = remotemcp.OAuthClientRegistration{
-			ClientID:                appClientID,
-			ClientSecret:            os.Getenv("GITHUB_APP_CLIENT_SECRET"),
+			ClientID:                ghClient.ClientID,
+			ClientSecret:            ghClient.ClientSecret,
+			TokenEndpointAuthMethod: "client_secret_post",
+		}
+		return out, nil
+	case connectorcatalog.AuthOAuthPreregistered:
+		client, err := h.preregisteredOAuthClient(ctx, c.WorkspaceID, app)
+		if err != nil || strings.TrimSpace(client.ClientID) == "" || client.ClientSecret == "" {
+			return connectorTokenEndpointConfig{}, errors.New("pre-registered client credentials are not configured")
+		}
+		if clientID != "" && clientID != client.ClientID {
+			return connectorTokenEndpointConfig{}, errConnectorOAuthClientReplaced
+		}
+		out.tokenURL = client.TokenEndpoint
+		if out.tokenURL == "" {
+			out.tokenURL = app.TokenEndpoint
+		}
+		homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
+		forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
+		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, client.CallbackMode) + connectorOAuthCallbackPath
+		out.resource = app.Resource
+		out.registration = remotemcp.OAuthClientRegistration{
+			ClientID:                client.ClientID,
+			ClientSecret:            client.ClientSecret,
 			TokenEndpointAuthMethod: "client_secret_post",
 		}
 		return out, nil

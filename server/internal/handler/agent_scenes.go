@@ -25,8 +25,14 @@ const (
 	agentScenesMaxOffset    = 1 << 20
 )
 
+// agentSceneDTO is one Agent work scene (docs/agent-scene.md). scene_id is
+// its only identity; scene_key and memory_id carry the same scene_id for
+// clients that still read those names. conversation_id is the scene's
+// DingTalk openConversationId, for display only.
 type agentSceneDTO struct {
-	SceneKey string `json:"scene_key"`
+	SceneID        string `json:"scene_id"`
+	SceneKey       string `json:"scene_key"`
+	ConversationID string `json:"conversation_id"`
 	// Kind is "group" or "dm".
 	Kind         string `json:"kind"`
 	Title        string `json:"title"`
@@ -38,8 +44,9 @@ type agentSceneDTO struct {
 	// transcript shows (same endpoint namespace and source).
 	InboundSessionID string `json:"inbound_session_id"`
 	InboundCount     int    `json:"inbound_count"`
-	// MemoryID is the scene_memory row id ("" when the scene has none).
+	// MemoryID is the scene_id when the scene has Scene Memory, else "".
 	MemoryID  string `json:"memory_id"`
+	HasMemory bool   `json:"has_memory"`
 	HasPrompt bool   `json:"has_prompt"`
 }
 
@@ -121,22 +128,23 @@ func (c agentSceneCaller) contextCapAgent() contextCapAgent {
 	return contextCapAgent{Agent: c.agent, ID: c.agentID, WorkspaceID: c.workspaceID, OrgID: c.orgID, IdentityOrgID: c.orgID}
 }
 
-// agentSceneTitle picks the display title of a scene: the scene memory title
-// (or its locating line), the Coordinator conversation title, the 1:1
-// sender, then the stored configuration and binding snapshots.
+// agentSceneTitle picks the display title of a scene: the scene directory
+// title (the group title or the 1:1 counterpart), else the locating line of
+// its Scene Memory.
 func agentSceneTitle(s contextcap.SceneSummary) string {
-	title := firstNonEmpty(scenememory.DisplayTitle(s.MemoryTitle, s.MemoryText), s.ConversationTitle)
-	if title == "" && s.Kind == contextcap.SceneKindDM {
-		title = strings.TrimSpace(s.SenderName)
-	}
-	return firstNonEmpty(title, s.ConfigTitle, s.BindingTitle)
+	return scenememory.DisplayTitle(s.Title, s.MemoryText)
 }
 
 func agentSceneView(s contextcap.SceneSummary) agentSceneDTO {
+	memoryID := ""
+	if s.HasMemory {
+		memoryID = s.SceneID
+	}
 	return agentSceneDTO{
-		SceneKey: s.SceneKey, Kind: s.Kind, Title: agentSceneTitle(s), OrgID: s.OrgID,
+		SceneID: s.SceneID, SceneKey: s.SceneID, ConversationID: s.ConversationID,
+		Kind: s.Kind, Title: agentSceneTitle(s), OrgID: s.OrgID,
 		LastActiveAt: contextCapTime(s.LastActiveAt), InboundSessionID: s.InboundSessionID, InboundCount: s.InboundCount,
-		MemoryID: s.MemoryID, HasPrompt: s.HasPrompt,
+		MemoryID: memoryID, HasMemory: s.HasMemory, HasPrompt: s.HasPrompt,
 	}
 }
 

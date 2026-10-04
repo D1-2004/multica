@@ -73,6 +73,8 @@ Constraints on webhook requests:
 
 - the body must be a valid JSON object or array, up to 256 KiB;
 - `Idempotency-Key` prevents duplicate runs when the sender retries; GitHub deliveries are also deduplicated by `X-GitHub-Delivery`;
+- a retry with the same key and the same payload returns the original delivery (key order and whitespace don't matter); reusing a key with a different payload is a conflict and runs nothing. This holds even if the original delivery later failed; to run it again, replay it from the delivery detail;
+- the key is at most 255 characters and can't contain control characters;
 - without a stable idempotency key, Multica can't guarantee that repeated requests run only once;
 - when the trigger is disabled or the event doesn't match, the delivery is recorded as ignored and no run is created.
 
@@ -100,9 +102,10 @@ When debugging a sender, use this table to interpret Multica's responses:
 | 200 | `skipped` | Accepted, but this run was skipped (for example, the runtime is offline in run-only mode); includes the reason. |
 | 200 | `ignored` | No run created: the trigger is disabled, the autopilot is paused or archived, or the event was filtered; the `reason` field explains why. |
 | 200 | `duplicate` | The idempotency key hit an existing delivery; returns the original delivery ID and doesn't run again. |
-| 400 | Error message | The body is empty, not valid JSON, or not a JSON object/array. |
-| 401 | `rejected` | The trigger has a signing secret configured, but the request is missing a signature or the signature doesn't match. |
+| 400 | Error message | The body is empty, not valid JSON, or not a JSON object/array; or the idempotency key is too long or contains control characters. |
+| 401 | `rejected` | The trigger has a signing secret configured, but the request is missing a signature or the signature doesn't match. The signature is checked against the raw body before deduplication, so an unsigned retry is rejected rather than reported as `duplicate`. |
 | 404 | Error message | The token in the URL is invalid or has been rotated. |
+| 409 | `conflict` | The idempotency key was already used with a different payload. Nothing runs, the original delivery is unchanged, and the refused request is recorded as a rejected delivery. |
 | 413 | Error message | The body exceeds 256 KiB. |
 | 429 | Error message | Too many requests; retry later per the `Retry-After` response header. |
 | 500 | Error message | Multica internal error; the sender can retry later. |

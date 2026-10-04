@@ -11,6 +11,16 @@ Product contracts the runtime brief does not fully encode: PR linking vs close
 intent, reading linked-PR state, metadata keys, status side effects, and
 sub-issue enqueue behavior.
 
+## Durable run progress
+
+`multica issue run-events <queue-task-uuid> --since <seq> --limit 500 --output json`
+reads the fact-only execution stream (`docs/task-run-events.md`). Save the returned
+`next_seq` per execution and continue while `has_more` is true. Diagnostics count
+toward the cursor but are not reportable; tool completion and provider final text
+do not prove task completion or user delivery. The endpoint is opt-in through
+`MULTICA_TASK_RUN_EVENTS_ENABLED=1` and keeps the transcript's Direct/A2A access
+boundaries. This command reads facts; it does not send progress to anyone.
+
 For building mention links, load `multica-mentioning` instead — not this skill.
 
 Every contract below is traced to source in
@@ -233,6 +243,16 @@ on it. These are the contracts, not advice:
   `done` it enqueues no new agent work, but it does **not** stop tasks already in
   flight — a run in progress keeps going (MUL-4465). To stop a running task,
   cancel the task itself.
+  Task cancellation is a logical state change: an explicitly steered task keeps its writer
+  barrier until its daemon positively acknowledges process-group exit (or the
+  FC/E2B task-stop receipt proves it). Deferred Issue comments are reconciled
+  into the next run. Authenticated dispatch `queueMode=steer` cancels the old
+  attempt and queues the correction; inputs arriving during termination merge
+  into one successor. Do not equate `cancelled` with a stopped process.
+  A human API client can `POST /api/issues/{id}/steer` with a correction in
+  `content` and a stable `Idempotency-Key` header. This checks permission to
+  invoke the assigned agent and creates the next member-comment input on the
+  same Issue. Ordinary comments keep their existing enqueue behavior.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.

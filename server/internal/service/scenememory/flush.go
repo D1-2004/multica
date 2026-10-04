@@ -50,7 +50,7 @@ func formatFlushStamp(t time.Time) string {
 }
 
 type HistorySource interface {
-	Read(ctx context.Context, row db.SceneMemory) (HistoryPage, error)
+	Read(ctx context.Context, row Memory) (HistoryPage, error)
 }
 
 type MemoryFlusher struct {
@@ -69,7 +69,7 @@ type AgentReader interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 }
 
-func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err error) {
+func (f *MemoryFlusher) Flush(ctx context.Context, row Memory) (err error) {
 	if f == nil || f.Store == nil || f.History == nil {
 		return &FlushError{Code: ErrorConfig, Err: fmt.Errorf("scene memory flusher is not configured")}
 	}
@@ -152,8 +152,8 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 	}
 	slog.Info("scene memory flush committed",
 		"event", "scene_memory_flush_commit",
-		"scene_memory_id", util.UUIDToString(row.ID),
-		"scene_key", row.SceneKey,
+		"scene_id", util.UUIDToString(row.SceneID),
+		"scene_key", row.ConversationID(),
 		"memory_revision", committed.MemoryRevision,
 		"cursor_at", cursorLog,
 		"event_count", len(plan.batch),
@@ -175,7 +175,7 @@ type flushPlan struct {
 	progress historyProgress
 }
 
-func planFlush(row db.SceneMemory, page HistoryPage) (flushPlan, error) {
+func planFlush(row Memory, page HistoryPage) (flushPlan, error) {
 	if !page.PaginationKnown {
 		return flushPlan{}, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("DWS history page is missing pagination metadata")}
 	}
@@ -234,7 +234,7 @@ func planFlush(row db.SceneMemory, page HistoryPage) (flushPlan, error) {
 	}
 	batch := sortHistoryEvents(filterUntil(page.Events, cutoffAt))
 	limit := flushBatchEvents
-	if row.SceneKind == KindGroup {
+	if row.Kind() == KindGroup {
 		limit = flushGroupBatchEvents
 	}
 	// Never truncate a page then persist its end cursor: that drops its tail.
@@ -251,7 +251,7 @@ func planFlush(row db.SceneMemory, page HistoryPage) (flushPlan, error) {
 	return flushPlan{batch: batch, caughtUp: caughtUp, cursorAt: cursorAt, cursorEv: cursorEv, progress: progress}, nil
 }
 
-func pendingFrom(row db.SceneMemory) (time.Time, string) {
+func pendingFrom(row Memory) (time.Time, string) {
 	if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
 		return row.PendingFromAt.Time, strings.TrimSpace(row.PendingFromEvidenceID)
 	}
@@ -261,7 +261,7 @@ func pendingFrom(row db.SceneMemory) (time.Time, string) {
 	return time.Time{}, strings.TrimSpace(row.LastTriggerEvidenceID)
 }
 
-func (f *MemoryFlusher) identitySelfNames(ctx context.Context, row db.SceneMemory, page HistoryPage) []string {
+func (f *MemoryFlusher) identitySelfNames(ctx context.Context, row Memory, page HistoryPage) []string {
 	names := append([]string{}, page.SelfNames...)
 	if f != nil && f.Agents != nil && row.AgentID.Valid {
 		if agent, err := f.Agents.GetAgent(ctx, row.AgentID); err == nil {
@@ -271,7 +271,7 @@ func (f *MemoryFlusher) identitySelfNames(ctx context.Context, row db.SceneMemor
 	return names
 }
 
-func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent, extraSelfNames []string) (string, bool, error) {
+func (f *MemoryFlusher) merge(ctx context.Context, row Memory, batch []HistoryEvent, extraSelfNames []string) (string, bool, error) {
 	if f.LLM == nil || !f.LLM.Enabled() {
 		return "", false, &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
 	}
@@ -294,7 +294,7 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 			if dwsclient.IsTimeout(err) {
 				slog.Warn("scene memory flush llm timed out; holding dirty batch",
 					"event", "scene_memory_flush_timeout",
-					"scene_key", row.SceneKey,
+					"scene_key", row.ConversationID(),
 					"reason", "llm_timeout",
 					"event_count", len(batch),
 				)
@@ -504,12 +504,12 @@ func flushTextBudgetError(text string) error {
 	return fmt.Errorf("full_text has %d Unicode code points; maximum %d including headings and citations. Rewrite to at most 1200: merge duplicate/related facts with the same exact source citation and compact stale pending questions; preserve current corrections and human sources. Do not repeat this draft or use unchanged to bypass corrections", utf8.RuneCountInString(text), MaxMemoryCodePoints)
 }
 
-func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent, extraSelfNames []string) string {
+func buildFlushUserPrompt(row Memory, batch []HistoryEvent, extraSelfNames []string) string {
 	var b strings.Builder
 	b.WriteString("scene_title: ")
-	b.WriteString(row.SceneTitle)
+	b.WriteString(row.Title())
 	b.WriteString("\nscene_kind: ")
-	b.WriteString(row.SceneKind)
+	b.WriteString(row.Kind())
 	b.WriteString("\nmemory_revision: ")
 	b.WriteString(fmt.Sprintf("%d", row.MemoryRevision))
 	b.WriteString(fmt.Sprintf("\ncurrent_memory_code_points: %d\nfull_text_target_code_points: 1200\nfull_text_max_code_points: %d", utf8.RuneCountInString(row.MemoryText), MaxMemoryCodePoints))

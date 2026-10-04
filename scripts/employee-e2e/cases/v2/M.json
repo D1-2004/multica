@@ -1,0 +1,2614 @@
+{
+ "schema": "el2e.cases.v2",
+ "suite": "EmployeeLoop 真人感回归 v2 · M 钉钉消息理解",
+ "source": "cases-v2/SUITE.md；由 GoldenCase-20、08 §5 验收 ID 与 GawkBot 对照改写，经写手与真人感、可行性两轮评审修订",
+ "category": {
+  "code": "M",
+  "name": "钉钉消息理解",
+  "file": "M.json",
+  "focus": "引用 / 回复链 / 多 @ / @所有人 / 文件 / 图片 / 连发 / 撤回 / 转发 / 合并转发 / 表情 / 语音输入错字 / 文档链接"
+ },
+ "notes": [
+  "人类台词里 Director 叫「D总」，冬翔叫「东翔」，员工叫「小Q」；硬检查用 {=别名} 正则，不依赖字面写法。",
+  "正文没有可见测试标记：每次发送带不可见 --uuid，员工回复按引用 messageId 归属；变量行让每轮的客户名、金额、人名、编号自然不同。",
+  "DEAP 演员（黛玉、凤姐、宝钗）不能 @、不能私聊员工，只能引用员工消息点名；人类发送一律 --ai-tag=false。",
+  "字段说明见 harness-gaps.md §0；世界设定见 world.json。"
+ ],
+ "defaults": {
+  "wait": {
+   "reply": {
+    "timeout_s": 180,
+    "settle_s": 25
+   },
+   "silence": {
+    "window_s": 60
+   },
+   "optional": {
+    "window_s": 45,
+    "settle_s": 15
+   },
+   "none": {
+    "pause_s": 5
+   }
+  },
+  "human_send": {
+   "ai_tag": false
+  },
+  "world": "world.json",
+  "templating": "先替换 var_sets 选中行的 {VAR}，再展开 {=ALIAS}；var 名不得与 driver.gen_vars 的键重名（加载时报错）",
+  "pattern_sets": {
+   "EN": "(?i)\\b(I don't|I'm|I have no|Standing by|Got it|Sure,|Let me|Here is|Here's)\\b|[A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,}",
+   "SERVICE": "以下是|很高兴为|正在为您|请问还有什么|收到您的|亲[，,！!]|作为(一个)?\\s*AI",
+   "RESEND": "(再|重新)发(一下|一遍|下)|发我(一下|看看)|贴(一下|过来|出来)|没看到.{0,8}(消息|材料|记录|内容)|麻烦.{0,6}(发|贴)",
+   "INTERNAL": "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|memory_(capture|lookup|forget)|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])",
+   "CONTACT": "[A-Za-z0-9._-]+@[A-Za-z0-9-]+\\.[A-Za-z]{2,}|(?<!\\d)1[3-9]\\d{9}(?!\\d)",
+   "MDTABLE": "\\|\\s*:?-{3,}"
+  },
+  "aliases": {
+   "DONGXIANG": "(?:[冬东]翔|夏东翔)",
+   "DZONG": "(?:D总|Director)",
+   "FENGJIE": "(?:凤姐|王熙凤)",
+   "DAIYU": "(?:黛玉|林黛玉)",
+   "BAOCHAI": "(?:宝钗|薛宝钗)"
+  },
+  "grading": {
+   "tier": "缺省 = 硬检查；tier=target 只决定 pass 与 degraded（硬检查全过、目标档未过 = degraded）",
+   "requires": "能力未具备时该检查记 vacuous、不计分；以 ! 开头表示仅在该能力未具备时适用；a+b 表示同时需要",
+   "only_if": "条件不满足时该检查记 n/a",
+   "observe": "observe 步骤未匹配 = 硬检查失败（optional:true 除外）",
+   "sentinel": "scope=case_span：只扫本用例时间窗",
+   "unknown_keys": "grader / driver 遇到未知键直接报错，不得静默跳过"
+  }
+ },
+ "cases": [
+  {
+   "id": "M-01",
+   "title": "引用员工自己的旧回复改时间：两件事只改被引用的那件",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "var_sets": [
+    {
+     "CA": "华信",
+     "CONTACT": "刘晨",
+     "DAY_A": "周四",
+     "T_A": "下午两点",
+     "T_NEW_RE": "三点|15[:：点]",
+     "CB": "睿博",
+     "T_B": "下周一上午十点"
+    },
+    {
+     "CA": "启明",
+     "CONTACT": "王经理",
+     "DAY_A": "周三",
+     "T_A": "下午三点",
+     "T_NEW_RE": "四点|16[:：点]",
+     "CB": "中拓",
+     "T_B": "下周二上午十点"
+    },
+    {
+     "CA": "安澜",
+     "CONTACT": "邵一帆",
+     "DAY_A": "周五",
+     "T_A": "上午十点",
+     "T_NEW_RE": "十一点|11[:：点]",
+     "CB": "宏远",
+     "T_B": "下周一下午两点"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "quote_reply",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "引用员工消息 = @ 事件；被引原文与作者（员工本人）都进窗口"
+   },
+   "steps": [
+    {
+     "id": "a1",
+     "actor": "冬翔",
+     "text": "{CA}二期验收评审定了 {DAY_A}{T_A} 腾讯会议 他们那边{CONTACT}带俩人来",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "b1",
+     "actor": "D总",
+     "text": "还有个事 {CB}的方案汇报挪到{T_B}了 去他们园区",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "a2",
+     "actor": "冬翔",
+     "text": "往后挪一个钟吧 {CONTACT}说那个点他有会",
+     "reply_to": {
+      "employee_reply_of": "a1",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "b2",
+     "actor": "D总",
+     "text": "这个不动哈",
+     "reply_to": {
+      "employee_reply_of": "b1",
+      "fallback": "employee_latest"
+     },
+     "match_key": "这个不动哈",
+     "wait": {
+      "mode": "optional",
+      "window_s": 60
+     }
+    },
+    {
+     "id": "sum",
+     "actor": "D总",
+     "text": "把这俩会的时间地点捋一下发群里 我转给大家",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "a2 只把 {CA} 评审往后挪一小时，{CB} 不动；b2 不改任何东西、最多一句；sum 两个会各自时间地点都对。",
+    "checks": [
+     {
+      "steps": [
+       "a1",
+       "b1"
+      ],
+      "replies": [
+       0,
+       2
+      ],
+      "max_chars": 80
+     },
+     {
+      "steps": [
+       "a2"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_any_regex": [
+       "{T_NEW_RE}"
+      ],
+      "exclude": [
+       "{CB}[^。\\n]{0,15}({T_NEW_RE})"
+      ],
+      "quotes_step": "a2"
+     },
+     {
+      "steps": [
+       "b2"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 40
+     },
+     {
+      "steps": [
+       "sum"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "{CA}",
+       "{CB}",
+       "腾讯会议",
+       "园区"
+      ],
+      "include_any_regex": [
+       "{T_NEW_RE}"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "a2 从被引用的那条认出说的是 {CA} 评审，不问「哪个会」",
+     "b2 理解「这个」指 {CB} 方案汇报，没挪",
+     "sum 两个会不串，{CA} 是新时间",
+     "中文，口吻像同事，不复述对方原话"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群里两条客户线并行：东翔跟{CA}验收评审，D总跟{CB}方案汇报。员工先后各回了一条；之后两人各自引用其中一条来改或确认，最后 D总要汇总。",
+    "人物": "冬翔/东翔（跟{CA}线）；D总（跟{CB}线）；小Q。",
+    "上下文": "引用员工的消息会自动 @ 员工；referencedMessage 带被引原文全文，被引消息命中出站回执，senderUid=员工本人。",
+    "应该怎么做": "a1/b1 各一句短确认（也可不回）。a2：从被引用的那条认出是{CA}评审，确认改到新时间，{CB}不动，不反问。b2：不回或一句 ≤40 字确认，不改东西。sum：一条汇总，{CA} 新时间 + 腾讯会议，{CB} {T_B} + 园区。",
+    "怎么判": "被引用的是哪件就只改哪件，汇总时间地点都对，就通过。",
+    "依赖": "existing。",
+    "当前预期": "pass（预计）；卡在 harness 不支持引用回复。",
+    "真人感": "铺垫去掉了「帮我记一下」，直接陈述；客户对接人用世界设定里的人。"
+   }
+  },
+  {
+   "id": "M-02",
+   "title": "引用东翔没 @ 员工的消息再 @ 员工：内容在引用里、作者别认错；凤姐隔一轮来问也接得上",
+   "focus": [
+    "F2",
+    "F3",
+    "F4"
+   ],
+   "maps_to": [],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "凤姐": "wangxifeng"
+   },
+   "requires": {
+    "harness": [
+     "quote_reply",
+     "deap_multi",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "引用 + @ 送达；later 依赖 ask 的回复把数字带进历史（引用正文不进历史）"
+   },
+   "steps": [
+    {
+     "id": "ctx",
+     "actor": "冬翔",
+     "text": "刚跟启明刘总对完技术方案，他顺带说二期预算批下来了 68万 但要求十一月底前必须上线 不然就挪到明年",
+     "wait": {
+      "mode": "none",
+      "pause_s": 4
+     }
+    },
+    {
+     "id": "ctx2",
+     "actor": "D总",
+     "text": "十一月底？数据迁移那块肯定紧啊",
+     "wait": {
+      "mode": "silence",
+      "window_s": 30,
+      "since_step": "ctx"
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "你看下东翔这条 预算和上线时间先记到启明项目里 周一周会要过",
+     "at": [
+      "employee"
+     ],
+     "reply_to": {
+      "step": "ctx"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "later",
+     "actor": "凤姐",
+     "text": "启明二期预算批了多少？财务让我录一下，上线时间也要",
+     "reply_to": {
+      "employee_reply_of": "ask",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ask 从引用里读出 68 万和十一月底，不把这番话说成 D总讲的；later 不用再引用原文也能答出 68 万和十一月底。",
+    "checks": [
+     {
+      "steps": [
+       "ctx",
+       "ctx2"
+      ],
+      "replies": [
+       0,
+       0
+      ],
+      "requires": "group_all_delivery"
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "68",
+       "十一月"
+      ]
+     },
+     {
+      "steps": [
+       "later"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "68"
+      ],
+      "include_any_regex": [
+       "十一月|11月"
+      ],
+      "exclude": [
+       "不清楚|没(有)?(看到|收到|记录)|再发一(下|遍)"
+      ],
+      "only_if": {
+       "step": "ask",
+       "include_all": [
+        "68"
+       ]
+      }
+     }
+    ],
+    "semantic": [
+     "ask 不对 D总说「你说的预算」；提出处就按正文说是东翔那条",
+     "later 答出金额和上线时间，最好带出处（东翔转述的刘总电话）",
+     "ctx/ctx2 没回在当前链路必然成立，不计为判断"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。东翔在群里随口同步启明刘总电话里说的预算，没 @ 员工；D总引用这条再 @小Q 让它记下；随后凤姐引用员工的回复来问预算。",
+    "人物": "冬翔/东翔（技术负责人，刚和启明刘总对完方案）；D总；凤姐（行政，帮财务录数）；小Q。",
+    "上下文": "被引作者既不是员工也不是当前发言人，senderUid 为空，员工只能从正文「东翔这条」推断原话是谁说的；引用正文不进 24h 历史。",
+    "应该怎么做": "ask：确认记下 68 万、十一月底前上线；提出处就说是东翔那条。later：不要求重发，直接答 68 万、十一月底，最好带出处。",
+    "怎么判": "引用里的数读对、没把话安到 D总头上、隔一轮还答得上，就通过。",
+    "依赖": "existing；要更稳需引用正文进历史（wave2 历史保真）或 memory-design。",
+    "当前预期": "ask 预计 pass；later 取决于 ask 的回复有没有复述数字，没复述时该检查记 n/a。",
+    "真人感": "隔一轮的提问人从东翔本人换成凤姐，避免「问自己两分钟前说的话」；启明二期预算 68 万、十一月底上线是世界设定。"
+   }
+  },
+  {
+   "id": "M-03",
+   "title": "回复链：黛玉引用员工、东翔再引用黛玉，员工把整条链串起来",
+   "focus": [
+    "F2",
+    "F4"
+   ],
+   "maps_to": [],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "黛玉": "daiyu"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "BUG": "支付回调重复入账"
+    },
+    {
+     "CUST": "安澜",
+     "BUG": "导出文件没带水印"
+    },
+    {
+     "CUST": "中拓",
+     "BUG": "跨组权限串了"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "quote_reply",
+     "deap_multi",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "每一跳都是 @ 事件；只到一层引用，前文靠群历史里的 @ 轮次"
+   },
+   "steps": [
+    {
+     "id": "set",
+     "actor": "D总",
+     "text": "{CUST}这次发版暂定周四晚上十点 先灰度20%",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "q1",
+     "actor": "黛玉",
+     "text": "这个还作数吗？我这边还有个P1没关，{BUG}那个",
+     "reply_to": {
+      "employee_reply_of": "set",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "q2",
+     "actor": "冬翔",
+     "text": "这个P1影响周四发版不？你对一下回归进度给个建议",
+     "at": [
+      "employee"
+     ],
+     "reply_to": {
+      "step": "q1"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 200,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "dec",
+     "actor": "D总",
+     "text": "那推到下周二晚上 P1修完再灰度",
+     "reply_to": {
+      "employee_reply_of": "q2",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "q1 认出问的是 {CUST} 周四晚发版、说明有 P1 风险要 D总拍板；q2 把「发版—P1—推迟」串起来、建议推迟但请 D总定；dec 按下周二晚确认一次。",
+    "checks": [
+     {
+      "steps": [
+       "set"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 60
+     },
+     {
+      "steps": [
+       "q1"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "q2"
+      ],
+      "replies": [
+       1,
+       2
+      ],
+      "exclude": [
+       "已(经)?(改|推|延)(到|至)|定(在|成)(周五|下周)"
+      ]
+     },
+     {
+      "steps": [
+       "dec"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "下周二"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "q1 不把黛玉当真人负责人，不在没人拍板时宣布改期",
+     "q2 看得出这条在接黛玉、黛玉在接自己的发版记录，不问「哪个发版」",
+     "q2 建议推迟但请 D总拍板（可 @D总）",
+     "dec 只确认新时间，不再追问"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。D总 @小Q 交代发版时间；测试数字员工黛玉引用员工这条确认，带出一个 P1；东翔引用黛玉那条并 @小Q 要建议；最后 D总引用员工的建议拍板。",
+    "人物": "D总（发版拍板）；黛玉（测试数字员工）；冬翔/东翔；小Q。",
+    "上下文": "员工只看得到一层引用（黛玉原文），看不到黛玉那条引用的员工记录；GawkBot 会沿回复链上溯最多 8 跳，我们只取一层。",
+    "应该怎么做": "q1：说明目前计划仍是周四，但有 P1 风险，需要 D总拍板。q2：串起来，建议推迟、请 D总定，不说「已改到…」。dec：确认下周二晚上、P1 修完再灰度，只一条。",
+    "怎么判": "链路接上、没替 D总改期，就通过。",
+    "依赖": "existing（多层引用只到一层；完整回复链需 wave2 引用链上溯）。",
+    "当前预期": "预计 pass；风险是把黛玉当真人负责人或自行宣布改期。",
+    "真人感": "黛玉自己就是测试，台词改为「我这边还有个P1没关」；D总在群里，东翔不再说「你跟 Director 说一声」。"
+   }
+  },
+  {
+   "id": "M-04",
+   "title": "一条消息 @ 两个人、员工排第二：只认自己那份；被抄送时不替东翔表态",
+   "focus": [
+    "F1",
+    "F2",
+    "F4"
+   ],
+   "maps_to": [
+    "DS-17"
+   ],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "凤姐": "wangxifeng"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "CONTACT": "刘晨",
+     "I1": "对账太慢",
+     "I2": "权限粒度太粗",
+     "I3": "导出没有水印"
+    },
+    {
+     "CUST": "宏远",
+     "CONTACT": "孟凡",
+     "I1": "报表加载慢",
+     "I2": "审批流改不了",
+     "I3": "手机上看不了附件"
+    },
+    {
+     "CUST": "启明",
+     "CONTACT": "王经理",
+     "I1": "同步延迟大",
+     "I2": "日志查不到操作人",
+     "I3": "批量导入老报错"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "quote_reply",
+     "deap_multi",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "多 @ 已支持；who 需凤姐引用"
+   },
+   "steps": [
+    {
+     "id": "ctx",
+     "actor": "D总",
+     "text": "{CUST}上个月提了仨问题 {I1}、{I2}、还有{I3}，后面评审要用",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "split",
+     "actor": "D总",
+     "text": "明天跟{CUST}评审 东翔你把架构那页准备下 小Q你把他们提的那几个问题拉个清单给我",
+     "at": [
+      "冬翔",
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "cc",
+     "actor": "D总",
+     "text": "东翔 周四下午你去趟{CUST}现场吧 {CONTACT}那边我约好了",
+     "at": [
+      "冬翔",
+      "employee"
+     ],
+     "wait": {
+      "mode": "optional",
+      "window_s": 60
+     }
+    },
+    {
+     "id": "who",
+     "actor": "凤姐",
+     "text": "周四谁去{CUST}现场？我这边要订车",
+     "reply_to": {
+      "employee_reply_of": "split",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "split 只交三条问题清单、不替东翔认领架构页；cc 不回或一句短话、不替东翔答应；who 答东翔。",
+    "checks": [
+     {
+      "steps": [
+       "ctx"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 60
+     },
+     {
+      "steps": [
+       "split"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "{I1}",
+       "{I2}",
+       "{I3}"
+      ],
+      "exclude": [
+       "架构.{0,8}(我来|我准备|已准备|准备好了)"
+      ]
+     },
+     {
+      "steps": [
+       "cc"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "exclude": [
+       "我(来|会)?去|我可以去|没问题.{0,4}去"
+      ],
+      "max_chars": 40
+     },
+     {
+      "steps": [
+       "who"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_regex": [
+       "{=DONGXIANG}"
+      ]
+     }
+    ],
+    "semantic": [
+     "split 排第二被 @ 仍回答，只做「拉清单」",
+     "cc 明白是对东翔说的，自己只是被抄送；最多一句有信息量的话",
+     "who 答东翔，可顺带提醒和东翔确认用车时间"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。D总先 @小Q 交代客户上月提的三个问题；随后两条消息都同时 @东翔和小Q：第一条分工，第二条是派给东翔的现场任务；最后凤姐引用员工的回复问周四谁去现场订车。",
+    "人物": "D总（派活）；冬翔/东翔；凤姐（行政，订车）；小Q。",
+    "上下文": "mentions 只含员工；其他被 @ 的人只在正文里以「@东翔」文字出现。",
+    "应该怎么做": "split 只交三条清单。cc 不回，或一句 ≤40 字有信息量的话，不替东翔说「我去」。who：东翔去。",
+    "怎么判": "第二位 @ 只做自己那份、抄送不抢答、事后答对是谁去，就通过。",
+    "依赖": "existing。",
+    "当前预期": "split/who 预计 pass；cc 不确定（可能礼节性回或替东翔表态）。",
+    "真人感": "「谁去现场」改由要订车的凤姐来问，避免 D总问自己刚派的活。"
+   }
+  },
+  {
+   "id": "M-05",
+   "title": "@所有人 的会议通知：不刷「收到」，事后问起来答得上",
+   "focus": [
+    "F2"
+   ],
+   "maps_to": [],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "T": "十点"
+    },
+    {
+     "CUST": "宏远",
+     "T": "九点半"
+    },
+    {
+     "CUST": "启明",
+     "T": "十点半"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "at_all",
+     "grader_v2"
+    ],
+    "platform": [
+     "at_all_probe"
+    ],
+    "release": [],
+    "ops": [
+     "probe_first"
+    ]
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不支持 @所有人；@所有人 是否触发 receive_at 未验证（先由东翔号 listen-im 对照探测）"
+   },
+   "steps": [
+    {
+     "id": "all",
+     "actor": "D总",
+     "text": "明早{T}的{CUST}评审改线上了 链接晚点发 大家把自己那块材料再过一遍",
+     "at_all": true,
+     "wait": {
+      "mode": "optional",
+      "window_s": 60
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "冬翔",
+     "text": "明早{CUST}那个评审几点来着 我日历没同步过来",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "all 不回或一句有信息量的短话（不是光一个「收到」）；ask 答出明早{T}、改线上了；没看到那条就直说、不编。",
+    "checks": [
+     {
+      "steps": [
+       "all"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "exclude": [
+       "^\\s*收到[。！!～~]?\\s*$"
+      ],
+      "max_chars": 40
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude_sets": [
+       "EN"
+      ]
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "include_all": [
+       "{T}",
+       "线上"
+      ],
+      "requires": "at_all_probe",
+      "tier": "target"
+     }
+    ],
+    "semantic": [
+     "all 不把全员通知当成单独点名去长篇回复",
+     "ask 从 @所有人 那条拿到时间和形式；没收到就如实说，不编时间"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。D总用 @所有人 发改会通知；之后东翔 @小Q 问会议几点。",
+    "人物": "D总；冬翔/东翔；小Q。",
+    "上下文": "如果 @所有人 触发 receive_at，mentions 与单独 @ 结构上分不开，员工可能逐条回复；不触发则这条不进窗口也不进历史。ask 本身就是投递探针。",
+    "应该怎么做": "all：不回，或一句 ≤40 字有信息量的话，不能只回「收到」。ask：明早{T}、改线上；没看到通知就如实说，不编时间。",
+    "怎么判": "不刷屏、事后答得上或诚实，就通过。",
+    "依赖": "existing（未验证）；探针确认前不下结论。",
+    "当前预期": "blocked（先探针）。",
+    "真人感": "改会通知用 @所有人、之后有人「日历没同步」再来问，是很典型的真人行为。"
+   }
+  },
+  {
+   "id": "M-06",
+   "title": "群里丢一张报销 CSV，D总引用文件 @ 员工核对；凤姐接着问重复那笔是谁的",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [
+    "RES-01"
+   ],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "凤姐": "wangxifeng"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "DUP": "林晓",
+     "PRON": "她",
+     "DUP_AMT": "386",
+     "TOTAL_OK": "2523",
+     "TOTAL_BAD": "2909"
+    },
+    {
+     "CUST": "宏远",
+     "DUP": "周明",
+     "PRON": "他",
+     "DUP_AMT": "528",
+     "TOTAL_OK": "2452",
+     "TOTAL_BAD": "2980"
+    },
+    {
+     "CUST": "中拓",
+     "DUP": "小周",
+     "PRON": "他",
+     "DUP_AMT": "412",
+     "TOTAL_OK": "1850",
+     "TOTAL_BAD": "2262"
+    }
+   ],
+   "fixtures": {
+    "bx": {
+     "name": "{CUST}项目9月差旅报销.csv",
+     "by_row": [
+      "日期,姓名,类别,金额\n9/03,东翔,高铁,553\n9/03,东翔,打车,46\n9/04,林晓,住宿,386\n9/04,林晓,住宿,386\n9/04,东翔,住宿,412\n9/05,周明,打车,64\n9/08,周明,高铁,553\n9/09,林晓,餐补,120\n9/09,周明,住宿,389\n合计,,,2909\n",
+      "日期,姓名,类别,金额\n9/02,林晓,机票,980\n9/02,林晓,打车,72\n9/04,周明,住宿,528\n9/04,周明,住宿,528\n9/03,东翔,住宿,398\n9/03,东翔,餐补,100\n9/05,东翔,高铁,219\n9/06,林晓,打车,55\n9/06,林晓,餐补,100\n合计,,,2980\n",
+      "日期,姓名,类别,金额\n9/10,东翔,高铁,354\n9/10,小周,高铁,354\n9/04,小周,住宿,412\n9/04,小周,住宿,412\n9/11,东翔,住宿,405\n9/11,东翔,打车,38\n9/12,小周,餐补,120\n9/12,东翔,餐补,120\n9/13,小周,打车,47\n合计,,,2262\n"
+     ],
+     "note": "同一人同日同金额两行住宿 = 重复录入；合计行写的是含重复的总数"
+    }
+   },
+   "requires": {
+    "harness": [
+     "var_sets",
+     "file_send",
+     "quote_reply",
+     "deap_multi",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不能发文件（P1 file_send）；平台路径 RES-01 已实测可用"
+   },
+   "steps": [
+    {
+     "id": "file",
+     "kind": "file",
+     "actor": "冬翔",
+     "file": "bx",
+     "wait": {
+      "mode": "none",
+      "pause_s": 5
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "帮忙看下这个 有没有重复报的 去掉重复的话合计该是多少",
+     "at": [
+      "employee"
+     ],
+     "reply_to": {
+      "step": "file"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 240,
+      "settle_s": 40
+     }
+    },
+    {
+     "id": "who",
+     "actor": "凤姐",
+     "text": "重复那笔是谁的？我去跟{PRON}说下",
+     "reply_to": {
+      "employee_reply_of": "ask",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ask 指出 {DUP} 9/04 的 {DUP_AMT} 住宿重复、去重合计 {TOTAL_OK}；who 不要求重发文件也答 {DUP}。",
+    "checks": [
+     {
+      "steps": [
+       "file"
+      ],
+      "replies": [
+       0,
+       0
+      ]
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       2
+      ],
+      "include_all": [
+       "{DUP}",
+       "{TOTAL_OK}"
+      ],
+      "exclude_sets": [
+       "EN"
+      ]
+     },
+     {
+      "steps": [
+       "who"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "{DUP}"
+      ],
+      "exclude": [
+       "(看|读)不到|打不开|再发"
+      ]
+     }
+    ],
+    "semantic": [
+     "ask 的数字出自文件，不是猜的",
+     "who 靠上一轮自己的回复接上，不要求重发文件"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。东翔把{CUST}项目 9 月差旅报销明细（CSV）丢进群，没 @ 员工；D总引用文件并 @小Q 要核对；凤姐引用员工的回复问重复那笔是谁的。",
+    "人物": "冬翔/东翔（上传）；D总（要求核对）；凤姐（行政，管报销）；小Q。",
+    "上下文": "引用 + @ 那条会投递；Host 按 list-by-ids 回读被精确引用消息的文件（csv 支持）。附件正文只在当次唤醒有效，不进历史。",
+    "应该怎么做": "ask：指出 {DUP} 9/04 的住宿 {DUP_AMT} 录了两遍，去重合计 {TOTAL_OK}（表尾写的 {TOTAL_BAD} 含重复）。who：直接答 {DUP}。",
+    "怎么判": "重复项和去重合计都对、隔一轮答得上，就通过。",
+    "依赖": "existing（RES-01）。",
+    "当前预期": "ask 预计 pass；who 取决于 ask 的回复写没写人名。harness 阻塞。",
+    "真人感": "重复改为同日同金额两行，避免「连住两晚」的歧义；问的人换成管报销的凤姐。"
+   }
+  },
+  {
+   "id": "M-07",
+   "title": "单聊先甩文件，隔几秒另起一句问（不引用）",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [
+    "RES-01"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "OWNER": "东翔",
+     "OWNER_RE": "{=DONGXIANG}",
+     "DUE": "下周三",
+     "DECOY": "周明"
+    },
+    {
+     "CUST": "睿博",
+     "OWNER": "林晓",
+     "OWNER_RE": "林晓",
+     "DUE": "10月15号",
+     "DECOY": "东翔"
+    },
+    {
+     "CUST": "启明",
+     "OWNER": "周明",
+     "OWNER_RE": "周明",
+     "DUE": "本周五",
+     "DECOY": "林晓"
+    }
+   ],
+   "fixtures": {
+    "minutes": {
+     "name": "周会纪要-1002.md",
+     "template": "# 周会纪要 10/02\n参会：D总、东翔、林晓、周明\n## 议题\n1. 二期排期对齐\n2. 压测环境\n## 行动项\n- {CUST}：私有化部署报价，负责人 {OWNER}，{DUE} 前\n- 宏远：验收报告盖章，负责人 {DECOY}，月底前\n- 内部：压测环境扩容，负责人 小周，下周一\n"
+    }
+   },
+   "requires": {
+    "harness": [
+     "var_sets",
+     "file_send",
+     "grader_v2"
+    ],
+    "platform": [
+     "resource_followup"
+    ],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不能发文件；目标形态需要非引用追问回读附件（wave2:06-resources）"
+   },
+   "steps": [
+    {
+     "id": "file",
+     "kind": "file",
+     "actor": "D总",
+     "file": "minutes",
+     "wait": {
+      "mode": "optional",
+      "window_s": 30
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "帮我看下这里面跟{CUST}有关的行动项 谁负责 啥时候要",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 200,
+      "settle_s": 30
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "能读到文件就答 {OWNER}、{DUE}（私有化报价）；读不到就如实说并请对方引用文件再问或贴文字，绝不编负责人。",
+    "checks": [
+     {
+      "steps": [
+       "file"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 60
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "{CUST}[^。\\n]{0,20}{DECOY}"
+      ],
+      "exclude_sets": [
+       "EN"
+      ]
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "include_all": [
+       "{DUE}"
+      ],
+      "include_regex": [
+       "{OWNER_RE}"
+      ],
+      "requires": "resource_followup",
+      "tier": "target"
+     }
+    ],
+    "semantic": [
+     "file 一步若回，只一句（「收到，要我看什么？」），不自动长篇总结",
+     "ask 不把宏远或内部的行动项安到 {CUST} 头上",
+     "读不到时的及格线：明说没读到、请引用文件或贴文字，不编"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。先把周会纪要 .md 甩过来，过几秒单独打字提问，不引用文件。",
+    "人物": "D总；小Q。",
+    "上下文": "第一次唤醒只有文件；第二次唤醒的追问不在同一窗口、没有精确引用，读不到文件（已知缺口）。",
+    "应该怎么做": "目标：「{CUST}私有化部署报价，{OWNER} 负责，{DUE} 前」。及格线：明说没读到刚才的文件，请引用文件再问或贴文字；不编负责人。",
+    "怎么判": "读到就答对；读不到就诚实，不编，就通过（目标/降级分档）。",
+    "依赖": "wave2:06-resources。",
+    "当前预期": "目标 fail（已知缺口）；及格线预计能过。DM 文件消息投递本身也待实测。",
+    "真人感": "「先甩文件、再说要干嘛」是真人节奏；与 M-06 构成一对：同一种文件，有引用 vs 没引用。"
+   }
+  },
+  {
+   "id": "M-08",
+   "title": "发报错截图问「这啥意思」：看不了图就直说，不瞎编",
+   "focus": [
+    "F2"
+   ],
+   "maps_to": [
+    "RES-02"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "var_sets": [
+    {
+     "CODE": "EXPORT_QUOTA_4127"
+    },
+    {
+     "CODE": "EXPORT_QUOTA_5309"
+    },
+    {
+     "CODE": "EXPORT_QUOTA_6182"
+    }
+   ],
+   "fixtures": {
+    "shot": {
+     "name": "微信图片_20261003.png",
+     "render": "仿后台导出弹窗，红字「导出失败（{CODE}）：本月导出次数已达上限，请联系管理员」",
+     "note": "harness 只用标准库，按行预渲染 3 张 png 入库"
+    }
+   },
+   "requires": {
+    "harness": [
+     "var_sets",
+     "file_send",
+     "quote_reply",
+     "grader_v2"
+    ],
+    "platform": [
+     "vision"
+    ],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不能发文件；看图理解等视觉路径（RES-02）"
+   },
+   "steps": [
+    {
+     "id": "img",
+     "kind": "file",
+     "actor": "D总",
+     "file": "shot",
+     "wait": {
+      "mode": "optional",
+      "window_s": 30
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "这报错啥意思啊 客户那边导出一直失败 急",
+     "reply_to": {
+      "step": "img"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "paste",
+     "actor": "D总",
+     "text": "上面写的是 导出失败（{CODE}）本月导出次数已达上限 请联系管理员",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "看不了图时 ask 明说看不了、请对方贴文字，不猜；paste 后讲清是导出配额用完、找管理员调额或等下月。能看图时 ask 直接讲清。",
+    "checks": [
+     {
+      "steps": [
+       "img"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 60
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "vision_unavailable|unsupported_type|resource"
+      ],
+      "exclude_sets": [
+       "INTERNAL",
+       "EN"
+      ]
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "exclude": [
+       "{CODE}"
+      ],
+      "requires": "!vision",
+      "note": "无视觉路径时出现报错码 = 编造"
+     },
+     {
+      "steps": [
+       "paste"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "管理员"
+      ],
+      "include_any_regex": [
+       "上限|配额|次数"
+      ]
+     }
+    ],
+    "semantic": [
+     "ask 没有在看不到图时描述图里「显示」了什么",
+     "ask 语气是同事救急，不是「抱歉，作为 AI…」",
+     "paste 给可执行的下一步，不复述原文"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。客户导出失败，D总甩来一张报错截图，引用它问是什么意思；随后把截图里的文字贴出来。",
+    "人物": "D总；小Q。",
+    "上下文": "原生内联图片造不出来（CLI 不能把本地文件换成 mediaId），png 只能当文件发；当前图片资源一律标 vision_unavailable。",
+    "应该怎么做": "当前链路 ask：明说这张图看不了，请对方贴报错文字；不猜原因，语气是救急。paste：讲清是本月导出配额用完，下一步找管理员调额度、等下月重置或分批导出。",
+    "怎么判": "看不见就老实说、拿到文字给可执行的下一步，就通过。",
+    "依赖": "诚实及格线 existing；看图目标 wave2:06-resources（RES-02）。",
+    "当前预期": "诚实及格线预计 pass；看图预计 fail；harness 阻塞。",
+    "真人感": "文件名「微信图片_xxx.png」和「急」都是真人截图求助的样子。"
+   }
+  },
+  {
+   "id": "M-09",
+   "title": "一句话拆成四条连发：等说完再回，回一次就够",
+   "focus": [
+    "F2",
+    "F5"
+   ],
+   "maps_to": [
+    "DS-15"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "var_sets": [
+    {
+     "CUST": "安澜",
+     "NEW_DAY": "周四下午",
+     "EXTRA": "CIO"
+    },
+    {
+     "CUST": "中拓",
+     "NEW_DAY": "下周一上午",
+     "EXTRA": "采购负责人"
+    },
+    {
+     "CUST": "宏远",
+     "NEW_DAY": "周五上午",
+     "EXTRA": "信息安全的人"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "burst",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 每条阻塞读回，间隔被拉到 5–15 秒，测不出 1–3 秒真人连发（降级版可跑，记 degraded）"
+   },
+   "steps": [
+    {
+     "id": "b1",
+     "actor": "D总",
+     "text": "诶 {CUST}刚来电话",
+     "burst": true,
+     "wait": {
+      "mode": "none",
+      "pause_s": 2
+     }
+    },
+    {
+     "id": "b2",
+     "actor": "D总",
+     "text": "说下周二的演示要挪到{NEW_DAY}",
+     "burst": true,
+     "wait": {
+      "mode": "none",
+      "pause_s": 2
+     }
+    },
+    {
+     "id": "b3",
+     "actor": "D总",
+     "text": "参会的还多了他们{EXTRA}",
+     "burst": true,
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "b4",
+     "actor": "D总",
+     "text": "你帮我想想咱这边要调整啥 材料要不要加东西",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 200,
+      "settle_s": 40,
+      "since_step": "b1"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "四条发完后给一条综合回答（新时间 + 因为多了 {EXTRA} 要加的内容）；中途最多一句「你说」，不对半截话下结论。",
+    "checks": [
+     {
+      "steps": [
+       "b1",
+       "b2",
+       "b3"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 30
+     },
+     {
+      "steps": [
+       "b1",
+       "b2",
+       "b3",
+       "b4"
+      ],
+      "replies": [
+       1,
+       2
+      ],
+      "last_include_all": [
+       "{EXTRA}"
+      ]
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "最后一条同时用上改期和新增参会人",
+     "没有对 b1 回「什么事？」、对 b2 回「已记下」之类半截答复",
+     "建议具体（如给 {EXTRA} 加一页安全/ROI）"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。刚接完客户电话，边想边打字，一句话拆成四条，每条隔 1–3 秒。",
+    "人物": "D总；小Q。",
+    "上下文": "只有 250ms 内到达且未领取的消息才合并；DS-15 实测三条间隔约 8 秒触发 3 次唤醒，前两条抢答。",
+    "应该怎么做": "四条发完后一条综合回答：新时间{NEW_DAY}；因为多了{EXTRA}，建议加一页安全合规或 ROI、高层摘要。中途最多一句「你说」。",
+    "怎么判": "等说完再回、一次用上两条信息，就通过。",
+    "依赖": "wave2:employee-interaction-continuity（先消化人类输入）。",
+    "当前预期": "预计 fail：1–3 秒间隔远大于 250ms，会拆成多次唤醒。",
+    "真人感": "「诶 XX刚来电话」开头、边想边发，是审计里看到的真人连发形态；客户换成客户池，不与 T-16 的演示冲突。"
+   }
+  },
+  {
+   "id": "M-10",
+   "title": "发错撤回：只撤不解释 vs 撤了再补一句（相邻对照）",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "ROOM": "青松",
+     "T_OLD": "两点",
+     "T_WRONG": "三点半"
+    },
+    {
+     "CUST": "宏远",
+     "ROOM": "翠竹",
+     "T_OLD": "三点",
+     "T_WRONG": "四点半"
+    },
+    {
+     "CUST": "启明",
+     "ROOM": "白杨",
+     "T_OLD": "十点",
+     "T_WRONG": "十一点半"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "recall",
+     "grader_v2"
+    ],
+    "platform": [
+     "recall_event"
+    ],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不支持撤回；撤回事件未订阅（recall_o2o 有但没订阅，属 wave2:06-resources）"
+   },
+   "steps": [
+    {
+     "id": "set",
+     "actor": "D总",
+     "text": "明天跟{CUST}的会 下午{T_OLD} 5楼{ROOM}会议室 你帮我记着点 我老忘",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 120,
+      "settle_s": 20
+     }
+    },
+    {
+     "id": "wrong",
+     "actor": "D总",
+     "text": "改了 {T_WRONG}",
+     "wait": {
+      "mode": "optional",
+      "window_s": 45
+     }
+    },
+    {
+     "id": "recall",
+     "kind": "recall",
+     "actor": "D总",
+     "target": {
+      "step": "wrong"
+     },
+     "wait": {
+      "mode": "silence",
+      "window_s": 30
+     }
+    },
+    {
+     "id": "ask1",
+     "actor": "D总",
+     "text": "刚才乱了，明天{CUST}那个会你那边记的是几点？我订个提醒",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "fix",
+     "actor": "D总",
+     "text": "刚那条撤了 发错人了 {CUST}时间没变",
+     "wait": {
+      "mode": "optional",
+      "window_s": 45
+     }
+    },
+    {
+     "id": "ask2",
+     "actor": "D总",
+     "text": "那你再说下明天{CUST}啥时候 在哪",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ask1 理想是按 {T_OLD} 答或主动问「你撤回了一条改时间的，还按{T_OLD}吗」；ask2 必须是 {T_OLD} + 5楼{ROOM}。",
+    "checks": [
+     {
+      "steps": [
+       "recall"
+      ],
+      "replies": [
+       0,
+       0
+      ]
+     },
+     {
+      "steps": [
+       "ask1"
+      ],
+      "replies": [
+       1,
+       1
+      ]
+     },
+     {
+      "steps": [
+       "ask1"
+      ],
+      "include_all": [
+       "{T_OLD}"
+      ],
+      "requires": "recall_event",
+      "tier": "target"
+     },
+     {
+      "steps": [
+       "ask2"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "{T_OLD}",
+       "{ROOM}"
+      ],
+      "exclude": [
+       "(改|是|在)\\s*{T_WRONG}"
+      ]
+     }
+    ],
+    "semantic": [
+     "ask1 不把已撤回的 {T_WRONG} 当现行时间（当前链路收不到撤回，单独记）",
+     "ask2 按 {T_OLD} 答，不再提 {T_WRONG}",
+     "wrong 一步若回，只是简短确认"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。先让员工记明天的会，接着误发「改了 三点半」（本要发给别人）并撤回；随后问几点；再用文字补一句说明后又问一次。",
+    "人物": "D总；小Q。",
+    "上下文": "员工收不到撤回事件，被撤回的文字还留在 24h 历史里。",
+    "应该怎么做": "ask1（理想）：答 {T_OLD}，或主动问「你刚撤回了一条改时间的，还按{T_OLD}吗？」。ask2：{T_OLD}、5 楼{ROOM}会议室，不再提{T_WRONG}。",
+    "怎么判": "撤回的内容不当真；有文字说明后一定按原时间答，就通过。",
+    "依赖": "ask1：wave2:06-resources（订阅撤回 + 历史剔除）；ask2：existing。",
+    "当前预期": "ask1 预计 fail；ask2 预计 pass。同一用例分开「平台没给信号」和「模型不会理解」。",
+    "真人感": "ask1 改为「刚才乱了…我订个提醒」，给出提问动机。"
+   }
+  },
+  {
+   "id": "M-11",
+   "title": "把东翔在群里的话转发给员工：别把原话算到转发人头上",
+   "focus": [
+    "F2",
+    "F4"
+   ],
+   "maps_to": [],
+   "scene": "group+dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信"
+    },
+    {
+     "CUST": "宏远"
+    },
+    {
+     "CUST": "启明"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "forward",
+     "grader_v2"
+    ],
+    "platform": [
+     "forward_mapping"
+    ],
+    "release": [],
+    "ops": [
+     "probe_first"
+    ]
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不支持转发；转发消息在原生事件里的 content 形态未验证，typed 事件无 forwarded 标记"
+   },
+   "steps": [
+    {
+     "id": "src",
+     "actor": "冬翔",
+     "text": "我这边周五前肯定交不了架构稿 最早下周二 {CUST}的接口文档到现在还没给全",
+     "conversation": "g_team",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "fwd",
+     "kind": "forward",
+     "actor": "D总",
+     "source": {
+      "conversation": "g_team",
+      "step": "src"
+     },
+     "wait": {
+      "mode": "optional",
+      "window_s": 45
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "他这么说 周五那个评审是不是得挪？你觉得挪到啥时候合适",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ask 把「他」理解成转发那条的原作者（东翔）或先问是谁，围绕「架构稿最早下周二、接口文档没给全」给建议；不说成 D总自己交不了稿。",
+    "checks": [
+     {
+      "steps": [
+       "fwd"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 60
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "下周二"
+      ],
+      "exclude": [
+       "你(这边)?(说|讲)?(周五前)?(交不了|最早下周二)"
+      ]
+     }
+    ],
+    "semantic": [
+     "不把转发内容当成 D总本人的话",
+     "建议的时间不早于下周二，并点出接口文档这个前置条件",
+     "不知道「他」是谁时问一句，而不是猜"
+    ]
+   },
+   "doc": {
+    "情境": "东翔在交付二组群说自己赶不上；D总把这条单条转发到和员工的单聊，问「他这么说，评审是不是得挪」。",
+    "人物": "冬翔/东翔（原话作者）；D总（转发人）；小Q。",
+    "上下文": "转发消息 content 可能是原文、「[转发]」占位或空；没有 forwarded 标记时模型看到的像 D总自己说的。",
+    "应该怎么做": "把「他」理解为东翔，拿不准就先问；建议评审放到下周二之后，并把催客户补齐接口文档列为前置条件；不说「你周五前交不了稿」。",
+    "怎么判": "原话不算到转发人头上、建议合理，就通过。",
+    "依赖": "wave2:06-resources（转发标记和原作者映射；先探针）。",
+    "当前预期": "blocked（先探针）。",
+    "真人感": "主管把下属在群里的话转给助理问「他这么说怎么办」，同时考对人的认知和消息形态。"
+   }
+  },
+  {
+   "id": "M-12",
+   "title": "合并转发一段聊天记录，让员工拎出定了的事",
+   "focus": [
+    "F2",
+    "F4"
+   ],
+   "maps_to": [],
+   "scene": "group+dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue",
+    "黛玉": "daiyu"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "DUE": "下周三"
+    },
+    {
+     "CUST": "宏远",
+     "DUE": "下周四"
+    },
+    {
+     "CUST": "启明",
+     "DUE": "10月16号"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "combine_forward",
+     "deap_multi",
+     "grader_v2"
+    ],
+    "platform": [
+     "forward_mapping"
+    ],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不支持合并转发；ForwardMessages 已解析但没映射进 DispatchMessage"
+   },
+   "steps": [
+    {
+     "id": "s1",
+     "actor": "冬翔",
+     "text": "{CUST}的验收标准我跟他们对过了 响应时间那条从2秒放宽到3秒",
+     "conversation": "g_team",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "s2",
+     "actor": "黛玉",
+     "text": "那压测报告要重出吗",
+     "conversation": "g_team",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "s3",
+     "actor": "冬翔",
+     "text": "要 {DUE}前给他们",
+     "conversation": "g_team",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "s4",
+     "actor": "D总",
+     "text": "行 压测我让小周排一下",
+     "conversation": "g_team",
+     "wait": {
+      "mode": "none",
+      "pause_s": 3
+     }
+    },
+    {
+     "id": "fwd",
+     "kind": "combine_forward",
+     "actor": "D总",
+     "source": {
+      "conversation": "g_team",
+      "steps": [
+       "s1",
+       "s2",
+       "s3",
+       "s4"
+      ]
+     },
+     "wait": {
+      "mode": "optional",
+      "window_s": 45
+     }
+    },
+    {
+     "id": "ask",
+     "actor": "D总",
+     "text": "帮我把这段里定了的事拎一下 谁负责 啥时候",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 180,
+      "settle_s": 30
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ask 列出：响应时间放宽到 3 秒（东翔已和客户对齐）、压测报告重出 {DUE} 前给客户、小周排压测；看不到记录内容时如实说并请贴文字，不编。",
+    "checks": [
+     {
+      "steps": [
+       "s1",
+       "s2",
+       "s3",
+       "s4"
+      ],
+      "replies": [
+       0,
+       0
+      ],
+      "requires": "group_all_delivery"
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "User [AB]"
+      ],
+      "exclude_sets": [
+       "EN"
+      ]
+     },
+     {
+      "steps": [
+       "ask"
+      ],
+      "include_all": [
+       "3秒",
+       "{DUE}",
+       "小周"
+      ],
+      "requires": "forward_mapping",
+      "tier": "target"
+     }
+    ],
+    "semantic": [
+     "三件事负责人和时间都对，不多不少",
+     "只看到「聊天记录」外壳时的及格线：说明展不开，请贴原文；编造任何事项即失败"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群里有一段 4 句讨论（没 @ 员工）；D总把它合并转发成「聊天记录」发到单聊，让员工拎出定了的事。",
+    "人物": "冬翔/东翔；黛玉（测试数字员工）；D总；小周（只被提到）；小Q。",
+    "上下文": "模型只看到外层 content 的本地化摘要，样本是英文「Chat history between two users / User A: …」，人名被匿名化。",
+    "应该怎么做": "目标：三件事——响应时间放宽到 3 秒（东翔已和客户对齐）；压测报告重出，{DUE}前给客户；小周排压测（D总安排）。及格线：说明只看到一条聊天记录、展不开，请贴原文。",
+    "怎么判": "三件事对，或诚实不编，就通过（目标/降级分档）。",
+    "依赖": "wave2:06-resources（ForwardMessages 映射）。",
+    "当前预期": "目标 fail；诚实及格线不确定（可能顺着残缺摘要编）。",
+    "真人感": "素材群里 4 句都没 @ 员工，同时验证员工没从别的渠道看到群消息。"
+   }
+  },
+  {
+   "id": "M-13",
+   "title": "给员工的稿子点赞、东翔点「有疑问」：表情不是指令，「就按这个」要接得上",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [
+    "REA-01"
+   ],
+   "scene": "group",
+   "conversation": "g_team",
+   "roles": {
+    "D总": "director",
+    "冬翔": "zhujue"
+   },
+   "var_sets": [
+    {
+     "CUST": "安澜",
+     "NEW_DATE": "10月20号"
+    },
+    {
+     "CUST": "中拓",
+     "NEW_DATE": "10月23号"
+    },
+    {
+     "CUST": "宏远",
+     "NEW_DATE": "10月22号"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "react",
+     "grader_v2"
+    ],
+    "platform": [
+     "reaction_event"
+    ],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "blocked",
+    "reason": "harness 不支持表情；reaction 未订阅（go 那一半今天的平台可判）"
+   },
+   "steps": [
+    {
+     "id": "draft",
+     "actor": "D总",
+     "text": "帮我写段给{CUST}的延期说明 三四句就行 原因是客户机房准入审批还没下来 新时间{NEW_DATE} 先发这儿我看下",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "like",
+     "kind": "react",
+     "actor": "D总",
+     "target": {
+      "employee_reply_of": "draft"
+     },
+     "emoji": "👍",
+     "wait": {
+      "mode": "silence",
+      "window_s": 40
+     }
+    },
+    {
+     "id": "doubt",
+     "kind": "react",
+     "actor": "冬翔",
+     "target": {
+      "employee_reply_of": "draft"
+     },
+     "text_emotion": "有疑问",
+     "wait": {
+      "mode": "silence",
+      "window_s": 30
+     }
+    },
+    {
+     "id": "go",
+     "actor": "D总",
+     "text": "行 就按这个来 最后加一句“给您添麻烦了”",
+     "at": [
+      "employee"
+     ],
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "like/doubt 期间不发消息；go 在原稿上加那句再给一版，保留 {NEW_DATE} 和机房准入原因，不问「哪一版」。",
+    "checks": [
+     {
+      "steps": [
+       "like",
+       "doubt"
+      ],
+      "replies": [
+       0,
+       0
+      ]
+     },
+     {
+      "steps": [
+       "go"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "{NEW_DATE}",
+       "给您添麻烦了"
+      ],
+      "exclude": [
+       "哪(一)?(版|个|段)"
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "go"
+     }
+    ],
+    "semantic": [
+     "go 在原稿基础上改，不重写成另一篇",
+     "like/doubt 不回在当前链路必然成立（reaction 未订阅），只记录",
+     "接入 reaction 后重新评估：员工提一句「东翔点了有疑问，要不要先问下他」反而更像人"
+    ]
+   },
+   "doc": {
+    "情境": "交付二组群。员工贴出一版延期说明草稿；D总点 👍，东翔点文字表情「有疑问」；D总不引用直接说「就按这个来，加一句」。",
+    "人物": "D总；冬翔/东翔；小Q。",
+    "上下文": "reaction 事件键存在但没订阅（合同 held），员工感知不到表情。",
+    "应该怎么做": "like/doubt 不发消息。go：在原稿上加「给您添麻烦了」，保留{NEW_DATE}和原因；不问哪一版，不派任务。",
+    "怎么判": "表情不触发动作、「就按这个」接到自己刚贴的稿子上，就通过。",
+    "依赖": "表情：wave2:06-resources（REA-01）；文字跟进：existing。",
+    "当前预期": "go 预计 pass；表情零副作用现在平凡成立。",
+    "真人感": "延期原因改为「机房准入审批」、客户换成客户池，避免与 C-15 的华信延期说明撞车；去掉了会误杀像人回答的「有疑问」排除。"
+   }
+  },
+  {
+   "id": "M-14",
+   "title": "语音输入的错字：「花心」「瑞波」要读成华信、睿博",
+   "focus": [
+    "F2"
+   ],
+   "maps_to": [],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "纯文本，现有 harness 即可跑（避开整点例行汇报）"
+   },
+   "steps": [
+    {
+     "id": "voice",
+     "actor": "冬翔",
+     "text": "那个 花心二期的验收会挪到下周三下午了 瑞波那个报价审批会还是周五 不变 你帮我捋下下周这俩会各是啥时候",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "读懂语音输入的错字，答出华信验收会下周三下午、睿博报价审批会周五，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "voice"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "华信",
+       "睿博",
+       "下周三",
+       "周五"
+      ],
+      "exclude": [
+       "花心是|瑞波是|哪个(客户|公司)"
+      ]
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "voice"
+     }
+    ],
+    "semantic": [
+     "把花心=华信、瑞波=睿博，不反问是谁",
+     "可以顺带一句「你写的花心应该是华信」，但不说教",
+     "两行讲清，不长篇"
+    ]
+   },
+   "doc": {
+    "情境": "东翔单聊。开车时用语音输入法打字，客户名被识别成同音错字。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "华信、睿博是世界设定里的核心客户；睿博正在走报价审批。",
+    "应该怎么做": "直接答：华信二期验收会下周三下午；睿博报价审批会周五不变。可顺带一句说明错字，不反问。",
+    "怎么判": "两个客户名都纠正对、时间对，就通过。",
+    "依赖": "existing。",
+    "当前预期": "pass 倾向。",
+    "真人感": "语音输入法错字是真人钉钉消息的高频形态，补自评审的覆盖缺口；无需任何新 harness 能力。"
+   }
+  },
+  {
+   "id": "M-15",
+   "title": "中间插了别的话题，再引用员工的邀请稿短答「线上 一小时」",
+   "focus": [
+    "F2",
+    "F3"
+   ],
+   "maps_to": [],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "var_sets": [
+    {
+     "CUST": "华信",
+     "WHO": "刘晨"
+    },
+    {
+     "CUST": "睿博",
+     "WHO": "陈总"
+    },
+    {
+     "CUST": "启明",
+     "WHO": "王经理"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "quote_reply",
+     "grader_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "引用员工消息送达，作者可证明"
+   },
+   "steps": [
+    {
+     "id": "ask",
+     "actor": "冬翔",
+     "text": "帮我起个消息 邀{CUST}的{WHO}下周来过一下二期上线方案 客气点 时间先写下周三下午",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "other",
+     "actor": "冬翔",
+     "text": "对了 差旅报销一般多久到账你知道不",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "ans",
+     "actor": "冬翔",
+     "text": "线上 腾讯会议 一个小时",
+     "reply_to": {
+      "employee_reply_of": "ask",
+      "fallback": "employee_latest"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "ok",
+     "actor": "冬翔",
+     "text": "可以",
+     "reply_to": {
+      "employee_reply_of": "ans",
+      "fallback": "employee_latest"
+     },
+     "match_key": "可以",
+     "wait": {
+      "mode": "optional",
+      "window_s": 45
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "ans 把邀请改成线上腾讯会议、一小时，仍是邀 {WHO} 下周三下午；不扯报销，不再问线上还是线下；ok 不回或一句。",
+    "checks": [
+     {
+      "steps": [
+       "ans"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "include_all": [
+       "腾讯会议",
+       "{WHO}"
+      ],
+      "exclude": [
+       "报销|到账|线上还是|现场还是"
+      ]
+     },
+     {
+      "steps": [
+       "ok"
+      ],
+      "replies": [
+       0,
+       1
+      ],
+      "max_chars": 30
+     },
+     {
+      "evidence": "no_effect_for_step",
+      "step": "ok"
+     }
+    ],
+    "semantic": [
+     "ans 认出短答是在回自己那份邀请稿",
+     "other 不知道就说不知道或给常见范围并注明，不编公司规定",
+     "ok 当作确认收尾，不再追问要不要发"
+    ]
+   },
+   "doc": {
+    "情境": "东翔单聊。让员工起草邀请客户的消息；员工给出草稿（可能顺带问线上还是线下）；东翔先问了个报销的事，过一会儿才引用那份草稿短答。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "引用带草稿全文，作者是员工本人。生产病例里 Coordinator 曾三次接错追问后的短答。",
+    "应该怎么做": "other：不知道就直说或给常见范围并注明。ans：改成线上腾讯会议、一小时，仍是下周三下午邀{WHO}；不扯报销。ok：不回或一句。",
+    "怎么判": "插话后引用短答仍接到对的稿子上、「可以」就收尾，就通过。",
+    "依赖": "existing。",
+    "当前预期": "预计 pass；风险是 other 被派成后台查询，或「可以」被当成「发出去」。",
+    "真人感": "从 dm_director 挪到 dm_zhujue 分担负载；启明对接人按世界设定用王经理。"
+   }
+  },
+  {
+   "id": "M-16",
+   "title": "引用员工交付的回款表说「再加一家重算」：续同一件事，不另起炉灶",
+   "focus": [
+    "F3",
+    "F2"
+   ],
+   "maps_to": [
+    "REF-01"
+   ],
+   "scene": "dm",
+   "conversation": "dm_director",
+   "roles": {
+    "D总": "director"
+   },
+   "var_sets": [
+    {
+     "HX": "38",
+     "RB": "24",
+     "QM": "22",
+     "HY": "16",
+     "SUM3": "84",
+     "AVG3": "28",
+     "SUM4": "100",
+     "AVG4": "25"
+    },
+    {
+     "HX": "42",
+     "RB": "27",
+     "QM": "21",
+     "HY": "22",
+     "SUM3": "90",
+     "AVG3": "30",
+     "SUM4": "112",
+     "AVG4": "28"
+    },
+    {
+     "HX": "45",
+     "RB": "30",
+     "QM": "18",
+     "HY": "27",
+     "SUM3": "93",
+     "AVG3": "31",
+     "SUM4": "120",
+     "AVG4": "30"
+    }
+   ],
+   "requires": {
+    "harness": [
+     "var_sets",
+     "quote_reply",
+     "grader_v2",
+     "evidence_v2"
+    ],
+    "platform": [],
+    "release": [],
+    "ops": []
+   },
+   "status": {
+    "now": "ready",
+    "reason": "引用续接已修复（aa0c9bfacb）；同一 Task 新 Run 在 Qwen-Real 上未证明"
+   },
+   "steps": [
+    {
+     "id": "start",
+     "actor": "D总",
+     "text": "帮我把Q4这几笔回款做个表 华信二期尾款{HX}万 睿博首付{RB}万 启明首付{QM}万 按金额从高到低排 算下合计和平均 弄好发我",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 240,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "done1",
+     "observe": {
+      "until_regex": "(?<![\\d.]){SUM3}(?![\\d])",
+      "timeout_s": 300,
+      "since_step": "start"
+     }
+    },
+    {
+     "id": "chat",
+     "actor": "D总",
+     "text": "对了 刘晨昨天回邮件没 你有印象不",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 150,
+      "settle_s": 25
+     }
+    },
+    {
+     "id": "more",
+     "actor": "D总",
+     "text": "再加一家 宏远{HY}万 重算下",
+     "reply_to": {
+      "observed": "done1"
+     },
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 240,
+      "settle_s": 30
+     }
+    },
+    {
+     "id": "done2",
+     "observe": {
+      "until_regex": "(?<![\\d.]){SUM4}(?![\\d])",
+      "timeout_s": 300,
+      "since_step": "more"
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "done1 合计 {SUM3}、平均 {AVG3}；more 在原表上加宏远重算得合计 {SUM4}、平均 {AVG4}，排序正确；若 start 派了任务，more 续同一 Task 的新 Run。",
+    "checks": [
+     {
+      "steps": [
+       "start",
+       "done1"
+      ],
+      "include_all": [
+       "{SUM3}",
+       "{AVG3}"
+      ]
+     },
+     {
+      "steps": [
+       "more",
+       "done2"
+      ],
+      "include_all": [
+       "{SUM4}",
+       "{AVG4}",
+       "宏远"
+      ]
+     },
+     {
+      "steps": [
+       "chat"
+      ],
+      "replies": [
+       1,
+       1
+      ],
+      "exclude": [
+       "回(了|过)邮件|邮件里(说|写)"
+      ]
+     },
+     {
+      "evidence": "same_task_runs",
+      "min_runs": 2,
+      "if_dispatched": true
+     },
+     {
+      "evidence": "max_calls_per_wake",
+      "max": 3
+     }
+    ],
+    "semantic": [
+     "more 认出引用的是那张回款表，不问「哪个表」，不把邮件那句混进来",
+     "chat 不知道就直说，不编邮件内容"
+    ]
+   },
+   "doc": {
+    "情境": "D总单聊。让员工把 Q4 三笔回款做成表、算合计和平均；结果出来后先插一句别的，再引用那条结果说「再加一家重算」。",
+    "人物": "D总；小Q。",
+    "上下文": "对应 REF-01：引用已交付 Task 的消息要求继续，应在同一 Task 下产生新 Run。",
+    "应该怎么做": "done1：合计{SUM3}，平均{AVG3}，降序。chat：不知道就直说。more：在原表加宏远重算，合计{SUM4}、平均{AVG4}；派过任务就续同一 Task，不另建，不问「哪个表」。",
+    "怎么判": "数字对、续接同一件事，就通过。",
+    "依赖": "existing（引用续接）；同一 Task 新 Run 合同（REF-01）。",
+    "当前预期": "数字预计 pass；same_task_runs 有 fail 风险（BASE-TASK-G 曾新建 Task）。",
+    "真人感": "改为 Q4 回款计划，金额是本用例私有属性，不与世界设定里的合同额、预算冲突。"
+   }
+  },
+  {
+   "id": "M-17",
+   "title": "甩来一个 alidocs 文档链接问里面的内容：打不开就直说，不编条数",
+   "focus": [
+    "F2"
+   ],
+   "maps_to": [
+    "RES-03"
+   ],
+   "scene": "dm",
+   "conversation": "dm_zhujue",
+   "roles": {
+    "冬翔": "zhujue"
+   },
+   "requires": {
+    "harness": [],
+    "platform": [],
+    "release": [],
+    "ops": [
+     "routine_pause"
+    ]
+   },
+   "status": {
+    "now": "ready",
+    "reason": "纯文本，现有 harness 即可跑"
+   },
+   "steps": [
+    {
+     "id": "link",
+     "actor": "冬翔",
+     "text": "帮我看下这个文档 https://alidocs.dingtalk.com/i/nodes/Qm7Tp2bXk9Vn4R 里面华信那节的验收标准一共几条",
+     "wait": {
+      "mode": "reply",
+      "timeout_s": 240,
+      "settle_s": 40
+     }
+    }
+   ],
+   "judge": {
+    "criteria": "打不开或没权限就如实说，请他开权限或把那一节贴过来；没有编出条数或内容，就通过。",
+    "checks": [
+     {
+      "steps": [
+       "link"
+      ],
+      "replies": [
+       1,
+       2
+      ],
+      "exclude": [
+       "(共|一共|有)\\s*\\d+\\s*条",
+       "第[一二三四五1-5]条[是为：:]",
+       "scene_routine|dispatch_task|continue_task|steer_task|stop_task|read_task|memory_(capture|lookup|forget)|Autopilot|(?<![A-Za-z])(Direct|queue|Run)(?![A-Za-z])",
+       "(?i)\\b(I don't|I'm|I have no|Standing by|Got it|Sure,|Let me|Here is|Here's)\\b|[A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,} [A-Za-z]{3,}"
+      ]
+     }
+    ],
+    "semantic": [
+     "如实说打不开（没权限 / 链接无效），不假装读了",
+     "给出具体办法：开阅读权限给它，或贴那一节",
+     "如派了后台去读，最终也如实汇报"
+    ]
+   },
+   "doc": {
+    "情境": "东翔单聊。甩来一个钉钉文档链接，问其中一节的条数。",
+    "人物": "冬翔/东翔；小Q。",
+    "上下文": "链接是虚构节点，员工无法读到内容。",
+    "应该怎么做": "如实说打不开，请开权限或贴原文；不编条数。",
+    "怎么判": "不编、给出办法，就通过。",
+    "依赖": "existing。",
+    "当前预期": "pass 倾向；风险是凭常识编出「一般五条」。",
+    "真人感": "钉钉里随手甩文档链接是高频形态，补自评审的覆盖缺口（文档链接卡片）。"
+   }
+  }
+ ]
+}

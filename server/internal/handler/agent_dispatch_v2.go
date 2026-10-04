@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -241,6 +242,13 @@ type DispatchCommand struct {
 	ExtraCompletionCallbacks []DispatchCompletionCallback     `json:"extraCompletionCallbacks,omitempty"`
 	TaskFinishedTaskID       string                           `json:"taskFinishedTaskId,omitempty"`
 	DispatchEndpointID       string                           `json:"-"`
+	// AgentScene is the server-resolved Agent work scene of the event
+	// (docs/agent-scene.md). Persisted with Coordinator jobs; never read from
+	// the Router request (AgentDispatchV2Request does not expose it).
+	AgentScene *scene.Ref `json:"agent_scene,omitempty"`
+	// EventReceiptID distinguishes a frozen admission with no scene from
+	// an old replica's command that still needs resolution at claim.
+	EventReceiptID string `json:"event_receipt_id,omitempty"`
 }
 
 type DispatchPrompt struct {
@@ -503,8 +511,13 @@ func (c DispatchCommand) validateControl() error {
 	}
 	if c.Event.Domain != "channel" || c.Event.Type != "message.created" ||
 		(c.Surface.Type != protocol.DispatchSurfaceTypeChat &&
-			c.Surface.Type != protocol.DispatchSurfaceTypeAuto) {
-		return errors.New("control is supported only for IM chat message.created dispatches")
+			c.Surface.Type != protocol.DispatchSurfaceTypeAuto &&
+			c.Surface.Type != protocol.DispatchSurfaceTypeIssue) {
+		return errors.New("control requires a channel message.created dispatch")
+	}
+	issueContinuation := c.Continuation != nil && c.Continuation.Kind == "issue" && strings.TrimSpace(c.Continuation.IssueID) != ""
+	if c.Surface.Type == protocol.DispatchSurfaceTypeIssue && !issueContinuation {
+		return errors.New("issue control requires an issue continuation")
 	}
 	switch c.Control.Action {
 	case "dispatch":
@@ -513,6 +526,9 @@ func (c DispatchCommand) validateControl() error {
 		}
 		if c.Control.QueueMode != "enqueue" && c.Control.QueueMode != "steer" {
 			return errors.New("control.queueMode must be enqueue or steer")
+		}
+		if c.Control.QueueMode == "steer" && c.Control.SessionMode != "continue" {
+			return errors.New("steer requires sessionMode continue")
 		}
 		if c.Control.TargetExternalTaskID != "" {
 			return errors.New("control.targetExternalTaskId is valid only for cancel")
@@ -524,8 +540,8 @@ func (c DispatchCommand) validateControl() error {
 		if c.CompletionCallback != nil {
 			return errors.New("cancel control cannot create a completion callback")
 		}
-		if c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "" {
-			return errors.New("cancel control requires an IM chat continuation")
+		if !issueContinuation && (c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "") {
+			return errors.New("cancel control requires a chat or issue continuation")
 		}
 		target := strings.TrimSpace(c.Control.TargetExternalTaskID)
 		parsed, err := uuid.Parse(target)
@@ -775,6 +791,7 @@ type persistedDispatchContext struct {
 	CoordinatorIssueTrigger  inboundcoord.CoordinatorIssueTrigger `json:"coordinator_issue_trigger,omitempty"`
 	ContextPrompt            string                               `json:"dispatch_context_prompt"`
 	ReplyToOpenMsgID         string                               `json:"dingtalk_reply_to_open_msg_id,omitempty"`
+	AgentScene               *scene.Ref                           `json:"agent_scene,omitempty"`
 }
 
 type persistedDispatchExternalIdentity struct {
@@ -1264,6 +1281,7 @@ func applyTaskInstructionForClaim(
 	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
 		Stored:                     stored,
 		Present:                    present,
+		EmployeeDirect:             response.DirectTaskPrompt != "",
 		DingTalkContext:            isDingTalkTaskContext(rawContext),
 		Flags:                      flags,
 		Overrides:                  overrides,

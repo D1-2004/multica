@@ -218,6 +218,47 @@ func ReplaceOffers(ctx context.Context, tx DBTX, workspaceID, agentID string, co
 	return nil
 }
 
+// AddOffer offers one connector or skill of the workspace to the agent's
+// scopes (「公开给场域」), keeping the rest of the catalog. It serializes with
+// ReplaceOffers and re-enables a switched-off offer. actorID may be empty.
+func AddOffer(ctx context.Context, tx DBTX, workspaceID, agentID, resourceType, resourceID, actorID string) error {
+	if resourceType != ResourceConnector && resourceType != ResourceSkill {
+		return ErrInvalidInput
+	}
+	id, err := canonicalUUID(resourceID)
+	if err != nil {
+		return err
+	}
+	actor, err := optionalUUID(actorID)
+	if err != nil {
+		return err
+	}
+	if err := LockOffers(ctx, tx, agentID); err != nil {
+		return err
+	}
+	table := "internal_connector"
+	if resourceType == ResourceSkill {
+		table = "skill"
+	}
+	var known bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent WHERE id = $1::uuid AND workspace_id = $2::uuid)
+		AND EXISTS(SELECT 1 FROM `+table+` WHERE id = $3::uuid AND workspace_id = $2::uuid)`, agentID, workspaceID, id).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return ErrUnknownResource
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO context_capability_binding
+		(workspace_id, agent_id, scope_type, org_id, scope_key, resource_type, resource_id, enabled, created_by, updated_by)
+		VALUES ($1::uuid, $2::uuid, 'offer', '', '', $3::text, $4::uuid, TRUE, $5::uuid, $5::uuid)
+		ON CONFLICT (agent_id, scope_type, org_id, scope_key, resource_type, resource_id)
+		DO UPDATE SET enabled = TRUE, updated_by = EXCLUDED.updated_by, updated_at = now()
+		WHERE context_capability_binding.workspace_id = EXCLUDED.workspace_id
+		  AND NOT context_capability_binding.enabled`,
+		workspaceID, agentID, resourceType, id, actor)
+	return err
+}
+
 // ListScopeBindings returns every binding row (enabled or not) of one scene or
 // person scope. Rows are not filtered by the offer catalog; callers that
 // render them should cross-check ListOffers.
@@ -703,30 +744,30 @@ type Link struct {
 	ScopeKey     string
 	ScopeTitle   string
 	SourceTaskID string
-	// ExtraSceneKey is set only on a person link minted in a 1:1 chat: the
-	// DM's openConversationId. Redeeming the link also grants that DM scene.
-	ExtraSceneKey string
-	ExpiresAt     time.Time
+	// ExtraSceneID is set only on a person link minted in a 1:1 chat (a 1:1
+	// chat's configuration link): the DM's scene_id (column
+	// extra_scene_key). Redeeming the link also grants that DM scene.
+	ExtraSceneID string
+	ExpiresAt    time.Time
 }
 
 const linkColumns = `token_hash, workspace_id::text, agent_id::text, scope_type, org_id, scope_key, scope_title, COALESCE(source_task_id::text, ''), extra_scene_key, expires_at`
 
 func scanLink(row pgx.Row) (Link, error) {
 	var l Link
-	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExtraSceneKey, &l.ExpiresAt)
+	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExtraSceneID, &l.ExpiresAt)
 	return l, err
 }
 
 // InsertLink stores a configuration link that expires ttl from now (use
 // LinkTTL(l.ScopeType)). l.ExpiresAt is ignored; the stored row is returned.
-// ExtraSceneKey must be empty or, on a person link, a valid
-// openConversationId.
+// ExtraSceneID must be empty or, on a person link, a scene_id.
 func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, error) {
 	if (l.ScopeType != ScopeScene && l.ScopeType != ScopePerson) || !ValidScopeKey(l.ScopeType, l.ScopeKey) ||
 		len(l.TokenHash) != 64 || ttl <= 0 {
 		return Link{}, ErrInvalidInput
 	}
-	if l.ExtraSceneKey != "" && (l.ScopeType != ScopePerson || !ValidOpenConversationID(l.ExtraSceneKey)) {
+	if l.ExtraSceneID != "" && (l.ScopeType != ScopePerson || !ValidSceneID(l.ExtraSceneID)) {
 		return Link{}, ErrInvalidInput
 	}
 	sourceTask, err := optionalUUID(l.SourceTaskID)
@@ -737,22 +778,32 @@ func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, 
 		(token_hash, workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, source_task_id, extra_scene_key, expires_at)
 		VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $10, now() + make_interval(secs => $9::double precision))
 		RETURNING `+linkColumns,
-		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds(), l.ExtraSceneKey))
+		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds(), l.ExtraSceneID))
 }
 
 // RedeemLink atomically redeems a link by token hash. Scene links stay
 // reusable until they expire; person links are consumed by the first
-// redemption (recording userID). Unknown, expired or consumed links return
+// redemption (recording userID), whose account may redeem again while it
+// holds the person's grant. Unknown and expired links, and person links
+// consumed by another account (or by one whose grant was revoked), return
 // ErrNotFound. The caller then upserts the grant.
 func RedeemLink(ctx context.Context, db DBTX, tokenHash, userID string) (Link, error) {
 	user, err := optionalUUID(userID)
 	if err != nil {
 		return Link{}, err
 	}
+	// A person link is consumed by its first account; that account may open
+	// it again until it expires (a reloaded page) while it still holds the
+	// person's grant, so a revoked grant is not restored by reopening.
+	// Nobody else may.
 	out, err := scanLink(db.QueryRow(ctx, `UPDATE context_config_link
-		SET consumed_at = CASE WHEN scope_type = 'person' THEN now() ELSE consumed_at END,
-		    consumed_by = CASE WHEN scope_type = 'person' THEN $2::uuid ELSE consumed_by END
-		WHERE token_hash = $1 AND expires_at > now() AND (scope_type = 'scene' OR consumed_at IS NULL)
+		SET consumed_at = CASE WHEN scope_type = 'person' THEN COALESCE(consumed_at, now()) ELSE consumed_at END,
+		    consumed_by = CASE WHEN scope_type = 'person' THEN COALESCE(consumed_by, $2::uuid) ELSE consumed_by END
+		WHERE token_hash = $1 AND expires_at > now()
+		  AND (scope_type = 'scene' OR consumed_at IS NULL
+		    OR (consumed_by = $2::uuid AND EXISTS (SELECT 1 FROM context_config_grant g
+		      WHERE g.user_id = $2::uuid AND g.agent_id = context_config_link.agent_id AND g.scope_type = 'person'
+		        AND g.org_id = context_config_link.org_id AND g.scope_key = context_config_link.scope_key AND g.expires_at > now())))
 		RETURNING `+linkColumns, tokenHash, user))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Link{}, ErrNotFound

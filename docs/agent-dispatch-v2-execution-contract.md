@@ -165,8 +165,8 @@ Both `chat` and `auto` therefore return a `chat` continuation containing
 `control` is optional, so an omitted field preserves the existing enqueue and
 session-continuation behavior. It is accepted only for
 `event.domain=channel`, `event.type=message.created`, and a materialized
-`surface.type` of `chat` or `auto`. Issue, approval, calendar, and
-`emotionReply` dispatches reject it.
+`surface.type` of `chat`, `auto`, or an existing Issue continuation. Approval,
+calendar, `emotionReply`, and Issue creation dispatches reject it.
 
 The Router translates the supported IM commands into one of these closed
 structures; Multica never infers control from the message text:
@@ -189,12 +189,16 @@ structures; Multica never infers control from the message text:
   delivered while the new conversation runs independently.
 - `/steer <message>` sends `action=dispatch`, `sessionMode=continue`, and
   `queueMode=steer`. Multica atomically promotes the new turn and cancels the
-  currently claimed IM Chat task for the same Agent and chat session. Other
+  currently claimed task for the same Agent and Chat or Issue. Other
   queued turns are retained. The canceled task produces the normal durable
   terminal callback with `executionStatus=canceled`.
+  The successor cannot be claimed until the old process group has exited;
+  corrections during that window coalesce into one successor and keep the
+  sandbox in use. Steer requires `sessionMode=continue`. See `task-steer.md`
+  for the daemon acknowledgement and FC/E2B stop-receipt contract.
 - `/cancel` sends `action=cancel` plus the exact canonical UUID in
   `targetExternalTaskId`. It also replays the target's chat continuation but
-  sends no message text or completion callback for the command itself. Multica
+  (or Issue continuation) and sends no message text or completion callback for the command itself. Multica
   still requires the message envelope and `openMsgId`, but does not require
   text or an attachment for `action=cancel`. It verifies that the target belongs
   to that Agent and chat session, cancels only an active task, preserves the

@@ -49,10 +49,19 @@ window for the next turn on the same Issue or chat. `nohup` / `setsid` do not
 make a process outlive the sandbox: when a task is cancelled or fails, the
 platform may end its processes within seconds; otherwise they run until the
 sandbox is released or idles out, and a later turn that reuses the sandbox may
-still find them. Do not leave work in background processes. Persist patches,
-logs, and artifacts to Issue comments/attachments before exiting. Attachment upload
-receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
-not `size`.
+still find them. Sandbox reuse is on for each agent unless its execution
+setting `sandbox_connection_reuse` is off. When that switch is on, tasks in
+the same scene and from the same trigger share one sandbox, up to 6 at a time
+(or `runtime.fc_e2b.connection_reuse.max_concurrent_tasks`). The runtime image
+does not have to declare `sandbox_connection_reuse_v1`. A scheduled scene
+task with no single trigger shares the scene's public sandbox. A seventh
+concurrent task, an A2A task, and an agent on the employee filesystem each
+keep a private sandbox. Do not leave work in background
+processes. Persist patches,
+logs, and artifacts with `multica attachment upload <path>` before exiting.
+Issue and chat tasks retain their existing bindings; Employee Direct files remain
+private artifacts of their own Run. Server upload receipts include `size_bytes`
+and `sha256`; comment JSON uses `size_bytes`, not `size`.
 
 The chain is:
 
@@ -369,3 +378,42 @@ old native sessions and their schedules retain their original epoch. The schema
 expansion release must reach every replica before removing the legacy scope
 uniqueness index and enabling epochs. Do not roll back to pre-epoch binaries after
 activation; use a forward repair that preserves all epochs.
+
+
+## Employee Direct tasks
+
+Employee Direct runs an independent EmployeeTask through the existing task queue
+without an Issue or permanent Autopilot. Its queue ID, EmployeeTask ID, and Run ID
+are distinct. Read the persisted task result/messages/trajectory using the task's
+authorized identity; a shared workspace or public Agent does not make Direct
+content public.
+
+A local daemon must authenticate its runtime binding and advertise
+`employee-direct-v1`. FC candidate templates declare that protocol with the
+recognized `multica-m7-v<fingerprint>-r2-<commit>` alias only after the candidate
+build verifies its embedded daemon. The immutable template ID remains execution
+identity. An r1 template or an older local daemon cannot consume the Direct
+prompt; ordinary Issue, chat and Autopilot work retains its existing behavior.
+Human management/read permission alone does not authorize claiming or completing
+a task. Do not forge capability headers or edit runtime metadata to enable it.
+
+Direct supports text, persisted execution traces, and task-scoped file artifacts.
+Use the existing `multica attachment upload <path>` command while the current
+queue task's token is active. The server resolves the EmployeeTask and Run from
+that queue; do not supply an Issue/Chat binding or use another task's credentials.
+Wait for a successful receipt with a non-empty attachment id. A local path, an
+upload still in progress, or a failed metadata commit is not a published artifact.
+Repeating the same filename and bytes within that queue returns the same ready
+reference; an in-progress attempt may ask the caller to retry.
+
+Use `multica attachment download <attachment-id>` for authenticated reads.
+Direct files are encrypted in the existing object store and served through the
+private attachment API. The returned URL is an authorized-access link, not a
+public CDN link or proof of native DingTalk file delivery. A completion notice
+may reference only persisted ready artifacts. A DingTalk requester who has not
+been mapped to an authorized workspace identity does not gain download access
+because a manager can inspect the file. Direct artifacts cannot be implicitly
+rebound to an Issue or Chat.
+
+This does not prove restoration of an old execution. A database cancellation
+records the request; it does not prove that the provider process has exited.

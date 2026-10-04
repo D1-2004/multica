@@ -258,6 +258,7 @@ func (r *Router) notifyChannelCoordinatorTasks(ctx context.Context, tasks *servi
 		}
 		task, err := tasks.Queries.GetAgentTask(ctx, id)
 		if err == nil && task.Status == "queued" {
+			tasks.NotifySteerPredecessor(ctx, task)
 			tasks.NotifyTaskEnqueued(ctx, task)
 		}
 	}

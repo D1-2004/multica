@@ -122,6 +122,10 @@ export function runtimeRewriteDestination(
   const remoteApiUrl = resolveRemoteApiUrl(env);
   if (!remoteApiUrl) return undefined;
 
+  if (pathname === "/evals" || pathname === "/evals/") {
+    return appendPath(remoteApiUrl, "/api/evals");
+  }
+
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     return appendPath(remoteApiUrl, pathname);
   }
@@ -169,4 +173,14 @@ function tryDeriveWsUrl(apiUrl: string): string | undefined {
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
+}
+
+/** Build-time asset namespace for an independently deployed Next.js zone. */
+export function resolveForwardAssetPrefix(env: RuntimeEnv): string | undefined {
+  const prefix = env.MULTICA_FORWARD_ASSET_PREFIX?.trim();
+  if (!prefix) return undefined;
+  if (!/^\/forward\/[a-z][a-z0-9-]{0,31}$/.test(prefix)) {
+    throw new Error("MULTICA_FORWARD_ASSET_PREFIX must be /forward/{target}");
+  }
+  return prefix;
 }

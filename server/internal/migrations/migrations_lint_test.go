@@ -45,7 +45,6 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"124": {"124_autopilot_run_planned_at", "124_channel_generalization", "124_task_prepare_lease"},
 	"127": {"127_issue_pull_request_reference_only", "127_task_squad_id", "127_user_composio_connection"},
 	"128": {"128_agent_task_queue_runtime_mcp_overlay", "128_autopilot_collaborator", "128_comment_routing_escalation"},
-	"271": {"271_agent_mcp_issue_delegation", "271_task_completion_canceled_status"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
