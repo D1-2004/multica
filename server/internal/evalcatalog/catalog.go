@@ -29,6 +29,7 @@ type TestCase struct {
 	CaseRefs     []string `json:"caseRefs"`
 	Sources      []string `json:"sources"`
 	Origin       string   `json:"origin"`
+	LiveReady    bool     `json:"liveReady,omitempty"`
 }
 
 type Scenario struct {
@@ -53,6 +54,7 @@ type Category struct {
 	Description string     `json:"description"`
 	Scenarios   []Scenario `json:"-"`
 	CaseCount   int        `json:"-"`
+	CaseReady   int        `json:"-"`
 }
 
 type page struct {
@@ -63,6 +65,8 @@ type page struct {
 	Scenarios    []Scenario
 	Categories   []Category
 	CaseCount    int
+	ReadyGolden  int
+	ReadyCases   int
 	ActiveTab    string
 	OpenScenario string
 	OpenGolden   string
@@ -138,12 +142,21 @@ func NewHandler(reports ReportSource) http.Handler {
 		}
 		h.data.Categories[i].Scenarios = append(h.data.Categories[i].Scenarios, s)
 		h.data.Categories[i].CaseCount += len(s.Cases)
+		for _, item := range s.Cases {
+			if item.LiveReady {
+				h.data.Categories[i].CaseReady++
+				h.data.ReadyCases++
+			}
+		}
 		h.scenarios[s.ID] = true
 		titles[s.ID] = s.Title
 		h.data.CaseCount += len(s.Cases)
 	}
 	for _, c := range golden.Cases {
 		h.golden[c.ID] = true
+		if c.LiveReady {
+			h.data.ReadyGolden++
+		}
 	}
 	h.tmpl = template.Must(template.New("page.gohtml").Funcs(template.FuncMap{
 		"scenarioTitle": func(id string) string { return titles[id] },

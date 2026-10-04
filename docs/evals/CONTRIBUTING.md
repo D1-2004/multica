@@ -2,7 +2,7 @@
 
 ## 修改入口
 
-当前页面读取 `spec.json`、`p0-golden.json` 和 `office-scenarios.json`。SPEC 只表达员工的行为要求；EVALS 每例展示 `roles`、`verifies`、`method`。ID、来源和引用为维护元数据，不添加历史通过率或运行状态。
+当前页面读取 `spec.json`、`p0-golden.json` 和 `office-scenarios.json`。SPEC 只表达员工的行为要求；EVALS 每例展示 `roles`、`verifies`、`method`，可跑可验证的条目标 `liveReady`。ID、来源和引用为维护元数据，不添加历史通过率或运行状态。
 
 运行结果走独立的 [上报合同](reporting-contract.md)，保存为不可变报告。不能把报告写回三份 canonical 定义；新运行使用新 ID，重试使用已冻结文件与原 ID。报告 Tab 使用当次快照，未部署的本地新用例也必须保留其完整行为要求。
 
@@ -15,6 +15,7 @@
 - `method` 写夹具前置、操作和独立验证方式；注明真实模型、真实执行、独立读回或隔离故障条件。
 - `sources` 使用存在的仓内相对文件路径。禁止越界、外部路径、逃出仓库的符号链接、凭据和真实账号定位符。
 - `sourceCases` 引用有效已有用例；`existing` 必须有来源引用，`defined` 可为空。来源存在不表示当前可运行。
+- `liveReady: true` 只标当前预发可以用真实对话跑完、并且对错能在对话或收到的文件里核对的条目。缺条件、核对点只在内部账本，或判定本身不合理时省略。它不是通过结果，不写 `false`。组合回归只有在每一条 `caseRef` 都标了时才标。
 
 P0 固定 20 个 ID `G01`–`G20`，`priority=P0`。`scenarioRefs` 声明组合涉及的场景；每个 `caseRefs` 必须存在，并属于组合声明的某个场景。只引用该组合确实执行的步骤，不用整个场景名称冒充覆盖所有反例。
 

@@ -118,7 +118,8 @@
       "sources": [
         "docs/evals/p0-golden.md",
         "docs/evals/office-scenarios.md"
-      ]
+      ],
+      "liveReady": true
     },
     {
       "id": "G05",
@@ -380,7 +381,8 @@
       "sources": [
         "docs/evals/p0-golden.md",
         "docs/evals/office-scenarios.md"
-      ]
+      ],
+      "liveReady": true
     },
     {
       "id": "G13",

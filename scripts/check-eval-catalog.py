@@ -50,6 +50,7 @@ class Checker:
         self.spec_ids = set()
         self.case_owners = {}
         self.behaviors = {}
+        self.live_ready = set()
 
     def require(self, condition, message):
         if not condition:
@@ -129,6 +130,8 @@ class Checker:
             self.strings(item.get(field), f"{label}.{field}")
         self.sources(item, label)
         self.require(not set(item).intersection(RESULT_FIELDS), f"{label}: definitions cannot contain run results, status, or evidence")
+        if "liveReady" in item:
+            self.require(item.get("liveReady") is True, f"{label}: liveReady is only present when the case can be run and checked in the conversation")
         self.scan_text(item, label)
 
     def source_pool(self):
@@ -202,6 +205,8 @@ class Checker:
                 self.case_owners[cid] = sid
                 cases.append(row)
                 self.common(row, cid)
+                if row.get("liveReady") is True:
+                    self.live_ready.add(cid)
                 self.require(row.get("origin") in {"existing", "defined"}, f"{cid}: origin must be existing or defined")
                 refs = self.strings(row.get("sourceCases"), f"{cid}.sourceCases", allow_empty=True)
                 self.require(row.get("origin") != "existing" or bool(refs), f"{cid}: existing origin needs a sourceCase reference")
@@ -244,6 +249,11 @@ class Checker:
                 owner = self.case_owners.get(cid)
                 if self.require(owner is not None, f"{label}: unknown caseRef {cid}"):
                     self.require(owner in scenario_refs, f"{label}: {cid} belongs to {owner}; add its scenarioRef or fix caseRefs")
+            refs_ready = bool(case_refs) and all(cid in self.live_ready for cid in case_refs)
+            if row.get("liveReady") is True:
+                self.require(refs_ready, f"{label}: liveReady requires every caseRef to be liveReady")
+            elif refs_ready:
+                self.require(False, f"{label}: every caseRef is liveReady, so this combination must be marked too")
 
     def validate_spec(self, spec):
         if not self.require(isinstance(spec, dict), f"{SPEC_PATH}: expected an object"):

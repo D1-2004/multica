@@ -10,7 +10,7 @@
 
 Go 页面仅嵌入这三套定义。`suites.json`、`golden.json` 等旧资料保留来源引用用途，不决定当前页面或当前通过结论。Markdown 不作为页面快照，不需同步生成。
 
-`origin=existing` 表示能追溯已有定义，`origin=defined` 表示按当前合同新增定义。两者都不表示 runner 已具备、已部署或已通过。
+`origin=existing` 表示能追溯已有定义，`origin=defined` 表示按当前合同新增定义。两者都不表示 runner 已具备、已部署或已通过。`liveReady: true` 只表示当前预发可以用真实对话跑完，并且对错能在对话或收到的文件里核对。省略表示还缺运行条件，或核对点不在对话里。它不是通过结论，不写 `false`。
 
 ## 本地检查
 
