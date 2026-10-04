@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -95,6 +96,19 @@ func employeeMemoryBriefLabels(input *employeeSavedInput) bool {
 	return employeeMemoryToolsV2Frozen(*input)
 }
 
+// employeeTaskWakePrivateRequester is shared by the brief and history readers.
+// The PostgreSQL origin and fenced directory row, never wake payload labels,
+// select one tenant-qualified owner. Automation and public audiences fail closed.
+func employeeTaskWakePrivateRequester(registered db.AgentScene, origin employeeentry.TaskOrigin) string {
+	r := origin.Anchor.RequesterRef
+	if registered.SceneKind != scene.KindDM || !origin.Anchor.Conversation ||
+		origin.Anchor.SceneID != util.UUIDToString(registered.ID) || r != origin.Task.RequesterRef ||
+		service.IsAutomationRequesterRef(r) || !employeememory.PersonViewRef(registered.TenantOrgID, r) {
+		return ""
+	}
+	return r
+}
+
 // freezeBrief replaces Input.Memory with the foreground brief v2.
 func (m *employeeMemoryWake) freezeBrief(ctx context.Context, input *employeeSavedInput) error {
 	h := m.worker.handler
@@ -108,9 +122,7 @@ func (m *employeeMemoryWake) freezeBrief(ctx context.Context, input *employeeSav
 		// Requester-private context only in a 1:1 scene with the Task's own
 		// requester; automation origins never read private memory.
 		origin := m.task.origin
-		if r := origin.Anchor.RequesterRef; registered.SceneKind == scene.KindDM && r != "" && r == origin.Task.RequesterRef && !service.IsAutomationRequesterRef(r) {
-			requester = r
-		}
+		requester = employeeTaskWakePrivateRequester(registered, origin)
 		query = employeememory.ForegroundQuery([]string{m.task.goal, origin.RequestText}, nil)
 	} else {
 		var err error

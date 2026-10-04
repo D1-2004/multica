@@ -19,3 +19,5 @@
 操作按需读取本仓Aone、FC、LF或Coordinator skill；DWS身份与产品命令使用环境中可用的对应工具/技能。缺少个人安装的skill不阻断只读审查和文档交付；需要真实执行但缺工具/身份时明确环境缺口。
 
 共享发布/Apply和真实测试窗口有明确负责人；实现、独立审查和只读取证按各自边界推进。产品行为、观测完整性与Runtime状态分别签收。长等待及新发现按通用合同形成检查点和接手包。
+
+收口轨迹与五项效率纠正见[交付效率](employee-delivery-efficiency.md)。当前摘要统一维护于[执行表](employee-delivery-execution.md)。

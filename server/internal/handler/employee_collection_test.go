@@ -365,6 +365,9 @@ func TestCollectionEndToEndOriginInvitationsAnswersOneSummary(t *testing.T) {
 	wakeCalls := 0
 	c.model.set(func(request string) (string, map[string]any) {
 		wakeCalls++
+		if !strings.Contains(request, `\"process_facts\"`) || !strings.Contains(request, `\"answer_occurred_at\"`) || !strings.Contains(request, `\"invitation_delivered_at\"`) {
+			t.Error("summary wake lacks Host process and timing facts")
+		}
 		if !strings.Contains(request, "SENTINEL-C-SEVEN") || !strings.Contains(request, "SENTINEL-D-ELEVEN") || !strings.Contains(request, `\"answer\":\"13\"`) {
 			t.Errorf("summary wake misses authorized answers: %s", request)
 		}

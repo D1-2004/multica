@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -44,35 +43,12 @@ const (
 	employeeProactiveExpiry   = 10 * time.Minute
 	employeeProactiveBatch    = 20
 	employeeProactiveTick     = 5 * time.Second
-	employeeQuietLookback     = 12 * time.Hour
 	employeeTopicLookback     = 6 * time.Hour
 	employeeTopicLines        = 30
 	employeePurgeTick         = 10 * time.Minute
 	employeePurgeBatch        = 500
 	employeePurgeBatchesPerGo = 20
 )
-
-var (
-	employeeQuietStart = regexp.MustCompile(`安静|闭嘴|(别|不要|不用|先别)[^，。！？,.!?\n]{0,6}(说话|发言|回复|回答|接话|插话|吭声)`)
-	employeeQuietEnd   = regexp.MustCompile(`结束了|可以说话|恢复发言|解除安静|可以(回答|回复|发言|说)了`)
-)
-
-// employeeQuietActive reports whether the newest quiet instruction among the
-// texts (newest first) that addressed the employee is still in force.
-func employeeQuietActive(texts []employeeentry.AdmittedText) bool {
-	for _, text := range texts {
-		if !text.Addressed {
-			continue
-		}
-		if employeeQuietEnd.MatchString(text.Text) {
-			return false
-		}
-		if employeeQuietStart.MatchString(text.Text) {
-			return true
-		}
-	}
-	return false
-}
 
 // EmployeeSceneMessageWorker runs the proactive gate and the transcript
 // retention purge on every replica; row locks keep them exclusive.
@@ -228,19 +204,24 @@ func (h *Handler) decideEmployeeProactive(ctx context.Context, q employeeentry.S
 	if replies > 0 {
 		return false, "answered", registered, nil
 	}
-	addressed, err := employeeentry.RecentAdmittedTexts(ctx, q, c.Key, now.Add(-employeeQuietLookback), 100)
+	participation, err := employeeReadParticipation(ctx, q, employeeentry.Scope{WorkspaceID: c.Key.WorkspaceID, AgentID: c.Key.AgentID, TenantOrgID: c.Key.TenantOrgID, SceneID: c.Key.SceneID})
 	if err != nil {
 		return false, "", registered, err
 	}
-	if employeeQuietActive(addressed) {
+	if participation.Mode == "quiet" {
 		return false, "quiet", registered, nil
 	}
+
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: ws})
 	if err != nil {
 		return false, "", registered, err
 	}
 	duty, _ := employeeRoleInstructions(agent)
 	corpus := []string{duty}
+	addressed, err := employeeentry.RecentAdmittedTexts(ctx, q, c.Key, now.Add(-employeeTopicLookback), 100)
+	if err != nil {
+		return false, "", registered, err
+	}
 	for _, text := range addressed {
 		corpus = append(corpus, text.Text)
 	}
