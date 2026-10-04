@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -345,12 +346,18 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		h.writeMulticaMCPError(w, request.ID, -32602, "invalid MCP parameters")
 		return
 	}
+	diagnostic := request.Method == "tools/call" && params.Name == connectorDiscoveryStatusTool
 	if request.Method == "tools/call" {
 		if params.Name == "" || !internalMCPJSONObject(params.Arguments) {
 			h.writeMulticaMCPError(w, request.ID, -32602, "tool name or arguments are invalid")
 			return
 		}
-		if c.CatalogSlug != "" {
+		if diagnostic {
+			if _, valid := connectorDiscoveryStatusResult(*c, params.Arguments); !valid {
+				h.writeMulticaMCPError(w, request.ID, -32602, "diagnostic accepts only empty object arguments")
+				return
+			}
+		} else if c.CatalogSlug != "" {
 			// External official apps keep their pinned tools (read-only unless
 			// writes are enabled). delete_branch is implemented here because
 			// the upstream GitHub MCP server does not offer it.
@@ -383,6 +390,15 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		h.writeMulticaMCPToolError(w, request.ID, "connector rate limit or store unavailable")
 		return
 	}
+	if diagnostic {
+		if err = h.connectorAudit(r, *c, task, agent, request.Method, params.Name, "discovery_diagnostic"); err != nil {
+			h.writeMulticaMCPError(w, request.ID, -32603, "connector audit unavailable")
+			return
+		}
+		result, _ := connectorDiscoveryStatusResult(*c, params.Arguments)
+		h.writeMulticaMCPResult(w, request.ID, result)
+		return
+	}
 	denied := ""
 	if request.Method == "tools/call" && c.CatalogSlug == "github" {
 		access := h.githubGrantView(r.Context(), c)
@@ -403,6 +419,7 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	_ = http.NewResponseController(w).Flush()
 	var result any
+	upstreamStarted := time.Now()
 	agentRefusal := false
 	if denied != "" {
 		// Leave isError false. pi-mcp-extension discards isError text.
@@ -416,6 +433,19 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		agentRefusal = refusal
 	} else {
 		result, err = h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
+	}
+	if err != nil {
+		class, status := connectorFailureClass(err)
+		slog.WarnContext(r.Context(), "internal connector upstream failed", "event", "internal_mcp_connector_upstream_failed",
+			"connector_id", c.ID, "workspace_id", ws, "agent_id", agent, "task_id", task,
+			"method", request.Method, "failure_class", class, "upstream_status", status,
+			"duration_ms", time.Since(upstreamStarted).Milliseconds(), "request_id", chimw.GetReqID(r.Context()),
+			"binding_layer", c.bindingLayer, "credential_layer", c.credentialLayer)
+	}
+	var discoveryResult any
+	discoveryUnavailable := false
+	if request.Method == "tools/list" {
+		discoveryResult, discoveryUnavailable = connectorUnavailableDiscovery(r.Context(), *c, params.Cursor, err)
 	}
 	outcome := "ok"
 	failure := "Internal MCP tool list unavailable"
@@ -446,8 +476,15 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "connector audit unavailable"}}}
 		outcome = "audit_error"
 		failure = "Internal MCP tool list unavailable"
+		discoveryUnavailable = false
 	}
 	if request.Method == "tools/list" && outcome != "ok" {
+		if discoveryUnavailable {
+			slog.WarnContext(r.Context(), "internal connector discovery presented as unavailable", "event", "internal_mcp_connector_discovery_unavailable",
+				"connector_id", c.ID, "task_id", task, "binding_layer", c.bindingLayer, "credential_layer", c.credentialLayer)
+			_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: request.ID, Result: discoveryResult})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: request.ID, Error: &multicaMCPError{Code: -32603, Message: failure}})
 		return
 	}
@@ -483,7 +520,7 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 	for _, item := range list["tools"].([]map[string]any) {
 		name, _ := item["name"].(string)
 		presented := connectorPresentedToolName(name)
-		if name == "" || seen[presented] {
+		if name == "" || name == connectorDiscoveryStatusTool || seen[presented] {
 			return nil, connectorUpstreamProtocolError{}
 		}
 		seen[presented] = true
@@ -589,6 +626,11 @@ func connectorRPCResult(method string, result json.RawMessage) (any, error) {
 		}
 		if json.Unmarshal(result, &list) != nil || list.Tools == nil {
 			return nil, connectorUpstreamProtocolError{}
+		}
+		for _, tool := range list.Tools {
+			if tool["name"] == connectorDiscoveryStatusTool {
+				return nil, connectorUpstreamProtocolError{}
+			}
 		}
 		value := map[string]any{"tools": list.Tools}
 		if list.NextCursor != "" {
