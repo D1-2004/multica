@@ -1,0 +1,1974 @@
+{
+  "assets": [
+    {
+      "path": "docs/dingtalk-inbound-chat-prompt-spec.md",
+      "title": "钉钉入站消息的 Chat 提示词规格",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "4f98e5097abb693897eb.md",
+      "sourceSHA256": "ec4701e5b22290e8dc8e5ee41278871f0be3ed6e99acd9acf06d4b18efcbc4d2",
+      "renderSHA256": "766163f6af1d9b49ee3419931d273ad4703f9ffe5b2da3c44a171a01829ba7fb"
+    },
+    {
+      "path": "docs/evals/README.md",
+      "title": "20 个黄金测试",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "26ce093e65d889ab70c5.md",
+      "sourceSHA256": "a38cbfa0f6577e9ca85250761173a70b03471b9bad1796fbe896d5b4dfe82ecc",
+      "renderSHA256": "a38cbfa0f6577e9ca85250761173a70b03471b9bad1796fbe896d5b4dfe82ecc"
+    },
+    {
+      "path": "docs/evals/office-scenarios.md",
+      "title": "通用办公场景评测定义",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "d1fdac4600fd60216a2f.md",
+      "sourceSHA256": "d0b2a597072f4fa98fcf3b992999236c1ac20cb0af80c740fcd9594d7c79879a",
+      "renderSHA256": "d0b2a597072f4fa98fcf3b992999236c1ac20cb0af80c740fcd9594d7c79879a"
+    },
+    {
+      "path": "docs/inbound-coordinator-loop.md",
+      "title": "Coordinator 现行行为合同",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "0e422c7e7d54982b7fa0.md",
+      "sourceSHA256": "913c5459b8a7f4bede69b05273b5cd0c67a9c4ca192ea484d3aa7c74b86884c7",
+      "renderSHA256": "a8f2fac0fc9dab6b8392cd4dddceebfb0753a1e47bacf6973da7cada35e00615"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/10-delivery-standard.md",
+      "title": "最终交付标准与实现优化方针",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "6ab3181a14d3b8eddaa7.md",
+      "sourceSHA256": "ae7fcec7a0ef478db831544fb019d033be049ba036f9129c632e7d5aa61365d9",
+      "renderSHA256": "0cbe7eb1a3fdb8b536d5160eeddbc09fd82da5fb7755c3465da00413c78e1382"
+    },
+    {
+      "path": "docs/plans/2026-10-04-project-eval-catalog.md",
+      "title": "项目评测目录与只读 HTML 展示",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "22076ce021ca83e6c1f7.md",
+      "sourceSHA256": "70956f44df7d7a2260f3d815ccf8b490d84362cfd09ed03837d25f9173b55c1c",
+      "renderSHA256": "70956f44df7d7a2260f3d815ccf8b490d84362cfd09ed03837d25f9173b55c1c"
+    },
+    {
+      "path": "docs/task-steer.md",
+      "title": "Task steer",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "aafb59f592f9b2a51e5c.md",
+      "sourceSHA256": "30d3f299c403d1ef2559b9039a37317afc0ba6510d77bfb6fa77e622295d8f9a",
+      "renderSHA256": "30d3f299c403d1ef2559b9039a37317afc0ba6510d77bfb6fa77e622295d8f9a"
+    },
+    {
+      "path": "docs/evals/20260910-generic-proactive-cases.md",
+      "title": "Coordinator 模型回放用例（26 个）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "30e78441d7a370c5a6af.md",
+      "sourceSHA256": "b012b26c28181bbdde857d91395ef2cb7e430ee6c6c42944f8c9775638f6e322",
+      "renderSHA256": "b012b26c28181bbdde857d91395ef2cb7e430ee6c6c42944f8c9775638f6e322"
+    },
+    {
+      "path": "docs/evals/assoc-scene-eval-runbook.md",
+      "title": "Assoc scene recall eval runbook",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "08d2136981ce54442265.md",
+      "sourceSHA256": "af8ed7e5a0b331e4fcd592cc014849287fc9c49c91d4238739dac04ac90709b1",
+      "renderSHA256": "af8ed7e5a0b331e4fcd592cc014849287fc9c49c91d4238739dac04ac90709b1"
+    },
+    {
+      "path": "docs/plans/2026-08-17-dingtalk-emoji-reaction-docking.md",
+      "title": "表情回复事件订阅与消费对接方案（Multica 侧）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "32557b454658475fddfa.md",
+      "sourceSHA256": "4d8da708abff694360a250ab0c2659171f31f99ddd09cb8a7f0647b055c89175",
+      "renderSHA256": "4d8da708abff694360a250ab0c2659171f31f99ddd09cb8a7f0647b055c89175"
+    },
+    {
+      "path": "docs/plans/2026-08-31-event-scene-issue-task-assoc.md",
+      "title": "Event / Scene / Issue-Task 关联与拟人召回",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "3e5c570478dedc0ec44a.md",
+      "sourceSHA256": "a8510267b0ae7a2145885beda70d40192d128a8816907ff27196de005a8f8125",
+      "renderSHA256": "a140b5022b6b0313ef63d7d25f8cebfbb728562a6fa6b146f65c73027856bd39"
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-e2e.md",
+      "title": "Coordinator 场域记忆：预发 e2e 剧本",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "fd96289832f7485efb2b.md",
+      "sourceSHA256": "f66f0fcb652544305a78d5051e4197604e6a089836b2c39102231b29c7ac3443",
+      "renderSHA256": "f66f0fcb652544305a78d5051e4197604e6a089836b2c39102231b29c7ac3443"
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-landing.md",
+      "title": "Coordinator 场域记忆落地说明",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "988b2b2cc001da46e402.md",
+      "sourceSHA256": "4cf8a99658afc9f36813a9ce90eadf062e7d9f577fea5994d709fdca77e3fbcd",
+      "renderSHA256": "4cf8a99658afc9f36813a9ce90eadf062e7d9f577fea5994d709fdca77e3fbcd"
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-takeover.md",
+      "title": "TakeOver：Coordinator 场域记忆 MVP",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "08bd8e90db00990162c7.md",
+      "sourceSHA256": "bb07ca2f67249c86e2a88dbe73045f80b9049feef3c13dc2a424839589b1b742",
+      "renderSHA256": "bb07ca2f67249c86e2a88dbe73045f80b9049feef3c13dc2a424839589b1b742"
+    },
+    {
+      "path": "docs/plans/2026-09-05-coordinator-window-e2e-cases.md",
+      "title": "Coordinator window e2e cases",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "8990e9d53c2b249b5ea3.md",
+      "sourceSHA256": "479e9aa10f4e833cfa8364bdc1aad7575b7ab2fe6083d93987519138f7c2d42e",
+      "renderSHA256": "479e9aa10f4e833cfa8364bdc1aad7575b7ab2fe6083d93987519138f7c2d42e"
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-collect-window.md",
+      "title": "Coordinator collect 与后台等待分离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "c42db15d0b2a0d9aecc8.md",
+      "sourceSHA256": "56dfb06d2d2a738e69500b478b26987bdc6ba5cdae01182dc5aa8def5de657c0",
+      "renderSHA256": "56dfb06d2d2a738e69500b478b26987bdc6ba5cdae01182dc5aa8def5de657c0"
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-finish-outcomes.md",
+      "title": "Coordinator Finish 展示实际任务去向",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "6a646e6293836b8d1cb5.md",
+      "sourceSHA256": "28de61ed4b783fddcb47d666d2ff5237bf082b0ccccbe121d41e1d0e6998ede0",
+      "renderSHA256": "28de61ed4b783fddcb47d666d2ff5237bf082b0ccccbe121d41e1d0e6998ede0"
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-progressive-context.md",
+      "title": "Coordinator 行为合同与渐进式上下文改造提案",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "9dcb18db16f8ef6c8fbd.md",
+      "sourceSHA256": "0c42f90b41bc2db52105f00547ea87ec5ddc99d770775b506b38bd11cdf7a38a",
+      "renderSHA256": "0c42f90b41bc2db52105f00547ea87ec5ddc99d770775b506b38bd11cdf7a38a"
+    },
+    {
+      "path": "docs/plans/2026-09-07-digital-employee-response-actions.md",
+      "title": "数字员工统一响应 Action 与 AI 标识控制",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "eb5f6979674e9e3a4c53.md",
+      "sourceSHA256": "56a3bfe3de91d7bb93c6960a884c22ebf575eb40aab0103c65a551b529c3ccb8",
+      "renderSHA256": "f28bd7fccf5424a26b6e836876dcf5efc4a7e80e1d64108260f0ab7593bd8954"
+    },
+    {
+      "path": "docs/plans/2026-09-07-response-actions-sandbox-verification.md",
+      "title": "东翔测试号真实沙箱验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "e64ed4e0204042919c86.md",
+      "sourceSHA256": "74a999d20ab9db375bd778e55c94aaf71ebf1e974be2ccfaa48885c8b7f25dab",
+      "renderSHA256": "74a999d20ab9db375bd778e55c94aaf71ebf1e974be2ccfaa48885c8b7f25dab"
+    },
+    {
+      "path": "docs/plans/2026-09-07-scene-memory-pagination.md",
+      "title": "场域记忆分页恢复与预发发布",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "d700401ebad4bd74679a.md",
+      "sourceSHA256": "e253553c7b2d2b68b5ee7de0b174c104817eb9e57ef6830e608f4a13f7f7e09f",
+      "renderSHA256": "e253553c7b2d2b68b5ee7de0b174c104817eb9e57ef6830e608f4a13f7f7e09f"
+    },
+    {
+      "path": "docs/plans/2026-09-08-unified-response-http-fix.md",
+      "title": "统一响应开启后未回钉钉：HTTP 入站修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "74b59b13e08a56330c24.md",
+      "sourceSHA256": "36936738d994b058b6f8c3a63b2bdb6cbe136b70e968ca5b9bfba2987d464742",
+      "renderSHA256": "36936738d994b058b6f8c3a63b2bdb6cbe136b70e968ca5b9bfba2987d464742"
+    },
+    {
+      "path": "docs/plans/2026-09-08-yes-means-source-not-more-drafts.md",
+      "title": "Coordinator 只做意图与调度，派发时把意图写清楚",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "33b94b0fd0196b416150.md",
+      "sourceSHA256": "dd3d3f1095f1c22b8e547dc8d982ebbbc2ad77f9cb0a6cfa477ef0ea534efd3d",
+      "renderSHA256": "dd3d3f1095f1c22b8e547dc8d982ebbbc2ad77f9cb0a6cfa477ef0ea534efd3d"
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-closed-actions.md",
+      "title": "Coordinator 有限动作、协调视图与短合同",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "72cc525a186db559ce50.md",
+      "sourceSHA256": "acbf99b6dfd9ba957929214ca8d16ee51de15d9359df3cf5ccc7a223b75f67d1",
+      "renderSHA256": "acbf99b6dfd9ba957929214ca8d16ee51de15d9359df3cf5ccc7a223b75f67d1"
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-prefetch.md",
+      "title": "Coordinator 简化优化：Host 前置必需召回",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "a498dc9fb006313fca65.md",
+      "sourceSHA256": "146cac28f5b701ee060cd8a2c068e42c7ff40f9ad0ed56879641df6ee14cb0dd",
+      "renderSHA256": "146cac28f5b701ee060cd8a2c068e42c7ff40f9ad0ed56879641df6ee14cb0dd"
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-scope-and-finish.md",
+      "title": "Coordinator 上下文减重与终结校验",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "9dfcec8a8f032a09a09d.md",
+      "sourceSHA256": "124a8341c0948112bdb05dd3f893c0527390da728fab8d5a96b0d00142e16fdb",
+      "renderSHA256": "124a8341c0948112bdb05dd3f893c0527390da728fab8d5a96b0d00142e16fdb"
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-target-regression.md",
+      "title": "指定预发 Agent 的真实 badcase 与读取能力回归",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "e91a1f8548fb041ee250.md",
+      "sourceSHA256": "24f4b09c60583bf32695ca21353db77f734d1160e274935c9740297e388cb3e7",
+      "renderSHA256": "24f4b09c60583bf32695ca21353db77f734d1160e274935c9740297e388cb3e7"
+    },
+    {
+      "path": "docs/plans/2026-09-09-proactive-conversation-release.md",
+      "title": "Proactive conversation cutover",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "c4763eb04e0604c572b0.md",
+      "sourceSHA256": "cc62aa882aee33c024fe341d3d16b30bc676993403911b16c9fc5247e9b4597a",
+      "renderSHA256": "cc62aa882aee33c024fe341d3d16b30bc676993403911b16c9fc5247e9b4597a"
+    },
+    {
+      "path": "docs/plans/2026-09-10-coordinator-decline-boundary.md",
+      "title": "Coordinator decline 边界来源一致性修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "9e226461fd95daa5bbfd.md",
+      "sourceSHA256": "acb61a2d2a5544ef2cad25b040f24abb6f5067d56661fbd0281d155b484bf102",
+      "renderSHA256": "acb61a2d2a5544ef2cad25b040f24abb6f5067d56661fbd0281d155b484bf102"
+    },
+    {
+      "path": "docs/plans/2026-09-10-coordinator-history-prefetch.md",
+      "title": "Coordinator 历史预取、轻量问候免审与代问答复转告",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "49a00660569625fcba12.md",
+      "sourceSHA256": "f718af7e0674fa7a4f47309bcf8620af643ee08cc5d559415d34583e649f8e74",
+      "renderSHA256": "1b321394613268d54a0fa53c7ef3f423a2f52b3122c74c87ec9bbd4485e51ac8"
+    },
+    {
+      "path": "docs/plans/2026-09-10-generic-proactive-semantics.md",
+      "title": "主动处理的通用语义修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "20c808c6cac6deaf6a1d.md",
+      "sourceSHA256": "1914a96931e22a0bc90074a6c8a8fb2a83c3cc8a8c5df063a822cefb9f9e42c9",
+      "renderSHA256": "1914a96931e22a0bc90074a6c8a8fb2a83c3cc8a8c5df063a822cefb9f9e42c9"
+    },
+    {
+      "path": "docs/plans/2026-09-14-coordinator-invented-access-limit.md",
+      "title": "Coordinator 目录/记忆伪造权限",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "fce347c39b07d4193fd5.md",
+      "sourceSHA256": "a1bb7ec913903fea225c2828481a3c5be19231f25049c355aea9a5f27f98aba9",
+      "renderSHA256": "2e3e795f0baeb7a8824128b42e2bd9b8c92d0331892bedbcf6662b97fe72bf36"
+    },
+    {
+      "path": "docs/plans/2026-09-14-coordinator-same-kind-batch.md",
+      "title": "Coordinator 同类批量变更被误拆",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "02b8352d7e5d276f6175.md",
+      "sourceSHA256": "331041ac37654e00b4f595700535e2251f4c93a3fab2ac52375e41dc22b95a1d",
+      "renderSHA256": "3f80298873a7c957c252fdb2b00f646f5896568334266960841157a4d7dfb198"
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+      "title": "Coordinator 连续对话与可靠回复优化",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "46caf257b056412ee5e6.md",
+      "sourceSHA256": "58af2af6efab1e2474913801b8e5674d195f2457116efa6bc5ddbb562fc0f687",
+      "renderSHA256": "58af2af6efab1e2474913801b8e5674d195f2457116efa6bc5ddbb562fc0f687"
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-destination-e2e.md",
+      "title": "Coordinator destination e2e (冬翔 → 东翔测试)",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "4ab8dbd0d8bde67c2696.md",
+      "sourceSHA256": "98ec0bcf3dc96a5b55cf696d8f52e009bc797ee7b3b9fb60c91f7c38799f92bc",
+      "renderSHA256": "98ec0bcf3dc96a5b55cf696d8f52e009bc797ee7b3b9fb60c91f7c38799f92bc"
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-receiving-identity.md",
+      "title": "钉钉接收身份与终结检查修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "aeba96afaae410467d36.md",
+      "sourceSHA256": "15dc1651e4cd121c59257a76f462c399479e6a912b26a516096d3a7f3acb8dc6",
+      "renderSHA256": "15dc1651e4cd121c59257a76f462c399479e6a912b26a516096d3a7f3acb8dc6"
+    },
+    {
+      "path": "docs/plans/2026-09-16-dingtalk-trigger-quoted-reply.md",
+      "title": "钉钉触发消息引用回复修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "87996cc45e037e92bec5.md",
+      "sourceSHA256": "29135bbcd6ab0c74df6bb5636f018003fbba66d8d8d73cabb64ebf4e6e72534c",
+      "renderSHA256": "29135bbcd6ab0c74df6bb5636f018003fbba66d8d8d73cabb64ebf4e6e72534c"
+    },
+    {
+      "path": "docs/plans/2026-09-21-coordinator-user-decision-implementation.md",
+      "title": "Coordinator 发起人决策模式实施状态",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "0bfa1654c1f9e45e9cab.md",
+      "sourceSHA256": "fda6bb2c9d646b6447ee50e834c4c997d53668b6903a336c4bb2d9680f3747b1",
+      "renderSHA256": "fda6bb2c9d646b6447ee50e834c4c997d53668b6903a336c4bb2d9680f3747b1"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-foreground-boundary.md",
+      "title": "EmployeeLoop 前台与后台的边界：自管理、派发与工具 MCP 化",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "3fb50b55c919c71bca1a.md",
+      "sourceSHA256": "dfa0b3c5adc44cf48e3f1b57c7fca2b86420e42f84a7decb044af58e01d54acd",
+      "renderSHA256": "dfa0b3c5adc44cf48e3f1b57c7fca2b86420e42f84a7decb044af58e01d54acd"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-interaction-continuity.md",
+      "title": "EmployeeLoop 交互连续性",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "fe67b9a3fd95c1c0a057.md",
+      "sourceSHA256": "429279b6698652da12bfb4fe73e9ffdd822a276f72b0f25369c000420c247824",
+      "renderSHA256": "429279b6698652da12bfb4fe73e9ffdd822a276f72b0f25369c000420c247824"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+      "title": "A 包：跨场域输入、等待与一次原场域汇总",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "810125eb5c3d7f4ae1b7.md",
+      "sourceSHA256": "bc655343204b03e0fed02ae9eb8e470df5a900c300e0d7e338d55e0a1ef2eb6f",
+      "renderSHA256": "a69e79501f0b5e67b0aaf67abb930b5039aecefcae3deb9fd8d664c8fad7f6f3"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md",
+      "title": "C 包：真实进展、停滞 episode 与主动跟进",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "4abe777cc7dcefc25d2c.md",
+      "sourceSHA256": "05e9b9650ba76623d92692000bf9061fe6409be72ebac6b8c41695dd05bc3c81",
+      "renderSHA256": "7feb9c3aedf89c197d75dee61275553784137c2191114e594785b3918a367d3e"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md",
+      "title": "D 包：附件理解、图片、引用定位与轻反馈",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "458e40a9386d28b977c3.md",
+      "sourceSHA256": "b453ad892760d3d50a260c4421397ed4b11224de2ad18c3c0c39748161d500aa",
+      "renderSHA256": "048486bdf79dce4ecef02bba3d5c2b2537b1434da9e46cfe3b28999fe2c40653"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md",
+      "title": "G 包：证据验证、持久提炼、真实复用与受控晋级",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "45185b77cdeb3b134818.md",
+      "sourceSHA256": "bb580990b65c379cda510c5a4ca3db984485c04fda187290108d7b1abcf2a4b3",
+      "renderSHA256": "fe11da098ce41aa3698520bc38ec8d7f5fa875f1dc5b124952e1db402739fe2c"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+      "title": "EmployeeLoop 预发验收记录",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "c6be34bfd76e8b485940.md",
+      "sourceSHA256": "50fe1214652efd2f6eba678c274d6545c7ad1b3de83e42d979a8b160d4e770e9",
+      "renderSHA256": "50fe1214652efd2f6eba678c274d6545c7ad1b3de83e42d979a8b160d4e770e9"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-parity-acceptance.md",
+      "title": "EmployeeLoop 执行面与场域对齐验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "50f7264195f41d75038d.md",
+      "sourceSHA256": "5041a9cccfdb7396b6cd002ff4b60a82c8b4199ffca7b29071720ba854584416",
+      "renderSHA256": "5041a9cccfdb7396b6cd002ff4b60a82c8b4199ffca7b29071720ba854584416"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-memory-capture.md",
+      "title": "Employee 私有记忆写入与纠正 Implementation Plan",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "e2abb9340fa3a06f537c.md",
+      "sourceSHA256": "1b305e6460dc608d5b19adadda87a2ff890ebfaf8e3a21b12e587f47f29743db",
+      "renderSHA256": "1b305e6460dc608d5b19adadda87a2ff890ebfaf8e3a21b12e587f47f29743db"
+    },
+    {
+      "path": "docs/reports/2026-09-07-prod-scene-memory-investigation.md",
+      "title": "FDE 教练线上场域记忆重试排查",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "ecf9833fdac61357f593.md",
+      "sourceSHA256": "63a79515766c37de31e17935be2858bfc11f52ce01df2eff6c2cba046a7ade61",
+      "renderSHA256": "f2634be57d226a0ba0c4b3ebf4d0a6c92803179cc457abc61d4bb919da8b2e34"
+    },
+    {
+      "path": "docs/reports/2026-09-08-feidi-daily-inspection.md",
+      "title": "菲迪问答、Coordinator 与场域记忆巡检",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "e030fb9e270864759c4d.md",
+      "sourceSHA256": "308c76aca145e67ca13070cd9e254d4410d69b675b5382c1822cfe2487a1b007",
+      "renderSHA256": "849970e7d30d84a3439f0eed30e6ea5012de11655e6b8ffaf8c257ad7b66db0e"
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-closed-actions.md",
+      "title": "Coordinator 有限动作与上下文控制",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "70d07ab9f495160d6608.md",
+      "sourceSHA256": "847b6fd0b3e3f042ea74ac54c4f63da809fde85af002dcfe5d83d13f34358935",
+      "renderSHA256": "847b6fd0b3e3f042ea74ac54c4f63da809fde85af002dcfe5d83d13f34358935"
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-prefetch.md",
+      "title": "Coordinator 本轮简化：Host 预取当前场域",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "d53e7f180b22c420856a.md",
+      "sourceSHA256": "5cc9f48414ba8a1b867582c1025c3beb4e45b322cb322790f8f12d3215a94d41",
+      "renderSHA256": "5cc9f48414ba8a1b867582c1025c3beb4e45b322cb322790f8f12d3215a94d41"
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-scope-and-finish.md",
+      "title": "Coordinator 上下文减重与派发保护",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "0e1cef089fc1e52a0e1f.md",
+      "sourceSHA256": "7110309753e6ff8f5d6dfa1e0c525ebfc0eff13f099344a856209dfe8a79b624",
+      "renderSHA256": "7110309753e6ff8f5d6dfa1e0c525ebfc0eff13f099344a856209dfe8a79b624"
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-target-regression.md",
+      "title": "Coordinator 生产病例回归与预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "06f1ed43b70b723c2ec6.md",
+      "sourceSHA256": "f1c3ea498033bfc50f51e9137a6b516c80b36293f2362a11bac03c5f70382320",
+      "renderSHA256": "4d0e191f63620c3b4cccf08f948e2465ffe1873920c5927114fcab743154e9c1"
+    },
+    {
+      "path": "docs/reports/2026-09-10-dws-auth-status-recovery.md",
+      "title": "Coordinator钉钉快回复缺失：根因、修复与实测",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "cf40b22aef4c39b62d4c.md",
+      "sourceSHA256": "bc1aa46a916adda46fe49e414efe797d51285d9d688c152d53840e60b33db40f",
+      "renderSHA256": "bc1aa46a916adda46fe49e414efe797d51285d9d688c152d53840e60b33db40f"
+    },
+    {
+      "path": "docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+      "title": "UID 精确识别与连续对话预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "bc1e001983af73cf5d1f.md",
+      "sourceSHA256": "8c0b57a42e015a0bcad829e6b5ac26fa0dc8ebb6e3b9a48b79b82b07b8ca466a",
+      "renderSHA256": "8c0b57a42e015a0bcad829e6b5ac26fa0dc8ebb6e3b9a48b79b82b07b8ca466a"
+    },
+    {
+      "path": "docs/reports/2026-09-16-coordinator-reply-latency-e2e.md",
+      "title": "Coordinator 社交整理延迟改动 — 预发实时 E2E",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "d6605ea2a1a62b9e08f1.md",
+      "sourceSHA256": "6c356b7e95d61e91ff63714a6f2889dfd648a88753197391461d15974a88f611",
+      "renderSHA256": "6c356b7e95d61e91ff63714a6f2889dfd648a88753197391461d15974a88f611"
+    },
+    {
+      "path": "docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md",
+      "title": "钉钉触发消息引用回复预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "a0823e4238155e7aa5d7.md",
+      "sourceSHA256": "e9da928ff1d2f552b250ebac8902dc92391bb4d0ca9ae76d28c154cfcd43ec64",
+      "renderSHA256": "e9da928ff1d2f552b250ebac8902dc92391bb4d0ca9ae76d28c154cfcd43ec64"
+    },
+    {
+      "path": ".agents/skills/aone-deploy/SKILL.md",
+      "title": "Aone Deploy & Operations",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "e87f24f52830135e1fc7.md",
+      "sourceSHA256": "31630cda282ab5632a029eefce633f52a7d3aa3003534fd302024844958ba6ff",
+      "renderSHA256": "31630cda282ab5632a029eefce633f52a7d3aa3003534fd302024844958ba6ff"
+    },
+    {
+      "path": ".agents/skills/inspect-coordinator-sls/SKILL.md",
+      "title": "查 Coordinator 推理（SLS）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "7624554816e7b8a1c630.md",
+      "sourceSHA256": "15b71d8ecae3973eb6fad3c6f3610d425f64302e212c323b9cf0f05d85ce65fa",
+      "renderSHA256": "15b71d8ecae3973eb6fad3c6f3610d425f64302e212c323b9cf0f05d85ce65fa"
+    },
+    {
+      "path": ".agents/skills/inspect-daily-qa/SKILL.md",
+      "title": "日常问答巡检",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "436e7353efad68c6afa8.md",
+      "sourceSHA256": "180e59c0fc627fec3c4ae66683aaee94c6c97239dea4ba5b65d1a74a5a08fc2d",
+      "renderSHA256": "081b748abb1a1ab645ba21cf7adb1200fb3dd76648b6f409bde4943333f93569"
+    },
+    {
+      "path": ".agents/skills/inspect-daily-qa/references/coordinator-regression.md",
+      "title": "Coordinator 冻结回放与预发验收",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "42a5ff2a2e320e838024.md",
+      "sourceSHA256": "955105473b86ca50b9d646c9f5898a4bd4ff164d22ff4ffb1786caeb334debf9",
+      "renderSHA256": "955105473b86ca50b9d646c9f5898a4bd4ff164d22ff4ffb1786caeb334debf9"
+    },
+    {
+      "path": ".agents/skills/inspect-fde-llm-trace/SKILL.md",
+      "title": "排查 FDE教练 LLM 调用",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "89b852fab71cdbd672f7.md",
+      "sourceSHA256": "799c4dfd06c3b2d7988fdc67e8ddad62c4c60f75dbf82be24d7055493d817ac7",
+      "renderSHA256": "799c4dfd06c3b2d7988fdc67e8ddad62c4c60f75dbf82be24d7055493d817ac7"
+    },
+    {
+      "path": ".agents/skills/inspect-langfuse-trace/SKILL.md",
+      "title": "用 id 查 Langfuse trace",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "a922cf94ad3da55cd894.md",
+      "sourceSHA256": "97f21a1a54f97066198ef0a3a0e6f84db0169ce668319a1851c507ee79f14752",
+      "renderSHA256": "97f21a1a54f97066198ef0a3a0e6f84db0169ce668319a1851c507ee79f14752"
+    },
+    {
+      "path": ".agents/skills/inspect-langfuse/SKILL.md",
+      "title": "查 Langfuse（Coordinator / 沙箱闭环）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "5959a82dd77e6923c1a9.md",
+      "sourceSHA256": "c8fe22b13147c76f179593521192bcdab36e682b48221327a654f63fe87973f0",
+      "renderSHA256": "c8fe22b13147c76f179593521192bcdab36e682b48221327a654f63fe87973f0"
+    },
+    {
+      "path": ".agents/skills/langfuse/SKILL.md",
+      "title": "Langfuse（本仓）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "475a95e14378170fab59.md",
+      "sourceSHA256": "021a7318b110661e99413fa1cb95c3b4b69693fb32c5241c8b861ebde5b89985",
+      "renderSHA256": "021a7318b110661e99413fa1cb95c3b4b69693fb32c5241c8b861ebde5b89985"
+    },
+    {
+      "path": "docs/agent-message-router-observability-contract.md",
+      "title": "Agent Message Router 只读观测契约",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "9e9a87594d36fe4ec212.md",
+      "sourceSHA256": "382248fdaed1cd62e4f98486ea13f10bc326b924ef3db0f62b7091be322015bd",
+      "renderSHA256": "382248fdaed1cd62e4f98486ea13f10bc326b924ef3db0f62b7091be322015bd"
+    },
+    {
+      "path": "docs/dingtalk-response-actions.md",
+      "title": "数字员工响应动作与投递合同",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "03478ee60acea1e156c0.md",
+      "sourceSHA256": "64d48dc6ca093c79158ee207c36f64960e3685f067e960542fbb426a014d7a24",
+      "renderSHA256": "8accad4b008a13b7b40a6b4290758f5a17775cd60dafc40fd39c5b06c2bf6b48"
+    },
+    {
+      "path": "docs/internal-mcp-connectors.md",
+      "title": "Internal MCP connectors",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "00afbd3d6fc7b86cc09d.md",
+      "sourceSHA256": "ffb92bb5462b849f9b35aa2cf48926c1454393523f6a15d1d97b9e4fc4c5e186",
+      "renderSHA256": "0133afbf26d529165a33ff03c7779e9a7f2681485e1d44b2295e930b9ec65aae"
+    },
+    {
+      "path": "docs/langfuse-observability.md",
+      "title": "Langfuse observability",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "5b344a09f461d9387d73.md",
+      "sourceSHA256": "98822c56f3179941c796e0a2040996f7f95142ac98eb8d4fc6ee22cc975f249b",
+      "renderSHA256": "98822c56f3179941c796e0a2040996f7f95142ac98eb8d4fc6ee22cc975f249b"
+    },
+    {
+      "path": "docs/llm-trace.md",
+      "title": "LLM trace delivery",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "5fcb4a775aa59875763e.md",
+      "sourceSHA256": "549a4dc54063c4cb3b7fea42268eed75049667f07a1438e5588717ab79c715c3",
+      "renderSHA256": "549a4dc54063c4cb3b7fea42268eed75049667f07a1438e5588717ab79c715c3"
+    },
+    {
+      "path": "docs/local-runner-mcp-mounts.md",
+      "title": "Local Runner MCP mounts",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "66fbde7e619f96be4959.md",
+      "sourceSHA256": "e2dbf9b112fe227fd63f71e0b44bc45313246dd77fbede499db0587a47262201",
+      "renderSHA256": "e2dbf9b112fe227fd63f71e0b44bc45313246dd77fbede499db0587a47262201"
+    },
+    {
+      "path": "docs/multica-mcp-chat-send.md",
+      "title": "Multica 自托管 MCP：Chat 续写协议",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "56dd25ac343dc5761f74.md",
+      "sourceSHA256": "f3362c5fe0fcd3b06c54ab4fd3a77a1b6fa572264a00a21b9eecbe9cdeec7a09",
+      "renderSHA256": "5ad8edbc845d2621f0662fc10f19234dee6e3a5600919c51f0781425b3f1a125"
+    },
+    {
+      "path": "docs/multica-mcp-client-setup.md",
+      "title": "Multica MCP 客户端接入指南",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "b6313f2086cdffb9c9d0.md",
+      "sourceSHA256": "b1ce1ef9496f876ed1ac6b21d9e039ba31561f48b39a8b1bd3c01468938e348e",
+      "renderSHA256": "a399f5b9e9a98dd9a273b0aed8db72a2abf0cdf2159c45306eb63e44514491dc"
+    },
+    {
+      "path": "docs/operations/router-callback-dws-delivery.md",
+      "title": "Router callback reply delivery",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "b0db4d7dba82ca6842b3.md",
+      "sourceSHA256": "521ad8076b17cf48082658886ee5e890ac086e6ff55e93acb7a622e3777ad0fd",
+      "renderSHA256": "521ad8076b17cf48082658886ee5e890ac086e6ff55e93acb7a622e3777ad0fd"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+      "title": "I/Q 包：接线、独立验收、预发与完整交付",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "018ff58acddc23ae3864.md",
+      "sourceSHA256": "47d7635eef3f8541eba4b97662b2f682a341c7d39306e77e5558bef6c24396a5",
+      "renderSHA256": "a1e6337751f9255959fccb15a290aae51cfdb3fe5d43368e6e3fab50ffb36e67"
+    },
+    {
+      "path": "docs/semantica-mcp-relay.md",
+      "title": "Semantica MCP relay in Multica",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "eedb44f3b5ee50acbaa1.md",
+      "sourceSHA256": "7ef2174fe7432b3d047168d85fe6edd373bd83a539e0f120a3fd9e9d8c2a859a",
+      "renderSHA256": "7c8eac795b815faa3001091de2bee9a02a47948513608f9ce9a3e8f3bed41be5"
+    },
+    {
+      "path": "docs/workspace-mcp-links.md",
+      "title": "Workspace MCP connections in Settings",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false,
+      "file": "f12fc9152d3295827037.md",
+      "sourceSHA256": "a87b1231db5c37fe270d2bcdcae2d369a18451a648aa5f0b216a797acae755e4",
+      "renderSHA256": "a87b1231db5c37fe270d2bcdcae2d369a18451a648aa5f0b216a797acae755e4"
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/SKILL.md",
+      "title": "Scene Memory e2e",
+      "category": "tools",
+      "kind": "skill",
+      "historical": true,
+      "file": "23991ad89a714cb2c18b.md",
+      "sourceSHA256": "bdf7c5f5c71d127b2d0e495bfe7bfd7ccec28ce4939f911a207e08f8cd33201f",
+      "renderSHA256": "99dcd938c0bd33315867e2a53208e25d06d52316443613ff82fbb4a271ecd972"
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/create-scene.md",
+      "title": "造 Scene",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "66be7a34deb133b93d71.md",
+      "sourceSHA256": "b12926c0fe70b292dbbda11ae60390475a88edec5209823e345c8c3a51a840d5",
+      "renderSHA256": "b12926c0fe70b292dbbda11ae60390475a88edec5209823e345c8c3a51a840d5"
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/daemon-recall.md",
+      "title": "可选 E：Daemon 按场域召回",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "7b4cddfcc402c88fffda.md",
+      "sourceSHA256": "5675256901eabe0a732e32b263a26b6a968f52a083c23992213df80e8d9ee7a7",
+      "renderSHA256": "5675256901eabe0a732e32b263a26b6a968f52a083c23992213df80e8d9ee7a7"
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/reset-memory.md",
+      "title": "/reset-memory",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "e57a7e2df8c16407ab9e.md",
+      "sourceSHA256": "ef861de2377a9aea8c6b301478f928f347cf35272c897a65c27eb87e88fa698f",
+      "renderSHA256": "ef861de2377a9aea8c6b301478f928f347cf35272c897a65c27eb87e88fa698f"
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/scene-window-plays.md",
+      "title": "Coordinator 场景窗：预发固定场景",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "ef517462e593b8b3338a.md",
+      "sourceSHA256": "be4d4c3d751dd8ce06e9a1a294e5a1bb1654af55c8369d532c5e9466dd859a02",
+      "renderSHA256": "be4d4c3d751dd8ce06e9a1a294e5a1bb1654af55c8369d532c5e9466dd859a02"
+    },
+    {
+      "path": ".agents/skills/verify-scene-memory-pre/SKILL.md",
+      "title": "已迁移",
+      "category": "tools",
+      "kind": "skill",
+      "historical": true,
+      "file": "0ad4baeb27886cb7ff45.md",
+      "sourceSHA256": "a51b56b43253457688641124dd6a1d903ec20817ef97256b830546ac5bf24fcb",
+      "renderSHA256": "a51b56b43253457688641124dd6a1d903ec20817ef97256b830546ac5bf24fcb"
+    },
+    {
+      "path": "docs/plans/2026-08-11-agent-mcp-issue-backed.md",
+      "title": "Agent MCP Issue-backed Delegation 计划",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "1077fd2577de3afeafb9.md",
+      "sourceSHA256": "ec16eadd0e66e28a21aabe3c1af9e6e5f300d61e5fd4fbe02271d8ffa920234b",
+      "renderSHA256": "ec16eadd0e66e28a21aabe3c1af9e6e5f300d61e5fd4fbe02271d8ffa920234b"
+    },
+    {
+      "path": "docs/plans/2026-09-09-feidi-daily-inspection.md",
+      "title": "菲迪日常巡检与可观测性改进",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "be8e98e58dd02b14c3b3.md",
+      "sourceSHA256": "2a823bbcf15aa97598959f00db385014c70c103292fe11759209a2e4d37bafd2",
+      "renderSHA256": "2a823bbcf15aa97598959f00db385014c70c103292fe11759209a2e4d37bafd2"
+    },
+    {
+      "path": "docs/plans/2026-09-10-dws-execution-recovery.md",
+      "title": "Coordinator受理回复真实投递与文案收口",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "f9e46e6730b9e41356b8.md",
+      "sourceSHA256": "baaba0686d9c2f112caf74ef1b54cef51038136246de2ac66925ecb82139f11c",
+      "renderSHA256": "9834d170726bbfa53598fff444505c4c0423d458edd88bd65b868853ee77314c"
+    },
+    {
+      "path": "docs/plans/2026-09-20-workspace-filesystem.md",
+      "title": "工作区文件系统：统一列表、按目录分页、读写隔离",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "48f3af53959a18e38a30.md",
+      "sourceSHA256": "b31169b075808a90151133723118471fe72a78da9e759256640a3c906187f7e6",
+      "renderSHA256": "b31169b075808a90151133723118471fe72a78da9e759256640a3c906187f7e6"
+    },
+    {
+      "path": "docs/plans/2026-09-25-workspace-mcp-coverage.md",
+      "title": "Workspace MCP CLI coverage and rollout",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "33b4b9ba483e8a30368a.md",
+      "sourceSHA256": "f51a316df4b5c20b929222d9b9a40042a277bc6d274144518cc78044f25e474d",
+      "renderSHA256": "cdccc02cc8e1f3a5cd2fc9af10c117dfd37e8e3d4ab36d9851f71bbbed1c5ff4"
+    },
+    {
+      "path": "docs/plans/2026-09-30-internal-mcp-domain-only.md",
+      "title": "Internal MCP 按域名接入",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "ca1595689a7662a4325a.md",
+      "sourceSHA256": "1eabb89a918916d794d78bc2d0e8b77789ad24a59a7b432e66487969881f0a97",
+      "renderSHA256": "1eabb89a918916d794d78bc2d0e8b77789ad24a59a7b432e66487969881f0a97"
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-direct-artifacts.md",
+      "title": "Direct 文件产物实施计划",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "1c26ea1b92cf423a96e7.md",
+      "sourceSHA256": "a4ddd977ea088b332e30a000c89774d07295418ef94f003c2ddd0190ef8e68fd",
+      "renderSHA256": "a4ddd977ea088b332e30a000c89774d07295418ef94f003c2ddd0190ef8e68fd"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/09-agent-handoff.md",
+      "title": "分派、接手与交付模板",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true,
+      "file": "5930c857dc7e924ac7ab.md",
+      "sourceSHA256": "ebcca02035d2c4ab40251dc74b7b5d500d838354cb5ac925d17f8e12ea49a70b",
+      "renderSHA256": "c533ab3666df00d6312358b61b2f5586546a612f31f3e8ee8c19866a116f839b"
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/SKILL.md",
+      "title": "FC Runtime development loop",
+      "category": "runtime",
+      "kind": "skill",
+      "historical": false,
+      "file": "09f57ace027c68bac9ee.md",
+      "sourceSHA256": "37ab2083d7a75fd0bf7ef84b00b0f3d4584f5c78158d6f65992f53887e950f67",
+      "renderSHA256": "fbf9fc92a1377046055e31f4c53a799298f02a7b7325b982810ddebcb169bf5e"
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/common-cases.md",
+      "title": "Common FC Runtime development cases",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "323343c715a252000e5f.md",
+      "sourceSHA256": "b0789209b4ef598ecb080ab51aa72f08dc56acd2b41025f398ed23c6e6aa3143",
+      "renderSHA256": "b0789209b4ef598ecb080ab51aa72f08dc56acd2b41025f398ed23c6e6aa3143"
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/daemon-compatibility.md",
+      "title": "FC sandbox and persistent local Daemon compatibility",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "04ca077356c0b22b556c.md",
+      "sourceSHA256": "79e585138228e4374e31ea65e4f102a865fd2279c99a9d733015c4749b0a6182",
+      "renderSHA256": "79e585138228e4374e31ea65e4f102a865fd2279c99a9d733015c4749b0a6182"
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/workflow.md",
+      "title": "FC Runtime candidate workflow contract",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "da1115a2f2a4d3bb9f57.md",
+      "sourceSHA256": "6b2e32b8fffdc9c93a346e167740a66f9074a8565debe0a56f101c7df8955973",
+      "renderSHA256": "7fec1fc5c2d0d01747e0f7b3749b99ac65e81a559fbf6f2720e9ed06011ebeee"
+    },
+    {
+      "path": "docs/agent-dispatch-v2-execution-contract.md",
+      "title": "Agent Dispatch V2 Execution Contract",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "6bc26f7e59e46d084f1f.md",
+      "sourceSHA256": "b381db7723ef40a819911bb52c0f28754180b4536d0c5b0477fc3574c7278246",
+      "renderSHA256": "b58e78606915ec0eb6369e886bb324f9cd0083b3e0fc2127b5cc8a652126569c"
+    },
+    {
+      "path": "docs/agent-event-trigger.md",
+      "title": "Agent event trigger",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "6486c4c345a791bce1a9.md",
+      "sourceSHA256": "24c5a2cc4d0db7ae6c43b57c211d6f4983e60c9f22fb16fe32c46046b94e2f19",
+      "renderSHA256": "24c5a2cc4d0db7ae6c43b57c211d6f4983e60c9f22fb16fe32c46046b94e2f19"
+    },
+    {
+      "path": "docs/agent-scene.md",
+      "title": "Agent work scene (AgentScene, sceneid)",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "0311579ea604d939448e.md",
+      "sourceSHA256": "8284c1d48001ce65d91ad1618351fcf74fd5f80290544cebc167f5395ac16af9",
+      "renderSHA256": "8284c1d48001ce65d91ad1618351fcf74fd5f80290544cebc167f5395ac16af9"
+    },
+    {
+      "path": "docs/asb-capacity-coordination.md",
+      "title": "ASB capacity coordination",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "44a0c4e0ff1d399c7991.md",
+      "sourceSHA256": "d37593238cb73f5e915a120a33ff2e6d900abd3bc60dd4ff602b04e6f834b6bb",
+      "renderSHA256": "d37593238cb73f5e915a120a33ff2e6d900abd3bc60dd4ff602b04e6f834b6bb"
+    },
+    {
+      "path": "docs/context-capabilities.md",
+      "title": "Context capabilities: scene and personal connectors and skills",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "3dc09c6f86a3902390f0.md",
+      "sourceSHA256": "54701e7649194d3e8785239b8afb866f1090c48cc51abf0a41d710fc997007cd",
+      "renderSHA256": "54701e7649194d3e8785239b8afb866f1090c48cc51abf0a41d710fc997007cd"
+    },
+    {
+      "path": "docs/dingtalk-account-binding-router-contract.md",
+      "title": "DingTalk Account Binding Router Contract",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "0af640c585cfbaa14bb0.md",
+      "sourceSHA256": "c0e179b19faa555c9db8b68ef590e26a6405cec767358148d02d97fbff013051",
+      "renderSHA256": "c0e179b19faa555c9db8b68ef590e26a6405cec767358148d02d97fbff013051"
+    },
+    {
+      "path": "docs/employee-loop.md",
+      "title": "EmployeeLoop 当前实现合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "60f1435aff0e34b48647.md",
+      "sourceSHA256": "08d52de70cff6ac46c4686858d01cd89b291eac14c8d9700d32b4d6dbedf5fdc",
+      "renderSHA256": "b5b6ef463611c892a5a5e43958ae86822b84bcc18736520e41eb385cf1713ff5"
+    },
+    {
+      "path": "docs/environment-forwarding.md",
+      "title": "线上入口与预发处理",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "d9ded7272f20855a18e3.md",
+      "sourceSHA256": "2516e6b86e6110ce6107692c446481cfd30e423e4bcff91f84b1a793fe45fede",
+      "renderSHA256": "0e6f2accdce822e5b8d362b94a00ee45947f01f616c62f4aef72b419964f4ff6"
+    },
+    {
+      "path": "docs/event-scene-router.md",
+      "title": "Event admission and scene routing (PRI-78)",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "c096a03eb48e91f10680.md",
+      "sourceSHA256": "b063a9e58bed4331efa2ad89d3dd774977c5304ddaca3096181b4df973cedd51",
+      "renderSHA256": "b063a9e58bed4331efa2ad89d3dd774977c5304ddaca3096181b4df973cedd51"
+    },
+    {
+      "path": "docs/fc-sandbox-lifecycle.md",
+      "title": "FC/E2B 沙箱寿命",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "6ef6902fafde9e5a54ea.md",
+      "sourceSHA256": "727873e77e154ade2bb549a9ec69396f0f8730631a39b9abccbf76aef294d8bf",
+      "renderSHA256": "727873e77e154ade2bb549a9ec69396f0f8730631a39b9abccbf76aef294d8bf"
+    },
+    {
+      "path": "docs/internal-aone-predeploy-network.md",
+      "title": "dt-fde-multica Pre-Deployment Network Access",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "6bc0695336ff3570e277.md",
+      "sourceSHA256": "d879b9c90ca7818a7964ec9f8b1de7f856a7b0032ab323ef4d23c934472723dd",
+      "renderSHA256": "d879b9c90ca7818a7964ec9f8b1de7f856a7b0032ab323ef4d23c934472723dd"
+    },
+    {
+      "path": "docs/internal-polardb-shared-access.md",
+      "title": "PolarDB PostgreSQL 共享实例接入说明",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "5e7f0e06530a1b0f9e66.md",
+      "sourceSHA256": "37d3400c5fa69bde567b95ecea498b0aefd2e8ae52250e2d75efb5653180057c",
+      "renderSHA256": "37d3400c5fa69bde567b95ecea498b0aefd2e8ae52250e2d75efb5653180057c"
+    },
+    {
+      "path": "docs/operations/asb-identity-errors.md",
+      "title": "ASB 企业身份启动错误",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "e2d23b300b6a76b85222.md",
+      "sourceSHA256": "e20abfc022ccf826c3b4e5c67a2c7e6d373cb833e1b2b5281d867faff591feab",
+      "renderSHA256": "e20abfc022ccf826c3b4e5c67a2c7e6d373cb833e1b2b5281d867faff591feab"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+      "title": "Step 0：测试环境、协作拓扑与交付节奏的前置边界",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "65456b7360a25eb0bc25.md",
+      "sourceSHA256": "b702348e2ceebb51c7838aab2ed5f718cd39908a49e75b487bcaa7bf656ecf12",
+      "renderSHA256": "8499269e69e5f5b859c766a48f39f5c6366f58d54f4e569518190bb0e05eddb6"
+    },
+    {
+      "path": "docs/runtime-config.md",
+      "title": "Managed runtime configuration",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "59994254ee62ba8dc55e.md",
+      "sourceSHA256": "6f719c09a1d2e5623fdcdd8591973e53bc3ce930e8937092a8ae6b31c734e6eb",
+      "renderSHA256": "6f719c09a1d2e5623fdcdd8591973e53bc3ce930e8937092a8ae6b31c734e6eb"
+    },
+    {
+      "path": "docs/security/asb-network-allowlist.md",
+      "title": "ASB outbound network policy",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "5bc60b20847a12c052f9.md",
+      "sourceSHA256": "1d2cd8c9b9492cb8f59affdc7950085c7033dcd08c068fec9b8f1d55451a049e",
+      "renderSHA256": "fabb0c32f842c13657f926839af3235eff0a80e3d5570520119b274c611211a7"
+    },
+    {
+      "path": "docs/task-run-events.md",
+      "title": "长任务运行事件合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "adec2d36901208c04b52.md",
+      "sourceSHA256": "ec920c08b1ac72f2ca2b68c668dd3e13d7b1bed4554d2497ff1092e94c94bacd",
+      "renderSHA256": "ec920c08b1ac72f2ca2b68c668dd3e13d7b1bed4554d2497ff1092e94c94bacd"
+    },
+    {
+      "path": "docs/workspace-storage-boundaries.md",
+      "title": "工作区存储边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "d3dad1b2a04f687cf73d.md",
+      "sourceSHA256": "271f9720fc27fd3306a52b45ea2aa7ee348b1ba6bbc6c6dfafc34a0267fa2e4d",
+      "renderSHA256": "271f9720fc27fd3306a52b45ea2aa7ee348b1ba6bbc6c6dfafc34a0267fa2e4d"
+    },
+    {
+      "path": "docs/internal-multi-replica-fixes.md",
+      "title": "预发多实例（2 pod）改造记录",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "786c761d8c03c6b63c8b.md",
+      "sourceSHA256": "f3809488b541fe0395b0401d63505b50ae04261e9dc240c46071bf73a9e762ea",
+      "renderSHA256": "f3809488b541fe0395b0401d63505b50ae04261e9dc240c46071bf73a9e762ea"
+    },
+    {
+      "path": "docs/plans/2026-07-31-workspace-access-grant-dta-trace.md",
+      "title": "工作区 DTA Token 权限与 Trace 实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "89eb52d731d09063f4c7.md",
+      "sourceSHA256": "d2a93cdb5cd3f4d80e8dada70bf414fd01e83c875ae1ecd5fb481c3d872317dd",
+      "renderSHA256": "d2a93cdb5cd3f4d80e8dada70bf414fd01e83c875ae1ecd5fb481c3d872317dd"
+    },
+    {
+      "path": "docs/plans/2026-08-03-dta-service-member.md",
+      "title": "DTA Token 普通成员身份改造实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "d5b21972cbf5adf33c27.md",
+      "sourceSHA256": "b574f9d7c375bdd8da8e82aec68b880231f592ee1f34b88c5a70afa58c380407",
+      "renderSHA256": "b574f9d7c375bdd8da8e82aec68b880231f592ee1f34b88c5a70afa58c380407"
+    },
+    {
+      "path": "docs/plans/2026-08-09-agent-a2a-inbound.md",
+      "title": "Agent 级 Inbound A2A 实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "436cf28c343b2bb07476.md",
+      "sourceSHA256": "276417ca118e0d11137ab977b7795d057d65ea0154f8e3a8a116fb70cc3a7aa5",
+      "renderSHA256": "276417ca118e0d11137ab977b7795d057d65ea0154f8e3a8a116fb70cc3a7aa5"
+    },
+    {
+      "path": "docs/plans/2026-09-02-fc-runtime-dev-loop-done.md",
+      "title": "FC Runtime 分支构建与候选沙箱切换闭环",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "4a8c4b0ac2e681f3b884.md",
+      "sourceSHA256": "0c9ffdf3f83f32960f8160f98a77e1889e6131412657fd52dac8d2ade8dcb1dc",
+      "renderSHA256": "0c9ffdf3f83f32960f8160f98a77e1889e6131412657fd52dac8d2ade8dcb1dc"
+    },
+    {
+      "path": "docs/plans/2026-09-03-fc-runtime-daemon-compat-review-done.md",
+      "title": "FC Runtime / Daemon 兼容闭环 Review",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "cf92e55367df645db22f.md",
+      "sourceSHA256": "3a78812f89b09063f44ed8898f86944af9d7c726268bae1b80c56afaa520e693",
+      "renderSHA256": "3a78812f89b09063f44ed8898f86944af9d7c726268bae1b80c56afaa520e693"
+    },
+    {
+      "path": "docs/plans/2026-09-05-coordinator-scene-window.md",
+      "title": "Coordinator Scene Window",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "c094629cf922a6c43b37.md",
+      "sourceSHA256": "cb9d79f3c3e859d05a0ea9f7463e75ef1302f335aa70ef330c73be52e06aa51b",
+      "renderSHA256": "cb9d79f3c3e859d05a0ea9f7463e75ef1302f335aa70ef330c73be52e06aa51b"
+    },
+    {
+      "path": "docs/plans/2026-09-05-dsh-runtime-plugin-evaluation.md",
+      "title": "DeepSeek Harness (DSH) 在 FDE 工作台 / dt-fde-multica 上的支持方案评估",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "575881a5976e0446f18a.md",
+      "sourceSHA256": "b32a59e154ffc2c3f892607d4de6b167e9f1f4e1411f4fcece61b8cac7869619",
+      "renderSHA256": "b32a59e154ffc2c3f892607d4de6b167e9f1f4e1411f4fcece61b8cac7869619"
+    },
+    {
+      "path": "docs/plans/2026-09-06-dsh-plugin-workspace-asset.md",
+      "title": "DSH Plugin as a Workspace asset",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "92b92f74613a41a60acb.md",
+      "sourceSHA256": "1f50f8b5e7893b6ebcc7e064ada3c837a960724afa0a82a142221ed45658f4b7",
+      "renderSHA256": "1f50f8b5e7893b6ebcc7e064ada3c837a960724afa0a82a142221ed45658f4b7"
+    },
+    {
+      "path": "docs/plans/2026-09-07-asb-capacity-live-candidates.md",
+      "title": "ASB 容量回收启动延迟优化",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "897dcfb7e52739e385b1.md",
+      "sourceSHA256": "d6022994fa333cdaabd05b4a2326466c1ba058b0dd1fd69b675c3623fdfd16b2",
+      "renderSHA256": "d6022994fa333cdaabd05b4a2326466c1ba058b0dd1fd69b675c3623fdfd16b2"
+    },
+    {
+      "path": "docs/plans/2026-09-07-runner-mcp-legacy-daemon-compat.md",
+      "title": "旧 Daemon 的 Runner MCP 兼容修复",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "fbd5641486db41f99c0e.md",
+      "sourceSHA256": "213e332fc27e39274dee47d2f6a5cd882a22a551874dae83b36da98b35db8d27",
+      "renderSHA256": "213e332fc27e39274dee47d2f6a5cd882a22a551874dae83b36da98b35db8d27"
+    },
+    {
+      "path": "docs/plans/2026-09-10-dingtalk-message-autopilot.md",
+      "title": "DingTalk message triggered automations",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "0fa86a168953aad095d4.md",
+      "sourceSHA256": "e9b544ab9d1bffcbc8ce990b52cfd20b98253b02ed3ef666efdbe2227e4267bb",
+      "renderSHA256": "e9b544ab9d1bffcbc8ce990b52cfd20b98253b02ed3ef666efdbe2227e4267bb"
+    },
+    {
+      "path": "docs/plans/2026-09-15-dsh-schedule-admission.md",
+      "title": "Persistent DSH Schedule admission",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "4c90771dad3c5ba1333e.md",
+      "sourceSHA256": "aa074d970e4dc63ac507a3a24430fe551c8f7de84af870459c3e9ed2f05ee60b",
+      "renderSHA256": "aa074d970e4dc63ac507a3a24430fe551c8f7de84af870459c3e9ed2f05ee60b"
+    },
+    {
+      "path": "docs/plans/2026-09-16-coordinator-scene-capacity-per-delegator.md",
+      "title": "场景容量改为「场景 × 委托人」，并给等待加上限",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "f34c918bdea28258ca67.md",
+      "sourceSHA256": "35343dfb52538947d0a4123ce571b732b2caa9157619f225b5ed23be16175ef9",
+      "renderSHA256": "35343dfb52538947d0a4123ce571b732b2caa9157619f225b5ed23be16175ef9"
+    },
+    {
+      "path": "docs/plans/2026-09-18-dsh-managed-restart.md",
+      "title": "DSH managed restart and Tavern acceptance",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "7e18bf27d7d15d402a51.md",
+      "sourceSHA256": "0443023ed44b67e07977ceba634a7d4d6bd61bde8cb71e87c37dfaf2224229f6",
+      "renderSHA256": "0443023ed44b67e07977ceba634a7d4d6bd61bde8cb71e87c37dfaf2224229f6"
+    },
+    {
+      "path": "docs/plans/2026-09-20-dsh-im-managed-admission.md",
+      "title": "DSH 标准会话与消息统一接入 Multica（以 IM 为首个验收）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "68bd1dddcfc2f72f5a9f.md",
+      "sourceSHA256": "6ea16cb3b405ce4690564b53f9a5c6de558b6b592c7dc1d418d4da0282092e76",
+      "renderSHA256": "6ea16cb3b405ce4690564b53f9a5c6de558b6b592c7dc1d418d4da0282092e76"
+    },
+    {
+      "path": "docs/plans/2026-09-20-dsh-standard-session-pre-acceptance.md",
+      "title": "DSH 标准会话服务预发验收",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "dff15bd87d561921ad23.md",
+      "sourceSHA256": "3aa079989a095abf2d75c3bf7740de96684aa5e89b6f4b9695cff279feb89d0c",
+      "renderSHA256": "3aa079989a095abf2d75c3bf7740de96684aa5e89b6f4b9695cff279feb89d0c"
+    },
+    {
+      "path": "docs/plans/2026-09-21-dsh-startup-evidence.md",
+      "title": "DSH startup investigation — CR 36224658",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "78c6a198c97ad90f9716.md",
+      "sourceSHA256": "88e818b17bfc0704fc887e29534cf91a6d53ce848919fc5b7017c6da716b996e",
+      "renderSHA256": "88e818b17bfc0704fc887e29534cf91a6d53ce848919fc5b7017c6da716b996e"
+    },
+    {
+      "path": "docs/plans/2026-09-22-global-model-providers.md",
+      "title": "Global model providers",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "55196a47a11e6c3d2b3e.md",
+      "sourceSHA256": "d208dbdf53d3f5aa849c42411335b20f46d6b703e0699e3ed93efed3b009c7b5",
+      "renderSHA256": "d208dbdf53d3f5aa849c42411335b20f46d6b703e0699e3ed93efed3b009c7b5"
+    },
+    {
+      "path": "docs/plans/2026-09-24-dsh-native-without-platform-task.md",
+      "title": "删除 DSH 原生页面与历史 Host 恢复扫描",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "910ecf45491dbc82f91d.md",
+      "sourceSHA256": "48667ab84353a4805f120f3387dd2c2a8c9f0bfa111e6c1ea9c1270dbc39c783",
+      "renderSHA256": "48667ab84353a4805f120f3387dd2c2a8c9f0bfa111e6c1ea9c1270dbc39c783"
+    },
+    {
+      "path": "docs/plans/2026-09-26-runtime-start-quickwins.md",
+      "title": "PRI-47: bounded runtime startup recovery",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "9ddfd8329badef2d3bdb.md",
+      "sourceSHA256": "aa6882f32c9c374d1aa12fae70b864db8179b661c26fdb1c74cddbdbab0e0895",
+      "renderSHA256": "aa6882f32c9c374d1aa12fae70b864db8179b661c26fdb1c74cddbdbab0e0895"
+    },
+    {
+      "path": "docs/plans/2026-09-27-performance-rollout.md",
+      "title": "PRI-47: one performance rollout with agent isolation",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "5c1a55142bd2e0903ccc.md",
+      "sourceSHA256": "2d8c7ff4db6c67ed4333413c856b1a868034ca226ef49dfde76ef657af3f38c7",
+      "renderSHA256": "2d8c7ff4db6c67ed4333413c856b1a868034ca226ef49dfde76ef657af3f38c7"
+    },
+    {
+      "path": "docs/plans/2026-09-29-a2a-deap-scene-identity-forward.md",
+      "title": "DEAP A2A：场域标准化、员工身份绑定与生产→预发转发",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "c959e1fc7fe8e3ed3e3f.md",
+      "sourceSHA256": "5b00bb96a63eb355c01954448ee23c30c86b1f2d06cb7f3616ad52ff7152ff3d",
+      "renderSHA256": "5b00bb96a63eb355c01954448ee23c30c86b1f2d06cb7f3616ad52ff7152ff3d"
+    },
+    {
+      "path": "docs/plans/2026-09-30/employee-loop-design.md",
+      "title": "EmployeeLoop：事件、事项与执行的统一协调方案",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "20733d7fe513d2c2e1f3.md",
+      "sourceSHA256": "849ba74acf777d9d80132846675d3a54dd8a13554884277a7ead3b051b5f4595",
+      "renderSHA256": "9e06bc850ed309f438b2530de49d42cf127625ef270fe95228d8bf899aabbb6e"
+    },
+    {
+      "path": "docs/plans/2026-09-30/employee-loop-overview.md",
+      "title": "EmployeeLoop 方案导读：直接复用 Go BotLoop，成为能持续办事的员工",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "1c4ebf0f1d27bc51cdd4.md",
+      "sourceSHA256": "d703e8c6358638453c4a60c0f7370487c3c54783b860757258561f007e3f90e2",
+      "renderSHA256": "ef1631bb0256a6cd9032916680961472e693dcd6c76546e2e28059a47d95dfd5"
+    },
+    {
+      "path": "docs/plans/2026-10-01-context-builder-tenants.md",
+      "title": "多场域配置：租户、三级场域与 Context Builder（2026-10-01）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "1ecd260ca035c44b0ab6.md",
+      "sourceSHA256": "50f77e468ac049903e5c1f10f207563304d218d5cf52448d67c2408dc9b0a866",
+      "renderSHA256": "50f77e468ac049903e5c1f10f207563304d218d5cf52448d67c2408dc9b0a866"
+    },
+    {
+      "path": "docs/plans/2026-10-01/employee-loop-delivery-plan.md",
+      "title": "EmployeeLoop R5 实施拆解",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "23ebc866bd953f4c768a.md",
+      "sourceSHA256": "bda5d9eec07811fa588638b221a6ffa75e80901e1e35798993cead7ac59bfa68",
+      "renderSHA256": "bda5d9eec07811fa588638b221a6ffa75e80901e1e35798993cead7ac59bfa68"
+    },
+    {
+      "path": "docs/plans/2026-10-02-scene-routines.md",
+      "title": "场域例行任务与会话内场域配置（2026-10-02）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "b8ceb1f7b8966cc8e9f9.md",
+      "sourceSHA256": "98a88105875682a1adda765e540418171c88c7ca219eab08a8f1716f684e3d63",
+      "renderSHA256": "98a88105875682a1adda765e540418171c88c7ca219eab08a8f1716f684e3d63"
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-delivery-log.md",
+      "title": "EmployeeLoop R2 实施与交付记录",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "ac2f612dac92b9fd6e1a.md",
+      "sourceSHA256": "25394b8e0d64fb78671de2a71cb2aef0499406fd798160f6b12d5bca3c146c06",
+      "renderSHA256": "25394b8e0d64fb78671de2a71cb2aef0499406fd798160f6b12d5bca3c146c06"
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-task-service-delivery.md",
+      "title": "EmployeeLoop 与 Task Service 开发路线",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "7bc7b56bf01e8ab7b632.md",
+      "sourceSHA256": "c2fefd11e8f0e462b12886b0605d9e77ef73ef9e1e4a0f301e32575a71937243",
+      "renderSHA256": "c113d3067a1f83c4cb183846642d503f81cf743b7436bb0e7b2251866fc49cdb"
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-task-service-design.md",
+      "title": "EmployeeLoop 与 Task Service：独立目标、双派发后端、可切换处理循环",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "89fb610c33cac9ff88bf.md",
+      "sourceSHA256": "11f5c6bffd645798bbb2411e892324300db122d293bd7d4106e4cd131caa29e7",
+      "renderSHA256": "77e369c2e9e76f36b59f84a2601766fd96bb1ad6dad01866be0f8dbda491c464"
+    },
+    {
+      "path": "docs/plans/2026-10-02/unified-env-forwarding.md",
+      "title": "统一线上入口转发层",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "270ecd0885ae213dc345.md",
+      "sourceSHA256": "1b13a0c426f8fb681e5f6216c9e8af511f9295881f46ce2e812a9237887ae59c",
+      "renderSHA256": "1b13a0c426f8fb681e5f6216c9e8af511f9295881f46ce2e812a9237887ae59c"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-cron-task-service.md",
+      "title": "场域 Cron 接入 Employee Task Service",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "6205c9b7f8363f234405.md",
+      "sourceSHA256": "fbd9ea29ee02c0f972f71efc2db488aad8a33e7d40ff54ddbebe5b128586a132",
+      "renderSHA256": "fbd9ea29ee02c0f972f71efc2db488aad8a33e7d40ff54ddbebe5b128586a132"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-execution-event.md",
+      "title": "Employee Execution Event 实现计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "ceefb7dc36a506d2455d.md",
+      "sourceSHA256": "54aae03df2ca53159fe25cdf7669acd4f12ab7f5fcabbcade2029e33730a596b",
+      "renderSHA256": "54aae03df2ca53159fe25cdf7669acd4f12ab7f5fcabbcade2029e33730a596b"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/00-context-and-contracts.md",
+      "title": "共享上下文、已完成基线与不可破坏合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "d102b2c1741cd9e2b136.md",
+      "sourceSHA256": "c778b4da63145d392e0d6a35ed3a61e5b9f2ed65e6fff3e019272d221c3e12e9",
+      "renderSHA256": "8ff532332f4c5b34d13d74584012b47bcb116c3a32d20af89df80a5904e9a710"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md",
+      "title": "P 包：独立 Task 生命周期、内部唤醒与共享接缝",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "be5cbb4383a6b19b61d0.md",
+      "sourceSHA256": "bb1793218aaedaed946299cae1b986b0ccf40961a8461b4a8e6d50c8cf4298cc",
+      "renderSHA256": "a9ce94004cc45ef50180a81195aa38f5f758aa6a22f6a1945ab2f64cb01beb5e"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md",
+      "title": "B 包：场域 Cron → 独立 Task → 执行与通知",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "d18b7edbfd558bfff8ad.md",
+      "sourceSHA256": "47c7f6a5f9df52f312043713d0048911e0d897d907f98e285755788e0fec997b",
+      "renderSHA256": "4ed363060594621a0c5c307525d694b9a1c3caee42e5e22458c9ccd28039c678"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md",
+      "title": "F 包：Webhook 可信输入、冻结受理与 Employee 执行",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "e7142d51cc7732d35ba6.md",
+      "sourceSHA256": "bb46e8da43dfe1e7022430d75363164ac1e0743e582bf27ab30dacbb1af240d0",
+      "renderSHA256": "39374bbdef5a8620b16fbc99000fbc8e4191f92a6dbeaf39ae88e6e83ef41d1b"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+      "title": "执行板：本机环境、分工、编号预留与发布循环",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "c766ae2651e930763966.md",
+      "sourceSHA256": "7f70c910beac755b883af7d45df391c4febfa7d6779d40fb015d515a12cfe4df",
+      "renderSHA256": "28942f89b8ae9267270c065c8b8ed0b5e6f9c62e281a8cb1b1f73af9e10010d8"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/README.md",
+      "title": "EmployeeLoop 后端完整交付与并行开发计划",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true,
+      "file": "e9466b7ed0b47d44e38f.md",
+      "sourceSHA256": "8747eecc40b387d8d19c38337f0534c2505073a25544e7c32f59d9145f20b5af",
+      "renderSHA256": "7cb75e0aabf280dab2107d4126bb71dd9134d7db9f541ad6a902b48a2797ca4e"
+    },
+    {
+      "path": "docs/security/asb-dws-network-audit.md",
+      "title": "DWS network dependency audit",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true,
+      "file": "23bbe364ed098393bbb9.md",
+      "sourceSHA256": "9e2472e7c8d2c8f1d5d28bb662123b62fa124ee46ca637ebeb42ed457e55436d",
+      "renderSHA256": "9e2472e7c8d2c8f1d5d28bb662123b62fa124ee46ca637ebeb42ed457e55436d"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-asb-enterprise-runtime-design.md",
+      "title": "ASB 企业私有化 Runtime — 设计",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true,
+      "file": "fb209bd69ea73b295772.md",
+      "sourceSHA256": "d93b6d8e30652adc96e413c4c2261d8808df2166cbfb5b81c96c552ca99ece5f",
+      "renderSHA256": "d93b6d8e30652adc96e413c4c2261d8808df2166cbfb5b81c96c552ca99ece5f"
+    },
+    {
+      "path": "docs/evals/p0-golden.md",
+      "title": "20 条 P0 Golden 组合回归",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": false,
+      "file": "a380f582eacf0714aca5.md",
+      "sourceSHA256": "bcf201f968eec0a574cbdc754099d1e42a9d1cb4ac7b864868885328fdb56ebe",
+      "renderSHA256": "bcf201f968eec0a574cbdc754099d1e42a9d1cb4ac7b864868885328fdb56ebe"
+    },
+    {
+      "path": "docs/evals/evaluation-tools.md",
+      "title": "评测工具",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "f0905b40061dfd2e0e49.md",
+      "sourceSHA256": "c218610c2c69194c51fe0d023fcd44d4c31b16cea48aa6d91fa9aa6a0043089c",
+      "renderSHA256": "bcec292b6cb346919d3625008b46ea59e9865edcbaf1ed47e1c1cce5a19496c2"
+    },
+    {
+      "path": "docs/evals/evaluation-runtime.md",
+      "title": "评测运行时",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "6c9ef093675ce30c2049.md",
+      "sourceSHA256": "acfcdfc7623d2628bdd3c8392004b5ee0c95b54365683db1b76d7bcf3e056922",
+      "renderSHA256": "9ec4bce341f7c4cdb35b3c9050509227b22974ec2de1edabe03779777eee72d5"
+    },
+    {
+      "path": ".agents/skills/tag-eval/SKILL.md",
+      "title": "Tag eval round",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false,
+      "file": "9f061ce068a0e7f5150c.md",
+      "sourceSHA256": "d702c59f9663ce6faa80539e2f6936a4463010592f8165d9fbc0b40d48479864",
+      "renderSHA256": "d702c59f9663ce6faa80539e2f6936a4463010592f8165d9fbc0b40d48479864"
+    },
+    {
+      "path": ".agents/skills/tag-eval/references/harness-source-map.md",
+      "title": "Employee e2e harness source map",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "08dab6fd24298d232382.md",
+      "sourceSHA256": "ba26f58784c35ded9236e6b7bea79291d16cf46add4ca28f396861c642002086",
+      "renderSHA256": "ba26f58784c35ded9236e6b7bea79291d16cf46add4ca28f396861c642002086"
+    },
+    {
+      "path": "docs/employee-collection-late-context.md",
+      "title": "关闭邀请的参与者场域事实",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "88f3fa80ee29493e29d6.md",
+      "sourceSHA256": "2495d9730967d7910de61fc471f4e07e70e61e0e7e86a3b2e8f13f96e27627cc",
+      "renderSHA256": "2495d9730967d7910de61fc471f4e07e70e61e0e7e86a3b2e8f13f96e27627cc"
+    },
+    {
+      "path": "docs/employee-delivery-workflow.md",
+      "title": "Employee / Tag 开发、发布与真实验收工作流",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "1457c43e41a7d624a013.md",
+      "sourceSHA256": "79afd971766df667d75756c968de2e5eb1e7ee7c46f2a7e673362cb5f77d074f",
+      "renderSHA256": "ffe53d50f1b359d09eedcc7298e803cacc42d89defa1786c8619b0a6fb4c4569"
+    },
+    {
+      "path": "docs/employee-memory-capture.md",
+      "title": "Employee 记忆写入、查询与遗忘（现行合同）",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "579eb68ca71968624108.md",
+      "sourceSHA256": "e5b1b1824ec944633fd0cb33061110046b051fabe3971e81e1fde85e7c959562",
+      "renderSHA256": "e5b1b1824ec944633fd0cb33061110046b051fabe3971e81e1fde85e7c959562"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/12-memory-design.md",
+      "title": "EmployeeLoop 记忆与上下文设计（12-memory-design）",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true,
+      "file": "00171b6608ef4cd7f981.md",
+      "sourceSHA256": "dcd4258653e9b54314b7c9d6b6ea0e8381c301ba167c13e22f7fb16f5ebeb29c",
+      "renderSHA256": "dcd4258653e9b54314b7c9d6b6ea0e8381c301ba167c13e22f7fb16f5ebeb29c"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/13-plan-gap-audit.md",
+      "title": "交付 Plan、R5 原设计与 PRI-78 的差距核对",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "3d9e2bbed326a25952e0.md",
+      "sourceSHA256": "87d8f5e348f30d61a6cf2ee8bf636a51921fe24b90c2f0671dec80eb0e0368f3",
+      "renderSHA256": "152037482f95f9eebfb7f4977a0afabd0d8c06f15f887544a5dc7145c430b2cd"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/15-codex-resume-assessment.md",
+      "title": "Codex 接续核对与执行计划",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "72cd1acc554ff451fd4a.md",
+      "sourceSHA256": "abc920613ca91a97ce0eeb04b515f8f3ab1dd003df8ded134640d20ae743b021",
+      "renderSHA256": "fb305cd5eb0497f1b87fc5271e382679bf616918c4297ce4858d68dd2098f1cf"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/16-service-retry-repair.md",
+      "title": "四条 service 失败修复切片",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true,
+      "file": "04a7170b5f46829d0975.md",
+      "sourceSHA256": "fa852ee1fcaf178d66d72197e6c3abfca076c469b0c275ce5e51596c8a70de4e",
+      "renderSHA256": "c13989a09f1fb00a727cf84a7b87cce9a465a1117152ff39215e12daa03626db"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/17-m8-first-canary.md",
+      "title": "M8 首轮真实群摄入与主动接话证据",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "784b7790ca5548df40d9.md",
+      "sourceSHA256": "16b8f0f5ba05d84315891a4a605d0d0a070ba076de96cdbeb52504058b84766b",
+      "renderSHA256": "16b8f0f5ba05d84315891a4a605d0d0a070ba076de96cdbeb52504058b84766b"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/18-closeout.md",
+      "title": "第五批接续交付收口与最终验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "c84320adbade66b0bed4.md",
+      "sourceSHA256": "f689dd39d4811e48509295c7e3d3b45dcb54a5e062e7a147b94b880c7e8e1458",
+      "renderSHA256": "f689dd39d4811e48509295c7e3d3b45dcb54a5e062e7a147b94b880c7e8e1458"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/19-digest-native-output-repair.md",
+      "title": "场域要点 native 输出修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "83a1ea16dfa344f8541b.md",
+      "sourceSHA256": "887039c6a52b392c286f35747b16a658b37a779484efd45f9bdf03665e623c5c",
+      "renderSHA256": "887039c6a52b392c286f35747b16a658b37a779484efd45f9bdf03665e623c5c"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/19-foreground-output-contract.md",
+      "title": "DS-09 前台输出合同修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "38efd270acd481633716.md",
+      "sourceSHA256": "17cc585052aacba3d73c48cd753b32a9f850e03e25ad7b3580e105e4a6c17a34",
+      "renderSHA256": "17cc585052aacba3d73c48cd753b32a9f850e03e25ad7b3580e105e4a6c17a34"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/20-withdrawn-reply-provenance.md",
+      "title": "M5 遗忘后的已送达回复来源过滤",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "aa82c7a3e8bd89a00e1d.md",
+      "sourceSHA256": "5e5a0c8370daf08b4d9d6dd6ffbebe164c9241431bd93515175d737a10c64b7f",
+      "renderSHA256": "d2b28f5ba95b27d3d94aa9dde252845c1cbe6ca95cb55d5c8df02a3edee5c94c"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/21-reply-ancestor-closure.md",
+      "title": "回复撤销来源的跨窗祖先闭合",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "55170d9a54d3a5f608ef.md",
+      "sourceSHA256": "f29369e8ffd4944aaf4e8f3bdda8f9aaa7fafba8b9c03155d7111240139aafde",
+      "renderSHA256": "f29369e8ffd4944aaf4e8f3bdda8f9aaa7fafba8b9c03155d7111240139aafde"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/22-assistant-quarantine.md",
+      "title": "历史祖先失败的局部隔离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "7c8a24fc874b66642b97.md",
+      "sourceSHA256": "80a6dad62592428c7c5a988129f3a9f562f15a79a2bbdad0c5f1901ec9efe5b8",
+      "renderSHA256": "80a6dad62592428c7c5a988129f3a9f562f15a79a2bbdad0c5f1901ec9efe5b8"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/22-collection-cancel.md",
+      "title": "COL-03 原生取消收集接线",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "d7866cc6d5eba248dc34.md",
+      "sourceSHA256": "7e8410b3a2692c2775de858ecefca4d29e51f805b9fbd21c174f434d9620733f",
+      "renderSHA256": "7e8410b3a2692c2775de858ecefca4d29e51f805b9fbd21c174f434d9620733f"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/25-task-source-reference.md",
+      "title": "BASE-TASK 同目标错接的来源关联修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "87501d361db20d69f08f.md",
+      "sourceSHA256": "8495a84f4faa176d296cd995d4bf61b0f958fd165495a95318164fcd91eb607a",
+      "renderSHA256": "8495a84f4faa176d296cd995d4bf61b0f958fd165495a95318164fcd91eb607a"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/26-task-execution-inheritance.md",
+      "title": "BASE-TASK 明确追加工作与执行方法继承",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "9b8c16791c4276918b59.md",
+      "sourceSHA256": "960cd8705d377d3b749651fb48571221b7d0c093a1c0277d8197cc709a30a10f",
+      "renderSHA256": "960cd8705d377d3b749651fb48571221b7d0c093a1c0277d8197cc709a30a10f"
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-golden20-baseline.md",
+      "title": "Qwen-Real GoldenCase-20 基线（预发，2026-10-03）",
+      "category": "evals",
+      "kind": "report",
+      "historical": true,
+      "file": "939e60e90c45958c061d.md",
+      "sourceSHA256": "5828b975524558778b065e2ba6c127f16c0114692261850e25095dd79046b19c",
+      "renderSHA256": "5828b975524558778b065e2ba6c127f16c0114692261850e25095dd79046b19c"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-collection-guidance-modes.md",
+      "title": "COL-03 关闭邀请提示模式隔离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "8df0781de991e40a872d.md",
+      "sourceSHA256": "85438e4823d100b38cdd9bad8d0c77c9d3bb048746772db2d4604d379e7896e5",
+      "renderSHA256": "85438e4823d100b38cdd9bad8d0c77c9d3bb048746772db2d4604d379e7896e5"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-collection-late-context.md",
+      "title": "COL-03 取消后迟到答复的本人上下文修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "bf4fc4abe1ac25f1e786.md",
+      "sourceSHA256": "dfb3f19bfd0cbc57aa5bc109450a22eea44948cbe1c0e399e5615b1be8bb4ea7",
+      "renderSHA256": "dfb3f19bfd0cbc57aa5bc109450a22eea44948cbe1c0e399e5615b1be8bb4ea7"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-evidence-quality.md",
+      "title": "当前证据范围与选择性清单的有限质量修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "f838682ae999b3b92fb3.md",
+      "sourceSHA256": "0bff55e96ea771e6066fad0ebd00987f826763d8d824d2d0e8f85cba604e19eb",
+      "renderSHA256": "0bff55e96ea771e6066fad0ebd00987f826763d8d824d2d0e8f85cba604e19eb"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-g5-deliverable.md",
+      "title": "G5 新交付物与已有结果解释的模型决策修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "3f1435fa7ac0ff04d750.md",
+      "sourceSHA256": "5f704ca80d0935e644598b129ba09adc69c87d6884473828335c96860efc61b4",
+      "renderSHA256": "5f704ca80d0935e644598b129ba09adc69c87d6884473828335c96860efc61b4"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-private-withdrawal.md",
+      "title": "DM 本人跨源私有记录的精确撤销投影",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "5059274ee438bab7a105.md",
+      "sourceSHA256": "8b043a74c32bbf846825703ae5115147ec8b68e313f08c030049467b816af6e8",
+      "renderSHA256": "8b043a74c32bbf846825703ae5115147ec8b68e313f08c030049467b816af6e8"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-release-safety.md",
+      "title": "Employee 发布安全修复切片",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true,
+      "file": "2a302e10266165e46b8c.md",
+      "sourceSHA256": "5eedfe8eb5ca9fd38e38f9d6284cd1f0d3555e0893dab2ed56b9589e19866b16",
+      "renderSHA256": "5eedfe8eb5ca9fd38e38f9d6284cd1f0d3555e0893dab2ed56b9589e19866b16"
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-social-acknowledgements.md",
+      "title": "轻赞与致谢的自然回应合同",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true,
+      "file": "0f33e2ff82762a07b335.md",
+      "sourceSHA256": "2c28a6e71fbec299f89641ad20e085aeecf27c4905af807e99983a2d77ec546f",
+      "renderSHA256": "2c28a6e71fbec299f89641ad20e085aeecf27c4905af807e99983a2d77ec546f"
+    },
+    {
+      "path": "docs/public-forwarding-ingress.md",
+      "title": "独立公共转发入口",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "2a8de674b448f9c7be78.md",
+      "sourceSHA256": "14712c2f149d4eb8ff2eca1272de36de4bf8d5f462e9d3720746878ce5ffe15f",
+      "renderSHA256": "14712c2f149d4eb8ff2eca1272de36de4bf8d5f462e9d3720746878ce5ffe15f"
+    },
+    {
+      "path": "docs/task-retry-concurrency.md",
+      "title": "Task 失败重试的事务与幂等边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "bcf2892b865bbd2260f4.md",
+      "sourceSHA256": "c9d50b491a7db3b3bb290457c54db4fdef8dc400d3714ac1c820fb8ec32fbca0",
+      "renderSHA256": "c9d50b491a7db3b3bb290457c54db4fdef8dc400d3714ac1c820fb8ec32fbca0"
+    },
+    {
+      "path": "docs/webhook-source-release-safety.md",
+      "title": "Webhook 冻结来源的发布与回滚边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false,
+      "file": "273521be9e8d8c218c7d.md",
+      "sourceSHA256": "d325652f22c4d6faebe9cf914ef0f6117111bdd8f36c8378158dbba614ed96f5",
+      "renderSHA256": "d325652f22c4d6faebe9cf914ef0f6117111bdd8f36c8378158dbba614ed96f5"
+    },
+    {
+      "path": "scripts/employee-e2e/CLOSEOUT.md",
+      "title": "第五批 harness 收尾能力与离线准入",
+      "category": "tools",
+      "kind": "report",
+      "historical": true,
+      "file": "7c673005447afa2022ea.md",
+      "sourceSHA256": "01cd5598c12cb109f12272efe120476e1ada808e3ad709147436da8a7b5c9cb2",
+      "renderSHA256": "01cd5598c12cb109f12272efe120476e1ada808e3ad709147436da8a7b5c9cb2"
+    },
+    {
+      "path": "scripts/employee-e2e/README.md",
+      "title": "EmployeeLoop real-IM e2e harness",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "776855d7323fe060c6d6.md",
+      "sourceSHA256": "a1deee7b54d9d7bfa2891009ef92c24a8d5905c2608188d5edf539d77b1db8b5",
+      "renderSHA256": "1eb3cad4a14f6c4de0c5e9f967912b2e98b8171561781ddc9013e9897718ff87"
+    },
+    {
+      "path": "scripts/employee-e2e/ROLES.md",
+      "title": "Roles for Tag evaluation",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false,
+      "file": "5a44321bfc926bcba0e0.md",
+      "sourceSHA256": "3400c241a102dc02d70d1eefacdc9ad1a345cd7321ba968f7f22c4e25788962d",
+      "renderSHA256": "3400c241a102dc02d70d1eefacdc9ad1a345cd7321ba968f7f22c4e25788962d"
+    },
+    {
+      "path": "scripts/employee-e2e/TOOLS.md",
+      "title": "Tools for Tag evaluation",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false,
+      "file": "aaf4dbc168814ef331b4.md",
+      "sourceSHA256": "2801f0017459e3c8da51a8dc21500e4b10f4d2490fe7c124b44ea05dd5b90367",
+      "renderSHA256": "343a967c863a02ab52b0dd641191ffaf3bd25d706fed3995aa485c63732c6784"
+    },
+    {
+      "path": "scripts/employee-e2e/cases/golden20.md",
+      "title": "20 条 GoldenCase（聊天行为基本功）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": false,
+      "file": "d7666fe734744acdb9da.md",
+      "sourceSHA256": "6ac50d9c8fa745b7f546135fb04aabca85e2572610f770623f175556d72db900",
+      "renderSHA256": "6ac50d9c8fa745b7f546135fb04aabca85e2572610f770623f175556d72db900"
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/SUITE.md",
+      "title": "EmployeeLoop 真人感回归套件 v2",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "8272d39d5427a91a8880.md",
+      "sourceSHA256": "9c68017fa669d997555dedd20ad47820ad341a2268ecc715835f3266a6500547",
+      "renderSHA256": "9c68017fa669d997555dedd20ad47820ad341a2268ecc715835f3266a6500547"
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/_build/gaps.md",
+      "title": "harness-gaps：cases-v2 对 employee-e2e harness 的需求 · 生成模板",
+      "category": "tools",
+      "kind": "spec",
+      "historical": true,
+      "file": "68fe22ef83028e91d62f.md",
+      "sourceSHA256": "ac47afd088539817514525e18925d7c5115203495636ed51fce9167712d6cf06",
+      "renderSHA256": "ac47afd088539817514525e18925d7c5115203495636ed51fce9167712d6cf06"
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/_build/head.md",
+      "title": "EmployeeLoop 真人感回归套件 v2 · 生成模板页首",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false,
+      "file": "918ccce36155deea4e09.md",
+      "sourceSHA256": "4c6e2518bc25f42e81ef1e2da9616ed9b18bbcb3e6a6fa1a6674e00c85308bcd",
+      "renderSHA256": "4c6e2518bc25f42e81ef1e2da9616ed9b18bbcb3e6a6fa1a6674e00c85308bcd"
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/harness-gaps.md",
+      "title": "harness-gaps：cases-v2 对 employee-e2e harness 的需求",
+      "category": "tools",
+      "kind": "spec",
+      "historical": true,
+      "file": "37206e59400cfb9a700d.md",
+      "sourceSHA256": "410d7c9e095cf67a870a1eddf341b45618235d9259ce7df14b3925c03b53827b",
+      "renderSHA256": "410d7c9e095cf67a870a1eddf341b45618235d9259ce7df14b3925c03b53827b"
+    }
+  ]
+}

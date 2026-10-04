@@ -1,0 +1,1383 @@
+{
+  "assets": [
+    {
+      "path": "docs/dingtalk-inbound-chat-prompt-spec.md",
+      "title": "钉钉入站消息的 Chat 提示词规格",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/evals/README.md",
+      "title": "20 个黄金测试",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/evals/office-scenarios.md",
+      "title": "通用办公场景评测定义",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/inbound-coordinator-loop.md",
+      "title": "Coordinator 现行行为合同",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/10-delivery-standard.md",
+      "title": "最终交付标准与实现优化方针",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/plans/2026-10-04-project-eval-catalog.md",
+      "title": "项目评测目录与只读 HTML 展示",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/task-steer.md",
+      "title": "Task steer",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/evals/20260910-generic-proactive-cases.md",
+      "title": "Coordinator 模型回放用例（26 个）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/evals/assoc-scene-eval-runbook.md",
+      "title": "Assoc scene recall eval runbook",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-08-17-dingtalk-emoji-reaction-docking.md",
+      "title": "表情回复事件订阅与消费对接方案（Multica 侧）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-08-31-event-scene-issue-task-assoc.md",
+      "title": "Event / Scene / Issue-Task 关联与拟人召回",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-e2e.md",
+      "title": "Coordinator 场域记忆：预发 e2e 剧本",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-landing.md",
+      "title": "Coordinator 场域记忆落地说明",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-02-coordinator-scene-memory-takeover.md",
+      "title": "TakeOver：Coordinator 场域记忆 MVP",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-05-coordinator-window-e2e-cases.md",
+      "title": "Coordinator window e2e cases",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-collect-window.md",
+      "title": "Coordinator collect 与后台等待分离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-finish-outcomes.md",
+      "title": "Coordinator Finish 展示实际任务去向",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-coordinator-progressive-context.md",
+      "title": "Coordinator 行为合同与渐进式上下文改造提案",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-digital-employee-response-actions.md",
+      "title": "数字员工统一响应 Action 与 AI 标识控制",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-response-actions-sandbox-verification.md",
+      "title": "东翔测试号真实沙箱验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-scene-memory-pagination.md",
+      "title": "场域记忆分页恢复与预发发布",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-08-unified-response-http-fix.md",
+      "title": "统一响应开启后未回钉钉：HTTP 入站修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-08-yes-means-source-not-more-drafts.md",
+      "title": "Coordinator 只做意图与调度，派发时把意图写清楚",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-closed-actions.md",
+      "title": "Coordinator 有限动作、协调视图与短合同",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-prefetch.md",
+      "title": "Coordinator 简化优化：Host 前置必需召回",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-scope-and-finish.md",
+      "title": "Coordinator 上下文减重与终结校验",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-coordinator-target-regression.md",
+      "title": "指定预发 Agent 的真实 badcase 与读取能力回归",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-proactive-conversation-release.md",
+      "title": "Proactive conversation cutover",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-10-coordinator-decline-boundary.md",
+      "title": "Coordinator decline 边界来源一致性修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-10-coordinator-history-prefetch.md",
+      "title": "Coordinator 历史预取、轻量问候免审与代问答复转告",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-10-generic-proactive-semantics.md",
+      "title": "主动处理的通用语义修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-14-coordinator-invented-access-limit.md",
+      "title": "Coordinator 目录/记忆伪造权限",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-14-coordinator-same-kind-batch.md",
+      "title": "Coordinator 同类批量变更被误拆",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+      "title": "Coordinator 连续对话与可靠回复优化",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-destination-e2e.md",
+      "title": "Coordinator destination e2e (冬翔 → 东翔测试)",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-15-coordinator-receiving-identity.md",
+      "title": "钉钉接收身份与终结检查修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-16-dingtalk-trigger-quoted-reply.md",
+      "title": "钉钉触发消息引用回复修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-21-coordinator-user-decision-implementation.md",
+      "title": "Coordinator 发起人决策模式实施状态",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-foreground-boundary.md",
+      "title": "EmployeeLoop 前台与后台的边界：自管理、派发与工具 MCP 化",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-interaction-continuity.md",
+      "title": "EmployeeLoop 交互连续性",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+      "title": "A 包：跨场域输入、等待与一次原场域汇总",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md",
+      "title": "C 包：真实进展、停滞 episode 与主动跟进",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md",
+      "title": "D 包：附件理解、图片、引用定位与轻反馈",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md",
+      "title": "G 包：证据验证、持久提炼、真实复用与受控晋级",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+      "title": "EmployeeLoop 预发验收记录",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-parity-acceptance.md",
+      "title": "EmployeeLoop 执行面与场域对齐验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-memory-capture.md",
+      "title": "Employee 私有记忆写入与纠正 Implementation Plan",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-07-prod-scene-memory-investigation.md",
+      "title": "FDE 教练线上场域记忆重试排查",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-08-feidi-daily-inspection.md",
+      "title": "菲迪问答、Coordinator 与场域记忆巡检",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-closed-actions.md",
+      "title": "Coordinator 有限动作与上下文控制",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-prefetch.md",
+      "title": "Coordinator 本轮简化：Host 预取当前场域",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-scope-and-finish.md",
+      "title": "Coordinator 上下文减重与派发保护",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-09-coordinator-target-regression.md",
+      "title": "Coordinator 生产病例回归与预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-10-dws-auth-status-recovery.md",
+      "title": "Coordinator钉钉快回复缺失：根因、修复与实测",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+      "title": "UID 精确识别与连续对话预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-16-coordinator-reply-latency-e2e.md",
+      "title": "Coordinator 社交整理延迟改动 — 预发实时 E2E",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md",
+      "title": "钉钉触发消息引用回复预发验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/aone-deploy/SKILL.md",
+      "title": "Aone Deploy & Operations",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-coordinator-sls/SKILL.md",
+      "title": "查 Coordinator 推理（SLS）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-daily-qa/SKILL.md",
+      "title": "日常问答巡检",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-daily-qa/references/coordinator-regression.md",
+      "title": "Coordinator 冻结回放与预发验收",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-fde-llm-trace/SKILL.md",
+      "title": "排查 FDE教练 LLM 调用",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-langfuse-trace/SKILL.md",
+      "title": "用 id 查 Langfuse trace",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/inspect-langfuse/SKILL.md",
+      "title": "查 Langfuse（Coordinator / 沙箱闭环）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/langfuse/SKILL.md",
+      "title": "Langfuse（本仓）",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": "docs/agent-message-router-observability-contract.md",
+      "title": "Agent Message Router 只读观测契约",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/dingtalk-response-actions.md",
+      "title": "数字员工响应动作与投递合同",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/internal-mcp-connectors.md",
+      "title": "Internal MCP connectors",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/langfuse-observability.md",
+      "title": "Langfuse observability",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/llm-trace.md",
+      "title": "LLM trace delivery",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/local-runner-mcp-mounts.md",
+      "title": "Local Runner MCP mounts",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/multica-mcp-chat-send.md",
+      "title": "Multica 自托管 MCP：Chat 续写协议",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/multica-mcp-client-setup.md",
+      "title": "Multica MCP 客户端接入指南",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/operations/router-callback-dws-delivery.md",
+      "title": "Router callback reply delivery",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+      "title": "I/Q 包：接线、独立验收、预发与完整交付",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/semantica-mcp-relay.md",
+      "title": "Semantica MCP relay in Multica",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/workspace-mcp-links.md",
+      "title": "Workspace MCP connections in Settings",
+      "category": "tools",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/SKILL.md",
+      "title": "Scene Memory e2e",
+      "category": "tools",
+      "kind": "skill",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/create-scene.md",
+      "title": "造 Scene",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/daemon-recall.md",
+      "title": "可选 E：Daemon 按场域召回",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/reset-memory.md",
+      "title": "/reset-memory",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/scene-memory-e2e/references/scene-window-plays.md",
+      "title": "Coordinator 场景窗：预发固定场景",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/verify-scene-memory-pre/SKILL.md",
+      "title": "已迁移",
+      "category": "tools",
+      "kind": "skill",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-08-11-agent-mcp-issue-backed.md",
+      "title": "Agent MCP Issue-backed Delegation 计划",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-09-feidi-daily-inspection.md",
+      "title": "菲迪日常巡检与可观测性改进",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-10-dws-execution-recovery.md",
+      "title": "Coordinator受理回复真实投递与文案收口",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-20-workspace-filesystem.md",
+      "title": "工作区文件系统：统一列表、按目录分页、读写隔离",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-25-workspace-mcp-coverage.md",
+      "title": "Workspace MCP CLI coverage and rollout",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-30-internal-mcp-domain-only.md",
+      "title": "Internal MCP 按域名接入",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-direct-artifacts.md",
+      "title": "Direct 文件产物实施计划",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/09-agent-handoff.md",
+      "title": "分派、接手与交付模板",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/SKILL.md",
+      "title": "FC Runtime development loop",
+      "category": "runtime",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/common-cases.md",
+      "title": "Common FC Runtime development cases",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/daemon-compatibility.md",
+      "title": "FC sandbox and persistent local Daemon compatibility",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/fc-runtime-dev-loop/references/workflow.md",
+      "title": "FC Runtime candidate workflow contract",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/agent-dispatch-v2-execution-contract.md",
+      "title": "Agent Dispatch V2 Execution Contract",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/agent-event-trigger.md",
+      "title": "Agent event trigger",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/agent-scene.md",
+      "title": "Agent work scene (AgentScene, sceneid)",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/asb-capacity-coordination.md",
+      "title": "ASB capacity coordination",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/context-capabilities.md",
+      "title": "Context capabilities: scene and personal connectors and skills",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/dingtalk-account-binding-router-contract.md",
+      "title": "DingTalk Account Binding Router Contract",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/employee-loop.md",
+      "title": "EmployeeLoop 当前实现合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/environment-forwarding.md",
+      "title": "线上入口与预发处理",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/event-scene-router.md",
+      "title": "Event admission and scene routing (PRI-78)",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/fc-sandbox-lifecycle.md",
+      "title": "FC/E2B 沙箱寿命",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/internal-aone-predeploy-network.md",
+      "title": "dt-fde-multica Pre-Deployment Network Access",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/internal-polardb-shared-access.md",
+      "title": "PolarDB PostgreSQL 共享实例接入说明",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/operations/asb-identity-errors.md",
+      "title": "ASB 企业身份启动错误",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+      "title": "Step 0：测试环境、协作拓扑与交付节奏的前置边界",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/runtime-config.md",
+      "title": "Managed runtime configuration",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/security/asb-network-allowlist.md",
+      "title": "ASB outbound network policy",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/task-run-events.md",
+      "title": "长任务运行事件合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/workspace-storage-boundaries.md",
+      "title": "工作区存储边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/internal-multi-replica-fixes.md",
+      "title": "预发多实例（2 pod）改造记录",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-07-31-workspace-access-grant-dta-trace.md",
+      "title": "工作区 DTA Token 权限与 Trace 实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-08-03-dta-service-member.md",
+      "title": "DTA Token 普通成员身份改造实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-08-09-agent-a2a-inbound.md",
+      "title": "Agent 级 Inbound A2A 实施计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-02-fc-runtime-dev-loop-done.md",
+      "title": "FC Runtime 分支构建与候选沙箱切换闭环",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-03-fc-runtime-daemon-compat-review-done.md",
+      "title": "FC Runtime / Daemon 兼容闭环 Review",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-05-coordinator-scene-window.md",
+      "title": "Coordinator Scene Window",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-05-dsh-runtime-plugin-evaluation.md",
+      "title": "DeepSeek Harness (DSH) 在 FDE 工作台 / dt-fde-multica 上的支持方案评估",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-06-dsh-plugin-workspace-asset.md",
+      "title": "DSH Plugin as a Workspace asset",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-asb-capacity-live-candidates.md",
+      "title": "ASB 容量回收启动延迟优化",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-07-runner-mcp-legacy-daemon-compat.md",
+      "title": "旧 Daemon 的 Runner MCP 兼容修复",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-10-dingtalk-message-autopilot.md",
+      "title": "DingTalk message triggered automations",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-15-dsh-schedule-admission.md",
+      "title": "Persistent DSH Schedule admission",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-16-coordinator-scene-capacity-per-delegator.md",
+      "title": "场景容量改为「场景 × 委托人」，并给等待加上限",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-18-dsh-managed-restart.md",
+      "title": "DSH managed restart and Tavern acceptance",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-20-dsh-im-managed-admission.md",
+      "title": "DSH 标准会话与消息统一接入 Multica（以 IM 为首个验收）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-20-dsh-standard-session-pre-acceptance.md",
+      "title": "DSH 标准会话服务预发验收",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-21-dsh-startup-evidence.md",
+      "title": "DSH startup investigation — CR 36224658",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-22-global-model-providers.md",
+      "title": "Global model providers",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-24-dsh-native-without-platform-task.md",
+      "title": "删除 DSH 原生页面与历史 Host 恢复扫描",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-26-runtime-start-quickwins.md",
+      "title": "PRI-47: bounded runtime startup recovery",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-27-performance-rollout.md",
+      "title": "PRI-47: one performance rollout with agent isolation",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-29-a2a-deap-scene-identity-forward.md",
+      "title": "DEAP A2A：场域标准化、员工身份绑定与生产→预发转发",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-30/employee-loop-design.md",
+      "title": "EmployeeLoop：事件、事项与执行的统一协调方案",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-09-30/employee-loop-overview.md",
+      "title": "EmployeeLoop 方案导读：直接复用 Go BotLoop，成为能持续办事的员工",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-01-context-builder-tenants.md",
+      "title": "多场域配置：租户、三级场域与 Context Builder（2026-10-01）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-01/employee-loop-delivery-plan.md",
+      "title": "EmployeeLoop R5 实施拆解",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02-scene-routines.md",
+      "title": "场域例行任务与会话内场域配置（2026-10-02）",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-delivery-log.md",
+      "title": "EmployeeLoop R2 实施与交付记录",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-task-service-delivery.md",
+      "title": "EmployeeLoop 与 Task Service 开发路线",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02/employee-loop-task-service-design.md",
+      "title": "EmployeeLoop 与 Task Service：独立目标、双派发后端、可切换处理循环",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-02/unified-env-forwarding.md",
+      "title": "统一线上入口转发层",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-cron-task-service.md",
+      "title": "场域 Cron 接入 Employee Task Service",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-execution-event.md",
+      "title": "Employee Execution Event 实现计划",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/00-context-and-contracts.md",
+      "title": "共享上下文、已完成基线与不可破坏合同",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md",
+      "title": "P 包：独立 Task 生命周期、内部唤醒与共享接缝",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md",
+      "title": "B 包：场域 Cron → 独立 Task → 执行与通知",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md",
+      "title": "F 包：Webhook 可信输入、冻结受理与 Employee 执行",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+      "title": "执行板：本机环境、分工、编号预留与发布循环",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/README.md",
+      "title": "EmployeeLoop 后端完整交付与并行开发计划",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/security/asb-dws-network-audit.md",
+      "title": "DWS network dependency audit",
+      "category": "runtime",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-asb-enterprise-runtime-design.md",
+      "title": "ASB 企业私有化 Runtime — 设计",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "docs/evals/p0-golden.md",
+      "title": "20 条 P0 Golden 组合回归",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/evals/evaluation-tools.md",
+      "title": "评测工具",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/evals/evaluation-runtime.md",
+      "title": "评测运行时",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/tag-eval/SKILL.md",
+      "title": "Tag eval round",
+      "category": "tools",
+      "kind": "skill",
+      "historical": false
+    },
+    {
+      "path": ".agents/skills/tag-eval/references/harness-source-map.md",
+      "title": "Employee e2e harness source map",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/employee-collection-late-context.md",
+      "title": "关闭邀请的参与者场域事实",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/employee-delivery-workflow.md",
+      "title": "Employee / Tag 开发、发布与真实验收工作流",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "docs/employee-memory-capture.md",
+      "title": "Employee 记忆写入、查询与遗忘（现行合同）",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/12-memory-design.md",
+      "title": "EmployeeLoop 记忆与上下文设计（12-memory-design）",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/13-plan-gap-audit.md",
+      "title": "交付 Plan、R5 原设计与 PRI-78 的差距核对",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/15-codex-resume-assessment.md",
+      "title": "Codex 接续核对与执行计划",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/16-service-retry-repair.md",
+      "title": "四条 service 失败修复切片",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/17-m8-first-canary.md",
+      "title": "M8 首轮真实群摄入与主动接话证据",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/18-closeout.md",
+      "title": "第五批接续交付收口与最终验收",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/19-digest-native-output-repair.md",
+      "title": "场域要点 native 输出修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/19-foreground-output-contract.md",
+      "title": "DS-09 前台输出合同修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/20-withdrawn-reply-provenance.md",
+      "title": "M5 遗忘后的已送达回复来源过滤",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/21-reply-ancestor-closure.md",
+      "title": "回复撤销来源的跨窗祖先闭合",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/22-assistant-quarantine.md",
+      "title": "历史祖先失败的局部隔离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/22-collection-cancel.md",
+      "title": "COL-03 原生取消收集接线",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/25-task-source-reference.md",
+      "title": "BASE-TASK 同目标错接的来源关联修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-backend-delivery/26-task-execution-inheritance.md",
+      "title": "BASE-TASK 明确追加工作与执行方法继承",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-03/employee-loop-golden20-baseline.md",
+      "title": "Qwen-Real GoldenCase-20 基线（预发，2026-10-03）",
+      "category": "evals",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-collection-guidance-modes.md",
+      "title": "COL-03 关闭邀请提示模式隔离",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-collection-late-context.md",
+      "title": "COL-03 取消后迟到答复的本人上下文修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-evidence-quality.md",
+      "title": "当前证据范围与选择性清单的有限质量修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-g5-deliverable.md",
+      "title": "G5 新交付物与已有结果解释的模型决策修复",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-private-withdrawal.md",
+      "title": "DM 本人跨源私有记录的精确撤销投影",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-release-safety.md",
+      "title": "Employee 发布安全修复切片",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/plans/2026-10-04/employee-social-acknowledgements.md",
+      "title": "轻赞与致谢的自然回应合同",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": true
+    },
+    {
+      "path": "docs/public-forwarding-ingress.md",
+      "title": "独立公共转发入口",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/task-retry-concurrency.md",
+      "title": "Task 失败重试的事务与幂等边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "docs/webhook-source-release-safety.md",
+      "title": "Webhook 冻结来源的发布与回滚边界",
+      "category": "runtime",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/CLOSEOUT.md",
+      "title": "第五批 harness 收尾能力与离线准入",
+      "category": "tools",
+      "kind": "report",
+      "historical": true
+    },
+    {
+      "path": "scripts/employee-e2e/README.md",
+      "title": "EmployeeLoop real-IM e2e harness",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/ROLES.md",
+      "title": "Roles for Tag evaluation",
+      "category": "runtime",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/TOOLS.md",
+      "title": "Tools for Tag evaluation",
+      "category": "tools",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/cases/golden20.md",
+      "title": "20 条 GoldenCase（聊天行为基本功）",
+      "category": "evals",
+      "kind": "playbook",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/SUITE.md",
+      "title": "EmployeeLoop 真人感回归套件 v2",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/_build/gaps.md",
+      "title": "harness-gaps：cases-v2 对 employee-e2e harness 的需求 · 生成模板",
+      "category": "tools",
+      "kind": "spec",
+      "historical": true
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/_build/head.md",
+      "title": "EmployeeLoop 真人感回归套件 v2 · 生成模板页首",
+      "category": "evals",
+      "kind": "spec",
+      "historical": false
+    },
+    {
+      "path": "scripts/employee-e2e/cases/v2/harness-gaps.md",
+      "title": "harness-gaps：cases-v2 对 employee-e2e harness 的需求",
+      "category": "tools",
+      "kind": "spec",
+      "historical": true
+    }
+  ]
+}

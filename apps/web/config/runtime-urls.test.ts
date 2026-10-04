@@ -12,6 +12,10 @@ import {
 } from "./runtime-urls";
 
 describe("resolveRemoteApiUrl", () => {
+  it("rewrites the independent evaluation page to the backend reader", () => {
+    expect(runtimeRewriteDestination("/evals", { REMOTE_API_URL: "http://backend:8080" })).toBe("http://backend:8080/api/evals");
+    expect(runtimeRewriteDestination("/evals/", { REMOTE_API_URL: "http://backend:8080" })).toBe("http://backend:8080/api/evals");
+  });
   it("prefers REMOTE_API_URL when explicitly configured", () => {
     expect(
       resolveRemoteApiUrl({

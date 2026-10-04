@@ -39,6 +39,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
 	"github.com/multica-ai/multica/server/internal/employeedirectory"
+	"github.com/multica-ai/multica/server/internal/evalcatalog"
 	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -2091,6 +2092,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Get("/readyz", health.readyHandler)
 	r.Get("/healthz", health.readyHandler)
 
+	evals := evalcatalog.NewHandler()
+	r.Get("/api/evals/style.css", evals.ServeHTTP)
+	r.Head("/api/evals/style.css", evals.ServeHTTP)
+
 	// Realtime subsystem metrics — connection counts, slow-client evictions,
 	// and per-event-type send QPS counters. Exposed as JSON so it can be
 	// scraped by ops or surfaced in the admin UI without adding a Prometheus
@@ -2415,6 +2420,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, opts.FeatureFlags))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+
+		// Repository evaluation assets are a read-only human documentation surface.
+		r.With(handler.RequireHumanActor).Get("/api/evals", evals.ServeHTTP)
+		r.With(handler.RequireHumanActor).Get("/api/evals/", evals.ServeHTTP)
+		r.With(handler.RequireHumanActor).Head("/api/evals", evals.ServeHTTP)
+		r.With(handler.RequireHumanActor).Head("/api/evals/", evals.ServeHTTP)
 
 		// --- User-scoped routes (no workspace context required) ---
 		r.With(handler.RequireHumanActor).Get("/api/me", h.GetMe)
