@@ -1414,6 +1414,33 @@
           ],
           "origin": "defined",
           "sourceCases": []
+        },
+        {
+          "id": "office-structured-completion-continue",
+          "title": "多行结构化结果收口后引用续接",
+          "roles": [
+            "发言者：测试真人小甲",
+            "执行者：测试员工",
+            "观察者：获准读取消息、Task/Run和原始结果",
+            "执行资源：独立候选Runtime"
+          ],
+          "verifies": [
+            "执行器合法多行JSON经完成入口与Run落账仍保持结构；事项正常收口，引用请求在同Task新Goal版本执行一次并再次正常收口。",
+            "非法、重复或未知字段结果保持未完成，不因脱敏去掉换行而变成合法控制数据；本人、当前版本和取消屏障仍生效。"
+          ],
+          "method": [
+            "保留原成功历史，执行含换行、引号和反斜杠的报告及可选建议；从CompleteTask入口观测Run、通知与Goal，不能直接写Run最终值代替这条链。",
+            "本人引用该事项要求修改范围并出表格；核当前source、唯一新Run、Goal revision增加、原方法约束及续接结果合同继承，再完成第二轮。以真实工具和独立消息回读签用户效果。",
+            "隔离fixture演练重复键、未知授权字段、截断JSON及含实际换行的PEM；核严格拒绝、无card/完成/额外执行。重放与取消反例联合核账本及副作用。"
+          ],
+          "sources": [
+            "docs/plans/2026-10-04/employee-canonical-result.md",
+            "server/internal/handler/employee_canonical_pipeline_test.go",
+            "server/internal/service/employee_canonical_result_test.go",
+            "server/internal/employeetask/reopen_goal_test.go"
+          ],
+          "origin": "defined",
+          "sourceCases": []
         }
       ],
       "categoryRef": "delivery"

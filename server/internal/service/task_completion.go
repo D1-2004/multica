@@ -63,6 +63,36 @@ func taskExecutionUpdateResultMessage(result []byte) string {
 	return redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 }
 
+var taskResultJSONString = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// taskExecutionCanonicalResult decodes only the transport envelope. Machine
+// output is not display text: unescaping it again destroys JSON string values.
+// Redact string tokens without rebuilding objects, so duplicate fields and
+// unknown control fields remain visible to the protocol's strict decoder.
+func taskExecutionCanonicalResult(result []byte) string {
+	var payload protocol.TaskCompletedPayload
+	if json.Unmarshal(result, &payload) != nil {
+		return ""
+	}
+	if !json.Valid([]byte(payload.Output)) {
+		// Scrubbing can turn malformed JSON (for example a multiline PEM value)
+		// into valid JSON. Return non-protocol text instead, so it stays rejected.
+		return "Invalid structured execution result."
+	}
+	return taskResultJSONString.ReplaceAllStringFunc(payload.Output, func(token string) string {
+		var value string
+		if json.Unmarshal([]byte(token), &value) != nil {
+			return token
+		}
+		clean := redact.Text(value)
+		if clean == value {
+			return token
+		}
+		encoded, _ := json.Marshal(clean) // strings are always JSON encodable
+		return string(encoded)
+	})
+}
+
 func freezeTaskExecutionUpdateResultMessage(
 	ctx context.Context,
 	qtx *db.Queries,

@@ -37,6 +37,12 @@ Langfuse 前台 trace 名为 `employee_loop`，持久 job ID 用作 trace ID；�
 
 追踪输出递归脱敏凭据和配置 bearer 链接。Generation 沿用既有 64 KiB 内容上限，明确 bytes/truncated；截断数据不能作为完整提示词证据。根 trace 的 accepted/enqueued 只表示业务提交或通知入队，不表示钉钉送达。导出关闭或失败不能改变业务裁决、任务效果或模型调用次数。
 
+## 结构化轮末结果与安全续接
+
+Host queue声明`employee_round_result_contract`时，Run落账只解完成payload的外层JSON，保存机器结果的内层转义；纯文本及Router展示仍走原显示处理。JSON的字符串值分别脱敏，保留重复键、未知字段和原结构供严格decoder判定；非法JSON写非协议诊断，不因脱敏被修成可接受的控制输入。只有验证过的结构化结果才能完成Goal，队列succeeded不代替Goal完成。
+
+本人在已完成V2 Goal上明确请求下一步时，`ReopenGoal`记录当前来源并以新Goal revision重新打开，Definition约束保留；同源重放不重复增加revision或Run。未完成、等待、正在执行、取消及过期CAS仍拒绝。V1沿原Resume。引用续接继承原Run的冻结结果合同与输出指令，下一轮仍需完成严格materialize和Goal收口。新任务受理、实际执行、结果落账、Goal完成及用户送达分别核验。
+
 ## Task 与执行
 
 EmployeeTask、Run 与 agent_task_queue ID 独立。Task 保留定义和追加记录；Direct 使用已有队列、执行器、消息、usage 和轨迹，不创建 Issue 或永久 Autopilot。Work Object Compiler 使用真实 source、Host scope/principal、完整约束和实际 ContextUsed 组装执行输入，不新增模型请求或通用配置快照。

@@ -77,15 +77,27 @@ func (s *TaskService) ContinueDirectTaskTx(ctx context.Context, tx pgx.Tx, prepa
 	}
 	// Compare a frozen replay before checking the current principal. A changed
 	// principal is conflicting input, even if that principal has since lost access.
-	if _, _, err = directTaskReplayTx(ctx, tx, prepared); err != nil {
+	_, replayed, err := directTaskReplayTx(ctx, tx, prepared)
+	if err != nil {
 		return out, err
 	}
 	if _, err = directTaskAdmissionAgent(ctx, s.Queries.WithTx(tx), p); err != nil {
 		return out, err
 	}
-	// Resume checks its exact source payload before CAS/state, including when
-	// the accepted continuation is now running or already completed.
-	resumed, _, err := employeetask.NewStore(tx).Resume(ctx, task.Scope, task.ID, resume)
+	// A completed v2 Goal must reopen as a new revision. Preserve its frozen
+	// Definition and record the current human source; the prepared prompt carries
+	// the requested next step. Never use an amendment to bypass unfinished work.
+	var resumed employeetask.Task
+	store := employeetask.NewStore(tx)
+	if task.Lifecycle() == employeetask.LifecycleV2 {
+		if !replayed && task.State != employeetask.StateSucceeded {
+			return out, employeetask.ErrConflict
+		}
+		resumed, _, err = store.ReopenGoal(ctx, task.Scope, task.ID, resume)
+	} else {
+		// Resume validates its exact source before CAS, including accepted replay.
+		resumed, _, err = store.Resume(ctx, task.Scope, task.ID, resume)
+	}
 	if err != nil {
 		return out, err
 	}
