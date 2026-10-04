@@ -133,30 +133,17 @@ func projectAsk(publicID, surfaceID string, kind Kind, header, question string, 
 func projectEmployeeAsk(publicID, surfaceID, question string, spec storedRequest) ([]string, error) {
 	children := []string{"question"}
 	components := []any{titleText("question", question)}
-	if spec.SourceQuote != "" {
-		children = append([]string{"source-quote"}, children...)
-		components = append(components, captionText("source-quote", "“"+spec.SourceQuote+"”"))
-	}
 	model := map[string]any{"clarification": map[string]any{
 		"sourceTurnId": publicID, "sourceProjectionVersion": Version,
 	}}
-	if !spec.Multiple {
+	if !spec.Multiple && !spec.AllowCustom {
 		for _, option := range spec.Options {
-			labelID, rowID, buttonID := "label-"+option.ID, "choice-row-"+option.ID, "choice-"+option.ID
+			labelID, buttonID := "label-"+option.ID, "choice-"+option.ID
 			children = append(children, buttonID)
-			optionChildren := []string{labelID}
-			containerKind := "Row"
-			if option.Description != "" {
-				descriptionID := "description-" + option.ID
-				optionChildren = append(optionChildren, descriptionID)
-				containerKind = "Column"
-				components = append(components, captionText(descriptionID, compactDescription(option.Description)))
-			}
 			components = append(components,
-				bodyText(labelID, option.Label),
-				basicComponent(rowID, containerKind, map[string]any{"children": optionChildren, "justify": "start", "align": "start", "gap": 2}),
+				basicComponent(labelID, "Text", map[string]any{"text": compactOptionLabel(option)}),
 				basicComponent(buttonID, "Button", map[string]any{
-					"child": rowID, "variant": "borderless", "action": directChoiceAction(publicID, option.ID),
+					"child": labelID, "variant": optionVariant(option.Emphasis), "action": directChoiceAction(publicID, option.ID),
 				}),
 			)
 		}
@@ -167,12 +154,25 @@ func projectEmployeeAsk(publicID, surfaceID, question string, spec storedRequest
 		}
 		clarification := model["clarification"].(map[string]any)
 		clarification["answers"] = map[string]any{"q0": map[string]any{"selected": []string{}, "custom": ""}}
-		children = append(children, "choices", "actions")
+		children = append(children, "choices")
+		pickerVariant := "mutuallyExclusive"
+		if spec.Multiple {
+			pickerVariant = "multipleSelection"
+		}
 		components = append(components,
 			basicComponent("choices", "ChoicePicker", map[string]any{
 				"options": pickerOptions, "value": pathOf("/clarification/answers/q0/selected"),
-				"variant": "multipleSelection", "displayStyle": "checkbox",
+				"variant": pickerVariant, "displayStyle": "checkbox",
 			}),
+		)
+		if spec.AllowCustom {
+			children = append(children, "extra")
+			components = append(components, basicComponent("extra", "TextField", map[string]any{
+				"label": "补充一句（可以不写）", "value": pathOf("/clarification/answers/q0/custom"),
+			}))
+		}
+		children = append(children, "actions")
+		components = append(components,
 			basicComponent("actions", "Row", map[string]any{"children": []string{"submit"}, "align": "center", "justify": "end"}),
 			basicComponent("submitLabel", "Text", map[string]any{"text": "确认"}),
 			basicComponent("submit", "Button", map[string]any{
@@ -181,7 +181,7 @@ func projectEmployeeAsk(publicID, surfaceID, question string, spec storedRequest
 						"outcome": "answered", "sourceTurnId": publicID, "sourceProjectionVersion": Version,
 						"answers": pathOf("/clarification/answers"),
 					},
-				}}, "checks": submitChecks(false),
+				}}, "checks": submitChecks(spec.AllowCustom),
 			}),
 		)
 	}
@@ -194,6 +194,18 @@ func projectEmployeeAsk(publicID, surfaceID, question string, spec storedRequest
 		}},
 		map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": surfaceID, "components": components}},
 	)
+}
+
+// optionVariant uses only variants verified by the native basic catalog.
+func optionVariant(emphasis string) string {
+	switch emphasis {
+	case "primary":
+		return "primary"
+	case "secondary":
+		return "default"
+	default:
+		return "borderless"
+	}
 }
 
 func compactDescription(description string) string {
@@ -236,9 +248,13 @@ func projectResolvedAsk(surfaceID, question string, labels []string, custom, out
 			}),
 		)
 	}
-	if custom != "" && len(labels) == 0 {
+	if custom != "" {
 		children = append(children, "resolved-custom")
 		components = append(components, captionText("resolved-custom", clip(custom, 160)))
+	}
+	if outcome == "disabled" {
+		children = append(children, "resolved-disabled")
+		components = append(components, captionText("resolved-disabled", "已失效"))
 	}
 	if outcome == string(StatusSkipped) {
 		children = append(children, "resolved-skipped")

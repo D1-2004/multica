@@ -276,6 +276,8 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			result, err = h.memoryTool(ctx, tx, call)
 		case "a2ui_ask":
 			result, err = h.stageHumanQuestion(ctx, tx, source, env, call)
+		case "disable_human_question":
+			result, err = h.disableHumanQuestion(ctx, tx, source, call)
 		case "accept_human_response":
 			result, err = h.acceptHumanText(ctx, tx, source, call)
 		case "dispatch_task":
@@ -363,7 +365,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		}
 		return record.Result, err
 	}
-	if call.Name == "accept_human_response" && record.Failure == "" {
+	if (call.Name == "accept_human_response" || call.Name == "disable_human_question") && record.Failure == "" {
 		h.worker.Notify()
 	}
 	if record.Failure != "" {

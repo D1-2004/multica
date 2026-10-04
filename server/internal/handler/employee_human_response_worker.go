@@ -201,7 +201,7 @@ type employeeHumanWorkPlan struct {
 }
 
 func employeeHumanWorkAllowed(b employeeHumanBinding, task *employeetask.Task) error {
-	if b.Response.Intent == "skip" || b.Response.Intent == "cancel" {
+	if b.Response.Intent == "skip" || b.Response.Intent == "cancel" || b.Response.Intent == "dismiss" {
 		return fmt.Errorf("%w: this human response does not authorize work", employeeloop.ErrToolRefused)
 	}
 	if task == nil {

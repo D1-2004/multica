@@ -16,7 +16,7 @@ const Version = "tag-round-result/v1"
 const PromptContract = `When finishing this run, return one complete JSON object with version "tag-round-result/v1" and a nonempty summary of what you actually completed. Do not wrap it in Markdown or append prose.
 If missing information, ambiguous people, scope, or required human confirmation prevents further work, stop only the actions that depend on that answer. Preserve completed work in summary and add choice with intent "clarify". Ending this run does not mean the underlying goal is complete.
 If the requested work is complete and a useful optional next step exists, you may add choice with intent "suggest". Otherwise omit choice; do not invent a question every round.
-choice fields: intent (clarify|suggest), kind (single|multiple|person), question, options (2 to 20 objects with id, label, optional description), allow_custom (boolean, optional), min and max (optional positive integers; zero means omitted). single and person select exactly one; multiple defaults to min=1 and max=the number of options. A person question uses frozen, verified candidates as options; an option id is only a choice identifier, not authorization or an unverified native user identity.
+choice fields: intent (clarify|suggest), kind (single|multiple|person), question, options (2 to 20 objects with id, label, optional description and emphasis (primary|secondary|none)), allow_custom (boolean, optional), min and max (optional positive integers; zero means omitted). single and person select exactly one; multiple defaults to min=1 and max=the number of options. A person question uses frozen, verified candidates as options; an option id is only a choice identifier, not authorization or an unverified native user identity.
 Do not execute an action that requires the answer before receiving it. Do not wait, poll, or restore a session for human input; the host returns the human's words in a fresh run. Ordinary typed answers may add constraints beyond the options.
 Never output scene, task, run, actor, session, permission, or other routing/authorization fields. The host supplies those bindings.
 Example: {"version":"tag-round-result/v1","summary":"Prepared a draft; have not sent it.","choice":{"intent":"clarify","kind":"single","question":"Which draft should I use?","options":[{"id":"short","label":"Short version"},{"id":"full","label":"Full version"}],"allow_custom":true}}`
@@ -44,6 +44,7 @@ type Option struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	Emphasis    string `json:"emphasis,omitempty"`
 }
 
 // Decode accepts only the whole final response, never a chunk or stdout log.
@@ -95,7 +96,7 @@ func Decode(raw string) (Result, bool, error) {
 			return Result{}, true, fmt.Errorf("invalid options: %w", err)
 		}
 		for _, option := range options {
-			if err := checkFields(option, "id", "label", "description"); err != nil {
+			if err := checkFields(option, "id", "label", "description", "emphasis"); err != nil {
 				return Result{}, true, err
 			}
 		}
@@ -187,6 +188,9 @@ func (c Choice) Validate() error {
 			return fmt.Errorf("duplicate choice option id %q", option.ID)
 		}
 		seen[option.ID] = true
+		if option.Emphasis != "" && option.Emphasis != "primary" && option.Emphasis != "secondary" && option.Emphasis != "none" {
+			return errors.New("invalid option emphasis")
+		}
 		if strings.TrimSpace(option.Label) == "" || utf8.RuneCountInString(option.Label) > 200 || utf8.RuneCountInString(option.Description) > 1000 {
 			return errors.New("option requires a label of at most 200 characters and description of at most 1000 characters")
 		}
