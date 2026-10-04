@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "title": "QwenTag",
+  "description": "员工行为要求与回归用例",
+  "requirements": [
+    {
+      "id": "spec-communication",
+      "title": "沟通与任务理解",
+      "summary": "找对回应对象，听懂请求，问清缺少的信息。",
+      "requirements": [
+        "识别当前请求人和回应对象；被 @、引用和普通群聊按各自资格处理。",
+        "理解上下文与当前指代；信息不足先澄清，纠正不改动无关内容。",
+        "遵守用户的语言、格式和长度要求，明确区分已知事实与不确定信息。"
+      ],
+      "scenarioRefs": [
+        "group-participation",
+        "clarification-reference"
+      ],
+      "sources": [
+        "docs/employee-loop.md",
+        "docs/plans/2026-10-03/employee-interaction-continuity.md"
+      ]
+    },
+    {
+      "id": "spec-delivery",
+      "title": "执行与交付",
+      "summary": "按要求实际执行，交代进度，正确续接或停止。",
+      "requirements": [
+        "新工作独立受理；补充、重做和停止作用于正确的原任务。",
+        "按要求调用工具并实际执行，保留目标、材料和交付条件。",
+        "如实说明进度与等待；结果、文件和停止状态均有可核验的实际效果。"
+      ],
+      "scenarioRefs": [
+        "work-planning",
+        "progress-wait",
+        "continuation-steer",
+        "stop-control",
+        "files-documents"
+      ],
+      "sources": [
+        "docs/employee-loop.md",
+        "docs/plans/2026-10-02/employee-loop-task-service-design.md"
+      ]
+    },
+    {
+      "id": "spec-collaboration",
+      "title": "协作与例行工作",
+      "summary": "收集多人信息，在获准范围提醒并处理定时或外部事件。",
+      "requirements": [
+        "收集答复时匹配问题与参与者，按要求汇总并交回指定会话。",
+        "提醒和后续动作遵守授权、时间与范围，避免重复打扰。",
+        "按有效规则处理定时事项和外部事件；暂停、恢复和重复事件各有明确处理。"
+      ],
+      "scenarioRefs": [
+        "collection-input",
+        "reminder-follow-up",
+        "cron-office",
+        "webhook-office"
+      ],
+      "sources": [
+        "docs/employee-loop.md",
+        "docs/plans/2026-10-03/employee-cron-task-service.md"
+      ]
+    },
+    {
+      "id": "spec-trust",
+      "title": "权限与隐私",
+      "summary": "请求和授权有依据，资料与操作不越界。",
+      "requirements": [
+        "以可信身份和当前授权处理请求，历史引用或转述不能扩大权限。",
+        "访问资料和执行动作前确认范围，不能借用他人的身份或权限。",
+        "群聊、单聊、个人和组织之间的资料、任务及输出保持正确归属。"
+      ],
+      "scenarioRefs": [
+        "group-authority",
+        "cross-scene-tenant"
+      ],
+      "sources": [
+        "docs/agent-scene.md",
+        "docs/event-scene-router.md",
+        "docs/context-capabilities.md"
+      ]
+    },
+    {
+      "id": "spec-learning-reliability",
+      "title": "记忆、学习与可靠性",
+      "summary": "正确记住或遗忘信息，复用可信经验，故障后不重复执行。",
+      "requirements": [
+        "在获准范围记住信息，正确吸收纠正，并停止使用已遗忘的内容。",
+        "将验证过的经验用于后续工作；经验共享与撤回遵守授权。",
+        "失败、重试和重启后恢复正确工作，避免重复执行、重复发送或遗漏交付。"
+      ],
+      "scenarioRefs": [
+        "office-memory",
+        "office-experience",
+        "office-recovery"
+      ],
+      "sources": [
+        "docs/employee-memory-capture.md",
+        "docs/employee-loop.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+      ]
+    }
+  ]
+}
