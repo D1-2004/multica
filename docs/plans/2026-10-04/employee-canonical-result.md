@@ -27,7 +27,7 @@ Qwen-DWS 2026-10-04 17:35引用旧报告要求“一周的，给我一个表格�
 
 ## 当前状态
 
-实现和本地验证完成；目标已语义rebase到1b28362ca27112b7df1a07210983ab8565cdddfe，保留其他session并发代码和发布回执。目标合入将以非force push及远端SHA回读确认；未部署或恢复共享旧数据。
+实现和本地验证完成，已语义rebase保留目标1938a059及其Human首次询问修复、连接器和发布回执。修复代码6e00a82d568433c8e01b9ca6f616832b2a63a448已非force快进合入Aone feat/tag-multitenant，远端tracking回读同SHA；本批未部署或恢复共享旧数据。
 
 ### 完整链复验发现的必要接缝（18:22修订，先于补代码）
 
@@ -59,3 +59,12 @@ Qwen-DWS 2026-10-04 17:35引用旧报告要求“一周的，给我一个表格�
 证据位于当前私有目录EMPLOYEE-CANONICAL-RESULT-20261004：handler-final.log、service-domain-final.log、pipeline-and-domain-final.log、race-final.log、post-rebase.log及build/vet/eval日志。修复前和中间失败保留，最终结论以上述最终日志为准。没有把正确结构或本地新Run当真实GitHub表格交付；发布后仍须原场域原话复验。
 
 稳定风险用例office-structured-completion-continue已加入continuation-steer/G07，146定义仅表示结构与映射有效。当前版本合入目标和发布责任交接后，本批停止扩展范围。
+
+
+## 合入与清理回执
+
+- 修复代码：`6e00a82d568433c8e01b9ca6f616832b2a63a448`，Aone `feat/tag-multitenant`已由1938a059快进至该提交，没有force或覆盖其他提交。随后仅补本文档回执。
+- 代码摘要：`fix(employee): 保留结构化执行结果，完成Goal安全续接与两轮收口`。
+- 全部后台本地检查已结束；独立数据库employee_canonical_result_1004已drop并回读0，验证checkout canonical-result-integration已清理；主修复managed worktree保留交付审计。未接触其他session WIP。
+- 目标并发Human首次询问候选、连接器/OAuth及发布回执完整保留；最新基线核心单元及服务构建再次通过。
+- 统一发布方仅接收精确SHA、scope/case及证据；本用户要求合分支，本批没有新CR/发布/Runtime或IM操作。原问题真实复验与现存损坏Goal恢复仍需后续发布窗口。
