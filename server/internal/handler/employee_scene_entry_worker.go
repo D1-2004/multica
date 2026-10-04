@@ -463,7 +463,7 @@ func (w *EmployeeSceneWorker) processClaimed(ctx context.Context, job employeeen
 					var raw []byte
 					raw, err = json.Marshal(input)
 					if err == nil {
-						_, err = w.store.SaveInput(runCtx, job, raw)
+						job.InputSnapshot, err = w.store.SaveInput(runCtx, job, raw)
 					}
 					if err == nil {
 						// The wake's provider read becomes durable group
@@ -922,6 +922,15 @@ func employeeAcceptedReplies(outcome employeeloop.Outcome) ([]string, bool) {
 
 func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, saved employeeSavedOutcome) error {
 	h := w.handler
+	replyTools := append(employeeDiscoveryTools(employeeSceneTools()), employeeFirstFeedbackTool())
+	replyTools = append(replyTools, employeeHumanTools()...)
+	if len(job.InputSnapshot) > 0 {
+		var input employeeSavedInput
+		if err := json.Unmarshal(job.InputSnapshot, &input); err != nil {
+			return errors.New("employee reply protocol: invalid frozen input")
+		}
+		replyTools = append(replyTools, input.Config.Tools...)
+	}
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
 		if err := supersedeEmployeeFirstFeedback(ctx, tx, job.ID); err != nil {
@@ -949,6 +958,12 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 					text += "\n"
 				}
 				text += strings.TrimSpace(saved.Outcome.Reply)
+			}
+			// Recovered outcomes and refused-tool rescue text may predate the
+			// kernel boundary. Never reinterpret or strip protocol into a promise;
+			// keep committed work and replace only its invalid public reply.
+			if err := employeeloop.ValidateReplyProtocol(text, replyTools); err != nil {
+				text = "这次回复未能正确生成，请稍后再询问进度。"
 			}
 			if participation.Mode == "quiet" && participation.SourceJobID != job.ID {
 				text = ""
