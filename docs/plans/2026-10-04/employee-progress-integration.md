@@ -41,3 +41,11 @@
 ## 最终结果（13:30）
 
 预发最终构建f9a6d687、run3110378343于13:16:09成功，两live reader20/normal。真实新claim原生进展MCP两次调用同ID/正文返回同ref/replayed，Python/sleep60/文件650与最终IM完成；约6秒首轮ACK成立。阶段wake实际quiet，无阶段IM，因此展示验收未通过，不关闭总体门。终态旧报告/明确禁中间消息反例未跑。Runtime未改；三隔离DB已drop；Task终态且0 waits/Agent idle。原hourly于12:02:30已被归档，本批未暂停且不恢复他人变更。eval随平台并入已部署，10020–10023重复数字前缀记录维护风险，不追加发布。详见employee-progress-pre-report.md和唯一执行表。本批收口。
+
+## SPEC / EVALS职责接续（本次移交）
+
+已核对源会话human原话要求本session组织后续验证、维护SPEC+EVALS并确认代码完整。本次先完成收件回执与统一分支集成，不新增部署/镜像/真人测试；已发布版本的包含情况必须用精确ancestry/tree证明。
+
+冻结清单：fetch并核对34dc79f7（完整包）/78fffd467（功能）及完整序列；逐项核对交接、合同、贡献门禁、三份定义、report服务、CLI与迁移/hook；统一分支合入平台已构建f9a6d687及源文档，保留reader20/steer/progress和本session记录，主checkout其他WIP不动；运行make eval-check并核对关键文件tree等价。唯一执行表回填所有权、版本、定义检查、已发布/未验和下一步。
+
+验收边界：本次是代码接管与定义检查，不能签真实办公E2E或接口真实201/200/409。后续每次发布映射SPEC→稳定场景/case→受影响P0，优先原失败和受影响真实路径；结果按real_e2e/mock/definition_check分别保存，未执行例保留分母。统一publisher为本session，不主动删除旧CR/历史分支或重跑已成功流水线。
