@@ -120,3 +120,16 @@
 | 后续组织 | 按[维护流程](evals/verification-maintenance.md)依次组织原新任务FAIL、后台阶段展示、记忆交互及报告协议；每次映射SPEC→case→受影响P0，保留未执行分母 |
 
 精确核对证据：EMPLOYEE-PROGRESS-INTEGRATION-20261004/evals-receipt.json、evals-definition-check.log。本次代码接管与收件回执完成；后续真实验收另有明确窗口/范围，不冒称已完成。
+
+## 用户新授权：黄金20例真实E2E一轮
+
+当前执行：[Plan](plans/2026-10-04/employee-golden20-round.md)。现成golden20.json20例，Director+冬翔两真人、Qwen-Real预发；仅测试，不发布/修复。证据GOLDEN20-20261004-1356，auth/self、会话与pipeline/fence准入已通过，正在运行DM/GROUP两路；逐例当前状态见本波`current-execution.json`，已发送测试消息。SPEC20 P0及v2/G19不混作同一覆盖率。所有20例保留分母，按实际结果回填。
+
+
+## 黄金20例最终收口（当前最新批次）
+
+20/20实际执行：完整原话约束9通过、11未通过（11DM/9群；Actor为Director+冬翔两真人）。release f9a6d687 / reader20 / Run3110378343未改，窗口13:59:43–14:23:05。主要FAIL为旧History误答、无证事实/时间、编负责人、恢复漏答、隐私表述，以及4格式/1语言；不是完整SPEC20 P0通过。
+
+[最终报告](plans/2026-10-04/employee-golden20-report.md)；证据GOLDEN20-20261004-1356/summary-final.json为逐例执行表。5测试记忆精确forgotten已证，群active、agent idle/无未终态任务；hourly原archived未动，Runtime/全局网关未改，监控停止。没有修复、部署或将旧ID冒充canonical G01–G20上报。
+
+下一独立批次候选收件：A2UI/HITL aone/codex/tag-a2ui-human-loop-20261004@1b476e502a；意图/SSE aone/feat/employee-intent-stream-feedback@b156cf1c72340c07857ea7f60ee29cbef996b1b4（运行46cc61872c792162f20881098da21e53c211df51、reader21、10040/10041）；架构状态图文档a62ce24d8d。均待统一审查/集成，不称已发布，不占本轮业务窗口。
