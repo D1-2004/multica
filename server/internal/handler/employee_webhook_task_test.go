@@ -74,6 +74,7 @@ func newEmployeeWebhookRoutineFixture(t *testing.T, instructions string) *employ
 	if x.runtime, err = f.h.Queries.GetAgentRuntime(ctx, parseUUID(runtimeID)); err != nil {
 		t.Fatal(err)
 	}
+	f.h.WebhookSourceReady = func(context.Context) error { return nil }
 	f.h.EmployeeSceneWorker = &EmployeeSceneWorker{ReplicaReady: func(context.Context) error { return nil }}
 	f.h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(f.h)
 	created := createGroupRoutine(t, f, a, sceneRoutineInput{Title: "Deploy watcher", Instructions: instructions, Trigger: sceneRoutineTrigger{Kind: "webhook"}})
@@ -113,7 +114,7 @@ func (x *employeeWebhookRoutineFixture) count(t *testing.T, sql string, args ...
 // Direct execution: dispatch frozen at the ingress, the allowlisted payload
 // (not the body) in the packet, a duplicate delivery runs nothing, the claim
 // runs the frozen packet with the routine output rule, and the routine's
-// start and end notices are the only sender.
+// result notice is the only sender, without an admission announcement.
 func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 	x := newEmployeeWebhookRoutineFixture(t, "WEBHOOK_ROUTINE_V1: report the deploy marker.")
 	f, ctx := x.f, context.Background()
@@ -167,10 +168,8 @@ func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 		taskOrigin.DeliveryAnchor.Owner != service.AutomationDeliveryOwnerSceneRoutine {
 		t.Fatalf("task origin = %+v err=%v", taskOrigin, err)
 	}
-	var startText string
-	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeStart)).Scan(&startText); err != nil ||
-		!strings.Contains(startText, "Deploy watcher") || !strings.Contains(startText, "Webhook") {
-		t.Fatalf("start notice %q err=%v", startText, err)
+	if n := x.count(t, `SELECT count(*) FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeStart)); n != 0 {
+		t.Fatalf("webhook admission announced itself: %d start notices", n)
 	}
 
 	// The provider retries: same receipt, nothing new.
@@ -218,7 +217,7 @@ func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var endText string
-	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeEnd)).Scan(&endText); err != nil || !strings.Contains(endText, "HOOK-OK HOOK-F2-MARKER") {
+	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeEnd)).Scan(&endText); err != nil || endText != "HOOK-OK HOOK-F2-MARKER" {
 		t.Fatalf("end notice %q err=%v", endText, err)
 	}
 	if settled, err := f.h.ReconcileEmployeeRoutineRuns(ctx, 100); err != nil || settled < 1 {
@@ -246,8 +245,8 @@ func TestEmployeeWebhookRoutineRunsAsEmployeeTask(t *testing.T) {
 			break
 		}
 	}
-	if n := x.count(t, `SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'routine_run_id'=$2`, x.a.ID, uuidToString(run.ID)); n != 2 {
-		t.Fatal("routine notices are not exactly start and end", n)
+	if n := x.count(t, `SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'routine_run_id'=$2`, x.a.ID, uuidToString(run.ID)); n != 1 {
+		t.Fatal("routine did not deliver exactly one result notice", n)
 	}
 	if n := x.count(t, `SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input ? 'employee_run_notice_id'`, x.a.ID); n != 0 {
 		t.Fatal("a second sender enqueued a notice", n)
@@ -298,7 +297,7 @@ func TestEmployeeWebhookFrozenEmployeePathWaitsForReaders(t *testing.T) {
 	x.f.h.EmployeeSceneWorker = &EmployeeSceneWorker{ReplicaReady: func(context.Context) error { return errEmployeeRoutineTestGate }}
 	x.processOneLease(t, deliveryID)
 	held, err := x.f.h.Queries.GetWebhookDelivery(ctx, parseUUID(deliveryID))
-	if err != nil || held.Status != deliveryStatusQueued || held.DispatchAttempts != 0 || !held.AvailableAt.Time.After(held.ReceivedAt.Time) {
+	if err != nil || held.Status != deliveryStatusFrozenQueued || held.DispatchAttempts != 0 || !held.AvailableAt.Time.After(held.ReceivedAt.Time) {
 		t.Fatalf("held = %s attempts=%d err=%v", held.Status, held.DispatchAttempts, err)
 	}
 	if n := x.count(t, `SELECT count(*) FROM agent_task_queue WHERE autopilot_run_id=$1::uuid`, accepted["run_id"]); n != 0 {
@@ -328,7 +327,7 @@ func (x *employeeWebhookRoutineFixture) processOneLease(t *testing.T, deliveryID
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.AvailableAt.Time.After(d.ReceivedAt.Time.Add(employeeWebhookReadinessDelay/2)) || d.Status != deliveryStatusQueued {
+		if d.AvailableAt.Time.After(d.ReceivedAt.Time.Add(employeeWebhookReadinessDelay/2)) || !webhookDeliveryPending(d.Status) {
 			return
 		}
 		if _, err := x.f.h.WebhookDeliveryWorker.ProcessNext(ctx); err != nil {

@@ -2288,6 +2288,36 @@ describe("scope MCP servers", () => {
     );
   });
 
+  it("deletes from the server row after confirmation and preserves other scope servers", async () => {
+    const remaining = { url: "https://mcp.example/other", headers: { Authorization: "Bearer kept" }, disabled: true };
+    api.getContextConfigAgent.mockResolvedValue(
+      personDetail({ rights: allRights, mcpConfig: { mcpServers: { docs: { url: "https://mcp.example/docs" }, other: remaining } } }),
+    );
+    const user = userEvent.setup();
+    renderPage({ binding: personBinding });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    const deleteLabel = copy.mcp_delete.replace("{{name}}", "docs");
+    await user.click(within(region).getByRole("button", { name: deleteLabel }));
+    const cancelled = await screen.findByRole("alertdialog");
+    await user.click(within(cancelled).getByRole("button", { name: "Cancel" }));
+    expect(api.setContextConfigMcpConfig).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+
+    await user.click(within(region).getByRole("button", { name: deleteLabel }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(api.setContextConfigMcpConfig).not.toHaveBeenCalled();
+    await user.click(within(confirm).getByRole("button", { name: deleteLabel }));
+    await waitFor(() =>
+      expect(api.setContextConfigMcpConfig).toHaveBeenCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        { mcpServers: { other: remaining } },
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
   it("lists a document holding a local server read-only", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       personDetail({

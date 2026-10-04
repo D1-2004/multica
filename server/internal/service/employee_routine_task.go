@@ -79,14 +79,15 @@ type EmployeeRoutineHost interface {
 	// CheckRoutineDeliveryTx validates the routine's notice target with
 	// database reads only. ErrRoutineDeliveryTarget means a configuration error.
 	CheckRoutineDeliveryTx(ctx context.Context, tx pgx.Tx, routine contextcap.Routine) error
-	// EnqueueRoutineStartNoticeTx records the start notice intent in tx. It
+	// EnqueueRoutineStartNoticeTx is the admission notification hook in tx. It
 	// performs no provider I/O; NotifyRoutineNotices wakes the outbox later.
 	EnqueueRoutineStartNoticeTx(ctx context.Context, tx pgx.Tx, notice RoutineStartNotice) error
 	// NotifyRoutineNotices wakes the response outbox after commit.
 	NotifyRoutineNotices()
 }
 
-// RoutineStartNotice is the start notice of one accepted occurrence.
+// RoutineStartNotice carries one accepted occurrence to the Host hook.
+// Employee Hosts keep admission silent and deliver the terminal result only.
 type RoutineStartNotice struct {
 	Routine  contextcap.Routine
 	Title    string

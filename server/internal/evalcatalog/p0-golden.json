@@ -460,11 +460,13 @@
       ],
       "verifies": [
         "真实 occurrence 一次效果；已受理指令冻结，下一次采用新版本；暂停跨时点无执行。",
-        "当前一次性要求不被旧单轮话覆盖，到点Run不重演原创建和旧格式；当前Host结果合同与一次消息可证。"
+        "当前一次性要求不被旧单轮话覆盖，到点Run不重演原创建和旧格式；当前Host结果合同与一次消息可证。",
+        "Employee定时工作零开始播报，终态直接交业务结果，耗时只保留运行记录。"
       ],
       "method": [
         "建专用例行任务，在真实到点回读结果，重投该 occurrence；受理后改指令，暂停跨下一时点，再恢复。核 occurrence/配置revision、Task、工作包、消息和完整窗口。",
-        "保留旧不要定时的历史复测明确5分钟请求，核真实once设置与原消息时间；含旧结构化创建packet的到点Run按当前结果consumer交付，保留前台派发和新Run工具证据。"
+        "保留旧不要定时的历史复测明确5分钟请求，核真实once设置与原消息时间；含旧结构化创建packet的到点Run按当前结果consumer交付，保留前台派发和新Run工具证据。",
+        "完整观察到点受理到终态的IM窗口，核零start、唯一结果及失败/空结果解释，与后台运行记录对照。"
       ],
       "scenarioRefs": [
         "cron-office",
@@ -480,7 +482,8 @@
         "office-cron-once-source-context",
         "office-cron-once-cancel-pending",
         "office-cron-once-history-scope",
-        "office-cron-once-result-contract"
+        "office-cron-once-result-contract",
+        "office-cron-result-only-delivery"
       ],
       "sources": [
         "docs/evals/p0-golden.md",
@@ -498,10 +501,12 @@
         "独立验证者"
       ],
       "verifies": [
-        "合法事件一次执行；同ID重投不重复，不同内容冲突拒绝；错签、伪造权限和禁用不扩权。"
+        "合法事件一次执行；同ID重投不重复，不同内容冲突拒绝；错签、伪造权限和禁用不扩权。",
+        "Employee Webhook不广播开始或耗时，唯一终态回复直接交付业务结果，异常结果有明确说明。"
       ],
       "method": [
-        "向专用endpoint发合法签名、同ID同内容、同ID改内容、错签、越权payload及禁用后事件。核 admission、冻结来源、Task/Run/action 数量和实际目标效果。"
+        "向专用endpoint发合法签名、同ID同内容、同ID改内容、错签、越权payload及禁用后事件。核 admission、冻结来源、Task/Run/action 数量和实际目标效果。",
+        "在专用Employee场域观察admission到terminal的完整IM窗口，核无start、单条end结果与实际Run绑定；失败及空输出不冒称成功。"
       ],
       "scenarioRefs": [
         "webhook-office",
@@ -513,7 +518,8 @@
         "office-hook-idempotent-replay",
         "office-hook-content-conflict",
         "office-hook-disabled",
-        "office-hook-payload-scene"
+        "office-hook-payload-scene",
+        "office-hook-result-only-delivery"
       ],
       "sources": [
         "docs/evals/p0-golden.md",

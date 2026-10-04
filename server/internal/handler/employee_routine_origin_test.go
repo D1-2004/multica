@@ -150,9 +150,8 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 	if err != nil || run.Status != "running" || !run.TaskID.Valid {
 		t.Fatalf("run = %+v err=%v", run, err)
 	}
-	var startText string
-	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeStart)).Scan(&startText); err != nil || !strings.Contains(startText, "Daily digest") || strings.Contains(startText, "FROZEN_ROUTINE_V1") {
-		t.Fatalf("start notice %q err=%v", startText, err)
+	if n := x.count(t, `SELECT count(*) FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeStart)); n != 0 {
+		t.Fatalf("routine admission announced itself: %d start notices", n)
 	}
 
 	// Edit the routine after acceptance: the accepted occurrence must not move.
@@ -216,7 +215,7 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 		t.Fatal(runState, taskState, result, err)
 	}
 	var endText string
-	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeEnd)).Scan(&endText); err != nil || !strings.Contains(endText, "ROUTINE_OUTPUT_OK") {
+	if err := testPool.QueryRow(ctx, `SELECT input->>'text' FROM response_action WHERE id=$1`, x.noticeID(run.ID, dingtalkresponse.RoutineNoticeEnd)).Scan(&endText); err != nil || endText != "ROUTINE_OUTPUT_OK" {
 		t.Fatalf("end notice %q err=%v", endText, err)
 	}
 
@@ -256,8 +255,8 @@ func TestEmployeeRoutineClaimRunsFrozenPacketWithSingleNoticeOwner(t *testing.T)
 	if err := testPool.QueryRow(ctx, `SELECT id::text FROM employee_task_run WHERE queue_task_id=$1::uuid`, queueID).Scan(&runID); err != nil {
 		t.Fatal(err)
 	}
-	if n := x.count(t, `SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'routine_run_id'=$2`, x.a.ID, uuidToString(run.ID)); n != 2 {
-		t.Fatal("routine notices are not exactly start and end", n)
+	if n := x.count(t, `SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'routine_run_id'=$2`, x.a.ID, uuidToString(run.ID)); n != 1 {
+		t.Fatal("routine did not deliver exactly one result notice", n)
 	}
 	if n := x.count(t, `SELECT count(*) FROM employee_run_notice WHERE run_id=$1::uuid`, runID); n != 0 {
 		t.Fatal("message Run notice also sent the routine result", n)

@@ -1331,7 +1331,10 @@ arrives. There are no org-level or person-level routines.
   context is ignored. The scene is fenced when the
   run is created (`scene.CheckTenant`): a routine of an org the agent left is
   recorded as skipped, never run elsewhere. Reruns get no layers.
-- **Notices.** The Host posts a start notice when the run's task is queued
+- **Notices.** Employee Direct routine occurrences skip the start announcement
+  and deliver only the final business result; timing remains in run history.
+  Failures, cancellation and missing output retain an explicit explanation.
+  Legacy Coordinator routines still post a start notice when the task is queued
   and an end notice from the task's terminal transaction, under a savepoint
   so a failed notice never aborts the transition (the clipped final
   output, the failure reason, or 已取消). Terminal paths without a
@@ -1355,7 +1358,12 @@ arrives. There are no org-level or person-level routines.
   webhook's payload allowlist (`trigger.payload_fields`: JSON pointers into
   the envelope, default `/event` and `/eventPayload`, frozen at acceptance,
   at most 32 KiB selected, else the occurrence fails) as untrusted data.
-  The routine's notices stay the only sender. A delivery frozen for this
+  The routine outbox stays the only sender. Employee routine occurrences (scheduled, one-shot, webhook or manual)
+  have no start announcement; their terminal notice contains only the final
+  business result, or an explicit failure/cancellation/no-result explanation,
+  without a completion banner or elapsed time. Timing and execution status
+  remain in run history. The frozen automation origin, not a mutable agent
+  mode or user payload, selects this policy. A delivery frozen for this
   path never switches producer; while the marker is missing it waits.
   `payload_fields` is set on the routine create/PATCH body by managers,
   never from a chat.

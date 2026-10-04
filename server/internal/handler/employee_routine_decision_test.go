@@ -120,8 +120,8 @@ func TestEmployeeRoutineDecisionWakeDispatchesFrozenRule(t *testing.T) {
 	if state.State != "dispatched" || state.QueueID == "" || uuidToString(state.RunTask) != state.QueueID || state.Reason != "the weekly report is missing" {
 		t.Fatalf("decision = %+v", state)
 	}
-	if n := x.count(t, `SELECT count(*) FROM response_action WHERE id=$1`, x.noticeID(run.ID, "start")); n != 1 {
-		t.Fatal("dispatched decision start notice", n)
+	if n := x.count(t, `SELECT count(*) FROM response_action WHERE id=$1`, x.noticeID(run.ID, "start")); n != 0 {
+		t.Fatal("dispatched decision unexpectedly announced its start", n)
 	}
 	auth := service.TaskClaimAuthorization{EmployeeDirectRuntimeIDs: []pgtype.UUID{x.runtime.ID}}
 	claimed := x.claimExact(t, auth, parseUUID(state.QueueID))
