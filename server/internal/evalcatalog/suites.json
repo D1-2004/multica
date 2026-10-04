@@ -1,0 +1,6285 @@
+{
+  "suites": [
+    {
+      "id": "browser-access-onboarding",
+      "project": "浏览器产品",
+      "title": "登录、导航与首次引导",
+      "description": "真实应用与隔离 PostgreSQL 的浏览器流程；登录夹具直接读取数据库验证码。",
+      "status": "defined",
+      "environmentIds": [
+        "browser"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture"
+      ],
+      "sources": [
+        "e2e/auth.spec.ts",
+        "e2e/navigation.spec.ts",
+        "e2e/onboarding-smoke.spec.ts",
+        "e2e/onboarding-shell.spec.ts",
+        "e2e/fixtures.ts",
+        "playwright.config.ts"
+      ],
+      "cases": [
+        {
+          "id": "auth-login-page",
+          "title": "登录页与空表单",
+          "module": "登录",
+          "why": "避免入口不可用或空内容被提交。",
+          "method": [
+            "打开登录路由并读取渲染后的控件。"
+          ],
+          "verify": [
+            "品牌文字、Email 输入及占位提示可见。",
+            "未填写时 Continue 按钮禁用。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/auth.spec.ts"
+          ],
+          "sourceCase": "login page renders correctly",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "auth-login-redirect",
+          "title": "登录后进入任务",
+          "module": "登录",
+          "why": "登录态应进入正确工作区的业务入口。",
+          "method": [
+            "使用 TestApiClient 对真实后端登录并在浏览器建立会话。"
+          ],
+          "verify": [
+            "URL 为当前工作区的 issues。",
+            "New Issue 入口可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/auth.spec.ts"
+          ],
+          "sourceCase": "login and redirect to /issues",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "auth-unauthenticated",
+          "title": "未登录访问拦截",
+          "module": "登录",
+          "why": "工作区页面不能绕过登录门禁。",
+          "method": [
+            "创建可访问工作区夹具。",
+            "无令牌访问该工作区的任务路由。"
+          ],
+          "verify": [
+            "重定向到登录页。",
+            "登录页内容可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/auth.spec.ts"
+          ],
+          "sourceCase": "unauthenticated user is redirected to /login",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "auth-logout",
+          "title": "退出登录",
+          "module": "登录",
+          "why": "退出后不能停留在受保护的业务页面。",
+          "method": [
+            "登录后打开工作区菜单并选择退出。"
+          ],
+          "verify": [
+            "URL 变为登录路由且登录内容可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/auth.spec.ts"
+          ],
+          "sourceCase": "logout redirects to /login",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "nav-sidebar",
+          "title": "侧栏业务导航",
+          "module": "导航",
+          "why": "页面链接必须与实际路由及内容一致。",
+          "method": [
+            "登录后依次点击 Inbox、Agents、Issues。"
+          ],
+          "verify": [
+            "每次 URL 匹配目标路由。",
+            "各目标页面对应内容出现。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/navigation.spec.ts"
+          ],
+          "sourceCase": "sidebar navigation works",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "nav-settings",
+          "title": "侧栏进入设置",
+          "module": "导航",
+          "why": "工作区设置入口需呈现正确设置结构。",
+          "method": [
+            "登录后点击侧栏 Settings。"
+          ],
+          "verify": [
+            "URL 匹配设置路由。",
+            "General 与 Members 标签可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/navigation.spec.ts"
+          ],
+          "sourceCase": "settings page loads via sidebar",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "nav-agents",
+          "title": "智能体列表页面加载",
+          "module": "导航",
+          "why": "列表入口不能出现空白或错误路由。",
+          "method": [
+            "登录后通过侧栏进入 Agents。"
+          ],
+          "verify": [
+            "URL 匹配 Agents 且页面标题可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/navigation.spec.ts"
+          ],
+          "sourceCase": "agents page shows agent list",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "onboarding-answer",
+          "title": "首次引导完整回答路径",
+          "module": "首次引导",
+          "why": "角色与用途共用一步，进度轨道需反映真实步骤。",
+          "method": [
+            "使用新邮箱夹具登录并进入 onboarding。",
+            "完成欢迎页、角色与用途，创建工作区进入 Runtime 步骤；保存截图。"
+          ],
+          "verify": [
+            "角色与用途在同屏。",
+            "轨道标题及当前步骤正确。",
+            "旧来源问题不出现在流程。",
+            "工作区创建后当前步骤为 Meet Mika。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "该步骤截图"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/onboarding-smoke.spec.ts"
+          ],
+          "sourceCase": "onboarding — welcome → about you (answer path)",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "onboarding-skip",
+          "title": "一次跳过整个问卷",
+          "module": "首次引导",
+          "why": "Skip 应覆盖角色与用途，不能留下半步状态。",
+          "method": [
+            "新用户从欢迎页进入问卷并点击一次 Skip；保存截图。"
+          ],
+          "verify": [
+            "下一步直接显示工作区命名页。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "该步骤截图"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/onboarding-smoke.spec.ts"
+          ],
+          "sourceCase": "onboarding — one skip clears the whole questionnaire step",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "onboarding-zh",
+          "title": "中文首次引导",
+          "module": "首次引导",
+          "why": "语言选择必须影响实际首屏与问卷标签。",
+          "method": [
+            "设置 zh-Hans locale cookie。",
+            "新用户进入欢迎页，点击中文 CTA 进入问卷并截图。"
+          ],
+          "verify": [
+            "欢迎页中文 CTA 可见。",
+            "问卷标题及角色问题使用中文。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "该步骤截图"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/onboarding-smoke.spec.ts"
+          ],
+          "sourceCase": "onboarding — zh-Hans renders Chinese labels",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "onboarding-width",
+          "title": "引导步骤实际列宽",
+          "module": "首次引导布局",
+          "why": "独立宽度限制曾导致表单与标题错位。",
+          "method": [
+            "走过问卷、工作区、Runtime 三步。",
+            "逐步测量主列及 heading、field、field-group 的 DOM 几何宽度。"
+          ],
+          "verify": [
+            "每个可见结构块与主列宽度差不超过 1 像素。"
+          ],
+          "evidence": [
+            "DOM 实际几何尺寸与宽度断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/onboarding-shell.spec.ts"
+          ],
+          "sourceCase": "onboarding — structural blocks match the column width on every step",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "onboarding-shell",
+          "title": "引导外壳跨步保留",
+          "module": "首次引导布局",
+          "why": "外壳重建会重启动画与画布，造成切步闪烁。",
+          "method": [
+            "在问卷页为 aside 和 main 设置持久探针。",
+            "回答问卷切换到工作区步骤。"
+          ],
+          "verify": [
+            "两个节点仍保有探针。",
+            "页面仅有一个 canvas。"
+          ],
+          "evidence": [
+            "DOM 节点身份探针与页面数量断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/onboarding-shell.spec.ts"
+          ],
+          "sourceCase": "onboarding — the shell survives step changes instead of re-mounting",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "browser-issues",
+      "project": "浏览器产品",
+      "title": "任务、表格、评论与属性",
+      "description": "真实任务与数据库夹具验证；分组失败场景在网络边界注入故障。",
+      "status": "defined",
+      "environmentIds": [
+        "browser"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture"
+      ],
+      "sources": [
+        "e2e/issues.spec.ts",
+        "e2e/issue-table.spec.ts",
+        "e2e/comments.spec.ts",
+        "e2e/property-icons.spec.ts",
+        "e2e/fixtures.ts"
+      ],
+      "cases": [
+        {
+          "id": "issues-board",
+          "title": "任务看板加载",
+          "module": "任务视图",
+          "why": "看板应呈现服务端任务所在状态。",
+          "method": [
+            "通过 API 创建任务后重新加载页面。"
+          ],
+          "verify": [
+            "Backlog、Todo、In Progress 状态列可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "issues page loads with board view",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-list",
+          "title": "从看板切换列表",
+          "module": "任务视图",
+          "why": "切换视图不能丢失同一任务集合。",
+          "method": [
+            "API 创建唯一标题任务。",
+            "重新加载后从 Board 切到 List。"
+          ],
+          "verify": [
+            "列表中指定任务标题可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can switch from board to list view",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-date-filter",
+          "title": "创建和更新日期筛选",
+          "module": "任务筛选",
+          "why": "创建日期与更新日期不能混用。",
+          "method": [
+            "API 创建今日与旧任务，SQL 分别调整创建/更新时间。",
+            "选择 Today，再将日期字段从 Created 切到 Updated。"
+          ],
+          "verify": [
+            "Created 时只显示今日创建项。",
+            "Updated 时包含旧创建但今日更新项。",
+            "旧创建且旧更新项始终隐藏。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can filter issues by created and updated dates",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-custom-date",
+          "title": "自定义创建日期",
+          "module": "任务筛选",
+          "why": "日历选择需转换成正确的日期过滤条件。",
+          "method": [
+            "创建今日与八日前夹具。",
+            "选择自定义今日日期并 Apply。"
+          ],
+          "verify": [
+            "今日任务可见，八日前任务隐藏。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can filter issues by custom created date",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-create",
+          "title": "手工新建任务",
+          "module": "任务创建",
+          "why": "用户提交后需能看到新任务并进入详情。",
+          "method": [
+            "切换手工创建模式，填写唯一标题并提交。",
+            "通过通知中的 View issue 进入详情。"
+          ],
+          "verify": [
+            "创建成功提示和通知标题可见。",
+            "详情显示 Properties。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can create a new issue",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-detail",
+          "title": "列表进入任务详情",
+          "module": "任务详情",
+          "why": "列表链接必须定位到夹具中的同一任务。",
+          "method": [
+            "API 创建任务并重新加载列表。",
+            "点击匹配任务 ID 的链接。"
+          ],
+          "verify": [
+            "进入任务详情 URL。",
+            "Properties 和返回 Issues 的链接可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can navigate to issue detail page",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "issues-dismiss",
+          "title": "取消新建任务",
+          "module": "任务创建",
+          "why": "关闭创建界面不应阻塞继续使用列表。",
+          "method": [
+            "打开新建任务输入界面并按 Escape。"
+          ],
+          "verify": [
+            "标题输入消失，New Issue 入口可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issues.spec.ts"
+          ],
+          "sourceCase": "can dismiss issue creation",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "table-large-groups",
+          "title": "千条任务服务端分组",
+          "module": "任务表格",
+          "why": "大集合必须精确计数，不能隐式全量加载并在客户端分组。",
+          "method": [
+            "事务夹具插入 1001 条任务，按状态分为 501、300、200。",
+            "观察 Table 切换后的请求和服务端分组响应。"
+          ],
+          "verify": [
+            "总数 1001 且各组计数精确。",
+            "没有 legacy 全量任务请求。",
+            "rows 请求少于 8 次且每页上限不超过 50。",
+            "没有暂停分组提示。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "实际 HTTP 响应的计数、行或游标断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issue-table.spec.ts"
+          ],
+          "sourceCase": "groups 1,001 issues exactly without materializing the full result",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "table-hierarchy",
+          "title": "同组与跨组子任务",
+          "module": "任务表格",
+          "why": "按状态分组后父子关系仍需符合所在组的层次规则。",
+          "method": [
+            "创建同状态父子与跨状态子任务。",
+            "按状态分组并读取 root/children 响应。"
+          ],
+          "verify": [
+            "同组子项保留在父项下面。",
+            "跨组子项位于新组根部。",
+            "实际缩进分别为 18 与 0 像素。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "实际 HTTP 响应的计数、行或游标断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issue-table.spec.ts"
+          ],
+          "sourceCase": "keeps same-group children nested and cross-group children at the group root",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "table-realtime-cursor",
+          "title": "实时排序更新重建游标",
+          "module": "任务表格",
+          "why": "沿用旧排序边界游标会漏项或重复。",
+          "method": [
+            "加载 60 条任务及尾页。",
+            "API 将最后一项移动到首位，观察实时更新后的首尾分页。"
+          ],
+          "verify": [
+            "刷新后游标不同于旧游标。",
+            "新首尾页包含全部 60 个不同 ID，含移动项。",
+            "显示 Loaded 60 of 60。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "实际 HTTP 响应的计数、行或游标断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issue-table.spec.ts"
+          ],
+          "sourceCase": "drops stale branch cursors after a realtime sort-boundary update",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "table-branch-retry",
+          "title": "单分支失败和重试",
+          "module": "任务表格",
+          "why": "服务端分支失败不能退回错误的客户端分组结果。",
+          "method": [
+            "在网络边界将指定状态分支的 rows 请求改为 500。",
+            "恢复正常响应并点击该分支 Retry。"
+          ],
+          "verify": [
+            "失败时指定任务不出现且 Retry 可见。",
+            "恢复后任务出现，Retry 消失。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "单分支故障注入与请求监测"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/issue-table.spec.ts"
+          ],
+          "sourceCase": "shows a branch-level retry and never falls back to client grouping",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "comments-add",
+          "title": "激活编辑器并提交评论",
+          "module": "任务评论",
+          "why": "只读外壳激活后应支持真实评论写入与展示。",
+          "method": [
+            "API 创建任务后进入详情。",
+            "点击 composer shell，填写评论并用快捷键提交。"
+          ],
+          "verify": [
+            "评论内容在活动区可见。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/comments.spec.ts"
+          ],
+          "sourceCase": "can add a comment on an issue",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "comments-empty",
+          "title": "空评论禁用提交",
+          "module": "任务评论",
+          "why": "空内容门禁必须在未激活的外壳中也成立。",
+          "method": [
+            "打开夹具任务详情，不激活空编辑器。"
+          ],
+          "verify": [
+            "composer shell 可见且提交按钮禁用。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/comments.spec.ts"
+          ],
+          "sourceCase": "comment submit button is disabled when empty",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "properties-icon",
+          "title": "自定义属性图标持久化",
+          "module": "任务属性",
+          "why": "图标修改需保存到属性并能再次编辑清除。",
+          "method": [
+            "创建带 Flag 图标的属性。",
+            "打开编辑核对图标，再移除并保存。"
+          ],
+          "verify": [
+            "创建列表及编辑页均显示 Flag。",
+            "移除后该属性没有图标节点。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/property-icons.spec.ts"
+          ],
+          "sourceCase": "creates, persists, and clears a custom property icon",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "browser-workspace-settings",
+      "project": "浏览器产品",
+      "title": "工作区设置",
+      "description": "包含真实名称保存及网络替身模拟的 Composio callback。",
+      "status": "defined",
+      "environmentIds": [
+        "browser"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture"
+      ],
+      "sources": [
+        "e2e/settings.spec.ts"
+      ],
+      "cases": [
+        {
+          "id": "settings-rename",
+          "title": "名称保存后侧栏更新",
+          "module": "工作区设置",
+          "why": "服务端名称保存应同步影响当前侧栏。",
+          "method": [
+            "读取原名，保存唯一新名称。",
+            "观察侧栏后恢复原名。"
+          ],
+          "verify": [
+            "保存成功提示可见。",
+            "无需刷新侧栏即显示新名称。",
+            "原名称恢复成功。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "未在本次目录整理中执行；定义存在不表示当前版本通过。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/settings.spec.ts"
+          ],
+          "sourceCase": "updating workspace name reflects in sidebar immediately",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "settings-composio-callback",
+          "title": "连接回调提示与刷新",
+          "module": "连接设置",
+          "why": "旧形状回调路由应落到工作区并刷新连接状态。",
+          "method": [
+            "网络替身提供 catalog、connections 与 connect init。",
+            "模拟无工作区前缀的 callback redirect 并点击 Connect。"
+          ],
+          "verify": [
+            "出现 Connected 提示。",
+            "列表出现 Disconnect。",
+            "一次性 connected 参数被清除。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "连接端点为网络替身；不证明真实 Composio 授权、后端持久化或外部服务可用。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/settings.spec.ts"
+          ],
+          "sourceCase": "connecting a Composio toolkit shows a toast and refreshes the list",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "browser-agent-mcp",
+      "project": "浏览器产品",
+      "title": "智能体 MCP 入口与配置请求",
+      "description": "真实登录，智能体及 Composio 网络边界替身；验证 UI 创建者入口和写入请求。",
+      "status": "defined",
+      "environmentIds": [
+        "browser"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture",
+        "fake-provider"
+      ],
+      "sources": [
+        "e2e/agent-mcp.spec.ts"
+      ],
+      "cases": [
+        {
+          "id": "agent-mcp-owner-toggle",
+          "title": "创建者修改工具允许列表",
+          "module": "智能体 MCP",
+          "why": "全量允许列表请求错误会改变智能体可用工具面。",
+          "method": [
+            "网络替身将智能体 owner 设置为当前用户。",
+            "打开 MCP Apps 并允许一个 toolkit，捕获 PUT。"
+          ],
+          "verify": [
+            "创建者可见目录。",
+            "PUT 仅含被开启的 toolkit，允许列表精确匹配。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "网络替身捕获的请求参数"
+          ],
+          "boundaries": [
+            "只验证 UI 和请求体；不证明后端授权、配置持久化或真实 MCP 调用。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/agent-mcp.spec.ts"
+          ],
+          "sourceCase": "creator sees the MCP Apps tab and toggling a toolkit writes the allowlist",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "agent-mcp-viewer-hidden",
+          "title": "非创建者隐藏 MCP 入口",
+          "module": "智能体 MCP",
+          "why": "普通查看者不应显示创建者配置操作。",
+          "method": [
+            "网络替身将 owner 设置为另一用户并打开智能体详情。"
+          ],
+          "verify": [
+            "Activity 可见。",
+            "MCP Apps 入口不存在。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "这是 UI 可见性门禁；不替代后端权限拒绝测试。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/agent-mcp.spec.ts"
+          ],
+          "sourceCase": "a non-creator viewer does not see the MCP Apps tab",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "browser-dsh-plugins",
+      "project": "浏览器产品",
+      "title": "DSH 插件绑定与目录",
+      "description": "插件、Runtime、导入和绑定端点均为网络替身；不连接 npm 或真实 DSH Runtime。",
+      "status": "defined",
+      "environmentIds": [
+        "browser"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture",
+        "fake-provider"
+      ],
+      "sources": [
+        "e2e/dsh-plugins.spec.ts"
+      ],
+      "cases": [
+        {
+          "id": "dsh-attach-detach",
+          "title": "绑定与解绑完整插件集合",
+          "module": "DSH 插件",
+          "why": "replace-set 接口需发送完整集合，不能发增量造成其他插件丢失。",
+          "method": [
+            "从空绑定打开 Plugins 并 Attach 一个插件。",
+            "捕获全量 PUT 后 Detach。"
+          ],
+          "verify": [
+            "首次 PUT 为单插件 enabled=true 集合。",
+            "解绑 PUT 为空集合且 UI 回到空状态。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "网络替身捕获的请求参数"
+          ],
+          "boundaries": [
+            "网络替身验证界面与请求合同；不证明 npm 导入、真实 Runtime 组合、后端存储或执行效果。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/dsh-plugins.spec.ts"
+          ],
+          "sourceCase": "attaching a plugin to an agent sends the whole set, and detaching sends it back",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "dsh-disable-retains-binding",
+          "title": "禁用保留插件绑定",
+          "module": "DSH 插件",
+          "why": "禁用应保留配置，不能误当成移除。",
+          "method": [
+            "网络替身提供已启用插件。",
+            "切换 Enable 开关并捕获 PUT。"
+          ],
+          "verify": [
+            "同一个插件 ID 留在集合中且 enabled=false。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "网络替身捕获的请求参数"
+          ],
+          "boundaries": [
+            "网络替身验证界面与请求合同；不证明 npm 导入、真实 Runtime 组合、后端存储或执行效果。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/dsh-plugins.spec.ts"
+          ],
+          "sourceCase": "disabling an attached plugin keeps it in the set",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "dsh-runtime-gate",
+          "title": "非 DSH Runtime 隐藏插件",
+          "module": "DSH 插件",
+          "why": "插件只应用于支持该组合方式的 Runtime。",
+          "method": [
+            "将智能体绑定为非 DSH Runtime 的网络夹具。",
+            "打开智能体详情。"
+          ],
+          "verify": [
+            "Activity 可见而 Plugins tab 不存在。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "网络替身验证界面与请求合同；不证明 npm 导入、真实 Runtime 组合、后端存储或执行效果。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/dsh-plugins.spec.ts"
+          ],
+          "sourceCase": "the Plugins tab is not offered on a non-DSH runtime",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "dsh-workspace-import-remove",
+          "title": "工作区导入与移除插件",
+          "module": "DSH 插件",
+          "why": "用户选择的包规格与删除目标需原样传到边界。",
+          "method": [
+            "目录网络替身提供两个插件。",
+            "填写 npm spec 导入，再确认移除指定插件。"
+          ],
+          "verify": [
+            "POST source 精确等于填写的包规格。",
+            "DELETE 使用指定插件 ID。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言",
+            "网络替身捕获的请求参数"
+          ],
+          "boundaries": [
+            "网络替身验证界面与请求合同；不证明 npm 导入、真实 Runtime 组合、后端存储或执行效果。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture",
+            "fake-provider"
+          ],
+          "sources": [
+            "e2e/dsh-plugins.spec.ts"
+          ],
+          "sourceCase": "the workspace page imports a plugin and removes it",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "browser-chat",
+      "project": "浏览器产品",
+      "title": "聊天快捷操作与附件关联",
+      "description": "快捷操作走实际页面；附件合同走 HTTP 与 PostgreSQL，不依赖在线真实执行器。",
+      "status": "defined",
+      "environmentIds": [
+        "browser",
+        "local-integration"
+      ],
+      "identityIds": [
+        "local-tester"
+      ],
+      "toolIds": [
+        "worktree",
+        "local-stack",
+        "playwright",
+        "fixture"
+      ],
+      "sources": [
+        "e2e/quick-actions.spec.ts",
+        "e2e/chat-attachments.spec.ts"
+      ],
+      "cases": [
+        {
+          "id": "chat-quick-actions",
+          "title": "快捷操作发送隐藏提示",
+          "module": "聊天快捷操作",
+          "why": "展示标签和真正发送内容不同，点击必须发送约定 prompt。",
+          "method": [
+            "SQL 创建测试 Runtime、智能体、session 与含三个 quick actions 的 assistant 消息。",
+            "浏览器进入该 session 并点击主操作。"
+          ],
+          "verify": [
+            "三个按钮可见。",
+            "主操作对应 hidden prompt 出现在消息区。",
+            "该按钮禁用。"
+          ],
+          "evidence": [
+            "浏览器 DOM、页面内容与交互断言"
+          ],
+          "boundaries": [
+            "Runtime 是数据库夹具；不证明真实模型处理或后台执行完成。"
+          ],
+          "environmentIds": [
+            "browser"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "playwright",
+            "fixture"
+          ],
+          "sources": [
+            "e2e/quick-actions.spec.ts"
+          ],
+          "sourceCase": "renders assistant quick actions and sends the hidden prompt",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "chat-attachment-binding",
+          "title": "上传绑定会话并回填消息",
+          "module": "聊天附件",
+          "why": "上传和发送分阶段，附件关系必须追溯到正确消息。",
+          "method": [
+            "真实 API 登录并通过 SQL 创建会话夹具。",
+            "HTTP 上传小 PNG 到 session，再发送引用附件的消息。",
+            "查询附件数据库行。"
+          ],
+          "verify": [
+            "上传响应绑定正确 session 且 message_id 为空。",
+            "发送返回 201 及真实 message_id。",
+            "数据库附件行回填同一个 message_id。"
+          ],
+          "evidence": [
+            "HTTP 上传和发送响应",
+            "PostgreSQL attachment 关联行"
+          ],
+          "boundaries": [
+            "仅证明附件关系持久化；不证明图片可读、真实模型理解、前端上传流程或钉钉原生文件送达。"
+          ],
+          "environmentIds": [
+            "local-integration"
+          ],
+          "identityIds": [
+            "local-tester"
+          ],
+          "toolIds": [
+            "worktree",
+            "local-stack",
+            "fixture",
+            "business-api",
+            "verification"
+          ],
+          "sources": [
+            "e2e/chat-attachments.spec.ts"
+          ],
+          "sourceCase": "upload-file binds attachment to the chat_session; send back-fills chat_message_id",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "coordinator-assoc",
+      "project": "Coordinator",
+      "title": "历史场域与事项关联",
+      "description": "保留旧召回风险与出处；原 suite 以 conversation_id 和旧关联结构描述合同，需迁移到当前 scene_id。",
+      "status": "needs-migration",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "participant"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification"
+      ],
+      "sources": [
+        "docs/evals/assoc-scene-eval-catalog.json",
+        "docs/evals/assoc-scene-eval-suite.json",
+        "docs/agent-scene.md"
+      ],
+      "cases": [
+        {
+          "id": "assoc-coordinator-issue-ack-not-delivery",
+          "title": "接单 ACK 不是送达",
+          "module": "Coordinator 交付边界",
+          "why": "不能把接单文本当成执行、外发或关联命中。",
+          "method": [
+            "在授权机器人会话提出需要向测试参与者确认的任务。",
+            "分别观察 ACK 与真实 Issue/执行记录。"
+          ],
+          "verify": [
+            "ACK 描述交付物但不是发送回执。",
+            "真实事项与执行创建。",
+            "ACK 文字不充当召回命中。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "coordinator-issue-ack-not-delivery",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-inbound-robot-cid-recall",
+          "title": "入站场域召回原事项",
+          "module": "场域关联",
+          "why": "收到任务的场域需能找回该任务创建的事项。",
+          "method": [
+            "创建带唯一标记的机器人任务。",
+            "读取关联日志并调用原 suite 的召回查询。"
+          ],
+          "verify": [
+            "入站 association event 指向该事项。",
+            "原入站场域召回同一个事项，origin 对应入站会话。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "inbound-robot-cid-recall",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-robot-outbound-dws-to-dongxiang",
+          "title": "独立验证外发到达",
+          "module": "外发送达",
+          "why": "机器人正文或执行器自述无法证明收件人收到。",
+          "method": [
+            "等候任务调用 DWS 外发。",
+            "由授权收件人身份独立读取目标测试会话。"
+          ],
+          "verify": [
+            "新增消息在验收时间后出现。",
+            "发送身份与测试执行身份匹配。",
+            "目标来自可信解析而非模型构造。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "robot-outbound-dws-to-dongxiang",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-outbound-cid-recall-after-dws",
+          "title": "送达回执建立外发关联",
+          "module": "场域关联",
+          "why": "外发场域关联必须来自实际发送回执。",
+          "method": [
+            "独立确认外发消息到达。",
+            "读取 outbound bound、目标场域召回与 events。"
+          ],
+          "verify": [
+            "目标场域召回入站同一事项。",
+            "events 含外发消息引用。",
+            "bound 使用真实目标回执。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "outbound-cid-recall-after-dws",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-person-mismatch-must-not-drop-cid-hit",
+          "title": "身份别名不遮蔽场域命中",
+          "module": "召回排序",
+          "why": "不同身份命名空间只能影响排序，不能误删已命中的场域事项。",
+          "method": [
+            "用不同人身份别名和同一场域构造召回。",
+            "对照原 unit 与历史链路断言。"
+          ],
+          "verify": [
+            "场域命中在人员别名不匹配时仍保留。",
+            "person match 只增加排序信号。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "person-mismatch-must-not-drop-cid-hit",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-recency-ranks-waiting-matter-first",
+          "title": "近期等待事项正确排序",
+          "module": "召回排序",
+          "why": "旧事项或其他场域事项不能遮蔽当前等待工作。",
+          "method": [
+            "构造同场域新等待事项及旧事项。",
+            "读取召回排序并对照 unit 覆盖。"
+          ],
+          "verify": [
+            "近期等待事项排名正确。",
+            "另一场域的无关事项不被作为本例首个命中。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "recency-ranks-waiting-matter-first",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-reply-in-dongxiang-recalls-same-issue",
+          "title": "目标会话答复延续原事项",
+          "module": "事项续接",
+          "why": "收到外联答复后不能为同一目的另开事项。",
+          "method": [
+            "在已送达目标测试会话作后续答复。",
+            "观察召回及 Coordinator look_into。"
+          ],
+          "verify": [
+            "命中之前外发事项。",
+            "沿用已存在目的而非重复创建。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "reply-in-dongxiang-recalls-same-issue",
+          "status": "needs-migration",
+          "history": ""
+        },
+        {
+          "id": "assoc-robot-cid-not-confused-with-de-cid",
+          "title": "入站与外发会话不混淆",
+          "module": "场域精度",
+          "why": "一个会话命中不是另一个会话收到消息的证明。",
+          "method": [
+            "分别读取入站和目标外发的关系与召回。"
+          ],
+          "verify": [
+            "入站作为任务来源，目标作为 outreach。",
+            "两会话关系不同。",
+            "入站命中不替代外发独立读回。"
+          ],
+          "evidence": [
+            "业务 API 召回与关联事件",
+            "SLS 平台关联日志",
+            "授权收件人独立消息回读"
+          ],
+          "boundaries": [
+            "原 suite 使用历史 conversation_id 召回合同；未迁移到当前 scene_id 前不能作为当前可运行验收。",
+            "历史 ACK、模型正文及另一场域命中均不是独立送达证据。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/assoc-scene-eval-suite.json"
+          ],
+          "sourceCase": "robot-cid-not-confused-with-de-cid",
+          "status": "needs-migration",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "coordinator-collect",
+      "project": "Coordinator",
+      "title": "忙碌窗口与消息收集",
+      "description": "原 suite 要求两项活动工作、真实服务器 arrival 时序和三轮运行；历史真实链路记录存在阻断。",
+      "status": "historical",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification"
+      ],
+      "sources": [
+        "docs/evals/coordinator-collect-e2e.json",
+        "docs/evals/results/2026-09-07-coordinator-collect.json"
+      ],
+      "cases": [
+        {
+          "id": "collect-busy-progress-pings",
+          "title": "忙碌时独立进度追问",
+          "module": "消息窗口",
+          "why": "容量等待不能吞掉用户要求回复的消息。",
+          "method": [
+            "保持两个任务 active。",
+            "将六条进度或在场追问按至少 6 秒间隔发送，记录服务端 arrival。"
+          ],
+          "verify": [
+            "形成不同 sealed window。",
+            "30 秒内有依据回复且没有新增任务。",
+            "不等待沙箱槽位才决定，不被 Router 提前静默完成。"
+          ],
+          "evidence": [
+            "SLS accepted/collected/claimed/decided/parked",
+            "Router arrival 与完成记录",
+            "DWS 同会话独立回读",
+            "事项与执行计数"
+          ],
+          "boundaries": [
+            "旧 suite 时间阈值与当前版本需再核对。",
+            "未满足真实 arrival 或容量夹具不能证明窗口行为。",
+            "历史阻断不是当前通过或失败。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "sourceCase": "busy-progress-pings",
+          "status": "historical",
+          "history": "2026-09-07：结果记录为 BLOCKED_LIVE_E2E；缺少相关授权、容量、arrival 时序或独立读回时不得标通过。"
+        },
+        {
+          "id": "collect-typing-burst",
+          "title": "连续短句合成一个窗口",
+          "module": "消息窗口",
+          "why": "一个连续句子不应被拆成重复答复。",
+          "method": [
+            "发送两条构成一个短句的消息，核服务器 arrival 差小于 4 秒。"
+          ],
+          "verify": [
+            "一个 window、一个可见 reply。",
+            "所有 callback 在终态处理时才 settle。"
+          ],
+          "evidence": [
+            "SLS accepted/collected/claimed/decided/parked",
+            "Router arrival 与完成记录",
+            "DWS 同会话独立回读",
+            "事项与执行计数"
+          ],
+          "boundaries": [
+            "旧 suite 时间阈值与当前版本需再核对。",
+            "未满足真实 arrival 或容量夹具不能证明窗口行为。",
+            "历史阻断不是当前通过或失败。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "sourceCase": "typing-burst",
+          "status": "historical",
+          "history": "2026-09-07：结果记录为 BLOCKED_LIVE_E2E；缺少相关授权、容量、arrival 时序或独立读回时不得标通过。"
+        },
+        {
+          "id": "collect-continuous-typing-cap",
+          "title": "持续输入窗口仍有上限",
+          "module": "消息窗口",
+          "why": "连续输入不能使收集无限延期。",
+          "method": [
+            "连续发送低于 quiet timeout 间隔的输入。",
+            "读取 job 创建时间与 collect deadline。"
+          ],
+          "verify": [
+            "deadline 不晚于 created_at 加 12 秒。"
+          ],
+          "evidence": [
+            "SLS accepted/collected/claimed/decided/parked",
+            "Router arrival 与完成记录",
+            "DWS 同会话独立回读",
+            "事项与执行计数"
+          ],
+          "boundaries": [
+            "旧 suite 时间阈值与当前版本需再核对。",
+            "未满足真实 arrival 或容量夹具不能证明窗口行为。",
+            "历史阻断不是当前通过或失败。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "sourceCase": "continuous-typing-cap",
+          "status": "historical",
+          "history": "2026-09-07：结果记录为 BLOCKED_LIVE_E2E；缺少相关授权、容量、arrival 时序或独立读回时不得标通过。"
+        },
+        {
+          "id": "collect-repeat-accepted-work",
+          "title": "重复请求保持同一交付物",
+          "module": "重复与续接",
+          "why": "自然语言重复提醒不能自动造成重复执行。",
+          "method": [
+            "重复当前已接受的第一任务请求并读取场域任务事实。"
+          ],
+          "verify": [
+            "仅保留一个原交付物事项。",
+            "回复已知进度。",
+            "没有第二次任务派发。"
+          ],
+          "evidence": [
+            "SLS accepted/collected/claimed/decided/parked",
+            "Router arrival 与完成记录",
+            "DWS 同会话独立回读",
+            "事项与执行计数"
+          ],
+          "boundaries": [
+            "旧 suite 时间阈值与当前版本需再核对。",
+            "未满足真实 arrival 或容量夹具不能证明窗口行为。",
+            "历史阻断不是当前通过或失败。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "sourceCase": "repeat-accepted-work",
+          "status": "historical",
+          "history": "2026-09-07：结果记录为 BLOCKED_LIVE_E2E；缺少相关授权、容量、arrival 时序或独立读回时不得标通过。"
+        },
+        {
+          "id": "collect-third-work-and-ack",
+          "title": "第三工作等待及 ACK 分窗",
+          "module": "消息窗口与容量",
+          "why": "真实新工作等待容量时，后续轻回复仍需独立处理。",
+          "method": [
+            "两个 active 工作时提交第三交付物，再发 ACK 与追问。",
+            "释放容量并跟踪等待事项。"
+          ],
+          "verify": [
+            "第三工作被持久化等待并最终执行一次。",
+            "ACK 和追问独立 window。",
+            "ACK 静默且不派工。"
+          ],
+          "evidence": [
+            "SLS accepted/collected/claimed/decided/parked",
+            "Router arrival 与完成记录",
+            "DWS 同会话独立回读",
+            "事项与执行计数"
+          ],
+          "boundaries": [
+            "旧 suite 时间阈值与当前版本需再核对。",
+            "未满足真实 arrival 或容量夹具不能证明窗口行为。",
+            "历史阻断不是当前通过或失败。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification"
+          ],
+          "sources": [
+            "docs/evals/coordinator-collect-e2e.json"
+          ],
+          "sourceCase": "third-work-and-ack",
+          "status": "historical",
+          "history": "2026-09-07：结果记录为 BLOCKED_LIVE_E2E；缺少相关授权、容量、arrival 时序或独立读回时不得标通过。"
+        }
+      ]
+    },
+    {
+      "id": "coordinator-progressive-smoke",
+      "project": "Coordinator",
+      "title": "历史预发渐进 Smoke",
+      "description": "四条 2026-09-08 真实链路记录；覆盖范围及历史版本固定，不认证当前部署。",
+      "status": "historical",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/evals/coordinator-progressive-smoke.json",
+        "docs/evals/results/2026-09-08-coordinator-progressive-pre-e2e.json"
+      ],
+      "cases": [
+        {
+          "id": "progressive-capability-inventory",
+          "title": "直接回答已安装能力",
+          "module": "能力介绍",
+          "why": "能力目录已提供时不应误创建工作或读取无关历史。",
+          "method": [
+            "在授权测试会话询问可用技能。",
+            "核实际目录、模型调用与任务事实。"
+          ],
+          "verify": [
+            "依据已安装 catalog 一次 reply。",
+            "无工作项和历史读取。",
+            "实际 policy 标记与目标版本一致。"
+          ],
+          "evidence": [
+            "DWS 同会话独立读回",
+            "Langfuse 实际模型请求",
+            "业务 Task/Issue 事实",
+            "历史发布及副本标记"
+          ],
+          "boundaries": [
+            "四例 smoke 不代表所有历史场景已覆盖。",
+            "当时 PASS 不代表当前模型、Runtime、配置或代码仍通过。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCase": "capability_inventory",
+          "status": "historical",
+          "history": "2026-09-08：原记录列该例 PASS，属于当时版本的四例真实预发 smoke；本次未复验。"
+        },
+        {
+          "id": "progressive-missing-payload",
+          "title": "缺正文时澄清",
+          "module": "外发授权",
+          "why": "收件人明确但正文缺失时不能擅自发消息。",
+          "method": [
+            "提出只指定测试收件人的外发请求。",
+            "读取可见回答和任务计数。"
+          ],
+          "verify": [
+            "澄清待发送内容。",
+            "无 Issue 或 continuation。"
+          ],
+          "evidence": [
+            "DWS 同会话独立读回",
+            "Langfuse 实际模型请求",
+            "业务 Task/Issue 事实",
+            "历史发布及副本标记"
+          ],
+          "boundaries": [
+            "四例 smoke 不代表所有历史场景已覆盖。",
+            "当时 PASS 不代表当前模型、Runtime、配置或代码仍通过。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCase": "missing_payload",
+          "status": "historical",
+          "history": "2026-09-08：原记录列该例 PASS，属于当时版本的四例真实预发 smoke；本次未复验。"
+        },
+        {
+          "id": "progressive-sandbox-echo",
+          "title": "沙箱命令输出真实回传",
+          "module": "真实执行",
+          "why": "执行结果必须来自实际命令，且当前会话不重复交付。",
+          "method": [
+            "要求独立测试任务执行 printf 唯一标记。",
+            "核任务执行事实和同会话独立读回。"
+          ],
+          "verify": [
+            "建立真实新工作计划并执行。",
+            "输出在当前会话出现且仅一次。",
+            "无重复 wrap-up。"
+          ],
+          "evidence": [
+            "DWS 同会话独立读回",
+            "Langfuse 实际模型请求",
+            "业务 Task/Issue 事实",
+            "历史发布及副本标记"
+          ],
+          "boundaries": [
+            "四例 smoke 不代表所有历史场景已覆盖。",
+            "当时 PASS 不代表当前模型、Runtime、配置或代码仍通过。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCase": "sandbox_echo",
+          "status": "historical",
+          "history": "2026-09-08：原记录列该例 PASS，属于当时版本的四例真实预发 smoke；本次未复验。"
+        },
+        {
+          "id": "progressive-presence",
+          "title": "忙碌期间回复在场",
+          "module": "前后台交互",
+          "why": "正在执行后台任务时前台不能被容量阻塞。",
+          "method": [
+            "保持后台工作忙碌并询问在场。",
+            "观察 reply 与任务事实。"
+          ],
+          "verify": [
+            "有用 reply。",
+            "不新增工作，不等沙箱容量释放。"
+          ],
+          "evidence": [
+            "DWS 同会话独立读回",
+            "Langfuse 实际模型请求",
+            "业务 Task/Issue 事实",
+            "历史发布及副本标记"
+          ],
+          "boundaries": [
+            "四例 smoke 不代表所有历史场景已覆盖。",
+            "当时 PASS 不代表当前模型、Runtime、配置或代码仍通过。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/evals/coordinator-progressive-smoke.json"
+          ],
+          "sourceCase": "presence",
+          "status": "historical",
+          "history": "2026-09-08：原记录列该例 PASS，属于当时版本的四例真实预发 smoke；本次未复验。"
+        }
+      ]
+    },
+    {
+      "id": "coordinator-policy-replay",
+      "project": "Coordinator",
+      "title": "历史策略语义回放",
+      "description": "真实模型运行 Coordinator 主循环与 finish；上下文及读取工具为合成替身。源码仍在，历史结果 policy 与当前 registry 不同。",
+      "status": "historical",
+      "environmentIds": [
+        "model-replay"
+      ],
+      "identityIds": [
+        "local-tester",
+        "observer"
+      ],
+      "toolIds": [
+        "model-replay",
+        "fake-provider",
+        "fixture",
+        "verification"
+      ],
+      "sources": [
+        "server/internal/service/inboundcoord/policy_replay_test.go",
+        "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json",
+        "server/internal/service/inboundcoord/policy/registry.json"
+      ],
+      "cases": [
+        {
+          "id": "policy-sandbox-command-handoff",
+          "title": "独立命令作为新工作",
+          "module": "工作规划",
+          "why": "旧待发送事项不能吸收新的命令交付物。",
+          "method": [
+            "用冻结对话夹具提出独立命令执行请求。",
+            "运行真实模型 loop 与 finish。"
+          ],
+          "verify": [
+            "action=issue 且一个新 work。",
+            "原始 source 归因保留。",
+            "当前场域 recall 提供工作证据。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "sandbox_command_handoff",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-missing-message-payload",
+          "title": "缺少消息正文",
+          "module": "工作授权",
+          "why": "只指定收件人不构成完整外发交付物。",
+          "method": [
+            "合成当前消息只给目标不含正文。",
+            "运行真实 loop/finish。"
+          ],
+          "verify": [
+            "action=reply，work 数为零。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "missing_message_payload",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-supplied-message-payload",
+          "title": "提供完整消息正文",
+          "module": "工作授权",
+          "why": "材料齐全的新外发请求应进入独立工作。",
+          "method": [
+            "合成当前消息同时给目标与正文。",
+            "运行真实 loop/finish。"
+          ],
+          "verify": [
+            "action=issue，一个新 work。",
+            "source refs 与 new_request basis 正确。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "supplied_message_payload",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-capability-inventory",
+          "title": "已有技能目录直接答",
+          "module": "能力介绍",
+          "why": "已提供事实无需额外读取或派任务。",
+          "method": [
+            "在冻结上下文提供技能目录后询问能力。"
+          ],
+          "verify": [
+            "reply、零 work。",
+            "无额外读取且只一轮模型。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "capability_inventory",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-capability-execution",
+          "title": "使用技能完成交付物",
+          "module": "工作规划",
+          "why": "问能力与要求能力执行是不同意图。",
+          "method": [
+            "提供技能目录并要求用技能整理指定材料。"
+          ],
+          "verify": [
+            "issue、一个独立 work。",
+            "new_request 及 source refs 正确。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "capability_execution",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-approval-good",
+          "title": "确认等待发送的方案",
+          "module": "短答理解",
+          "why": "短肯定应结合真实等待问题判断是否授权下一步。",
+          "method": [
+            "合成原对话为等待确认的发送方案，再输入短肯定。"
+          ],
+          "verify": [
+            "先读取原对话。",
+            "续接正确旧事项，basis=answer。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "approval_good",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-closing-good",
+          "title": "已完成后的短肯定",
+          "module": "短答理解",
+          "why": "相同肯定词处于收尾上下文时不能重新执行。",
+          "method": [
+            "合成已完成对话，再输入短肯定。"
+          ],
+          "verify": [
+            "先读取原对话。",
+            "reply 或 silence，零 work。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "closing_good",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-status-ping",
+          "title": "有依据回复进度",
+          "module": "进度读取",
+          "why": "进度追问不能充当执行或重试授权。",
+          "method": [
+            "提供旧工作召回卡并询问状态。",
+            "只读 issue 与 comments 替身。"
+          ],
+          "verify": [
+            "reply、零 work。",
+            "读取正确事项状态与评论。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "status_ping",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-explicit-retry",
+          "title": "明确失败重试",
+          "module": "事项续接",
+          "why": "失败之后只有明确请求才允许重试同目标。",
+          "method": [
+            "合成失败记录、权限恢复与按原方案重试请求。"
+          ],
+          "verify": [
+            "续接原事项，basis=retry。",
+            "目标与 source refs 正确。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "explicit_retry",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-same-person-different-work",
+          "title": "同人不同交付物",
+          "module": "事项关联",
+          "why": "参与者相同不足以把新目标归为旧事项。",
+          "method": [
+            "提供同参与者旧通知事项，并请求另一确认交付物。"
+          ],
+          "verify": [
+            "一个 new_request work。",
+            "没有绑定旧事项。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "same_person_different_work",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-mixed-continuation-and-new-work",
+          "title": "同窗续接与新建分别归因",
+          "module": "多消息规划",
+          "why": "混合窗口需保持每项工作的来源和目标。",
+          "method": [
+            "冻结一个窗口，含旧事项更改、新请求和轻消息。"
+          ],
+          "verify": [
+            "生成两项 work：一旧一新。",
+            "轻消息为 non-work refs。",
+            "source refs 不串。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "mixed_continuation_and_new_work",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-two-continuations",
+          "title": "同窗两个旧事项",
+          "module": "多消息规划",
+          "why": "一次窗口可包含两个独立旧目标，不能只续接最近事项。",
+          "method": [
+            "提供两张可信旧事项卡及各自更改消息。"
+          ],
+          "verify": [
+            "两项 continuation 各指正确旧事项。",
+            "各自 source refs 与 change basis 正确。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "two_continuations",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-memory-inventory",
+          "title": "提供记忆直接回答",
+          "module": "记忆查询",
+          "why": "查询现有约定不能误变成新工作。",
+          "method": [
+            "上下文提供记忆事实并询问已有约定。"
+          ],
+          "verify": [
+            "reply、零 work。",
+            "无额外读取，保留一轮模型。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "memory_inventory",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        },
+        {
+          "id": "policy-open-work-inventory",
+          "title": "当前事项清单回答",
+          "module": "事项查询",
+          "why": "工作清单应来自当前场域事实而非模型猜测。",
+          "method": [
+            "冻结两个在办事项的召回替身并询问清单。"
+          ],
+          "verify": [
+            "reply、零 work。",
+            "当前场域 recall 建立工作证据。"
+          ],
+          "evidence": [
+            "真实模型 action 与 work plan",
+            "source attribution 和 continuation target 断言",
+            "冻结 fixture 与历史结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/policy_replay_test.go",
+            "docs/evals/results/2026-09-08-coordinator-policy-v2-full.json"
+          ],
+          "sourceCase": "open_work_inventory",
+          "status": "historical",
+          "history": "2026-09-08：历史同次完整策略回放 14/14 PASS；当前 registry 已为后续版本，本次未重新执行。"
+        }
+      ]
+    },
+    {
+      "id": "coordinator-proactive-replay",
+      "project": "Coordinator",
+      "title": "群参与、身份与交付物泛化",
+      "description": "26 条真实模型回放覆盖参与资格和工作关联；历史成功及重复失败分别保留。",
+      "status": "historical",
+      "environmentIds": [
+        "model-replay"
+      ],
+      "identityIds": [
+        "local-tester",
+        "observer"
+      ],
+      "toolIds": [
+        "model-replay",
+        "fake-provider",
+        "fixture",
+        "verification"
+      ],
+      "sources": [
+        "server/internal/service/inboundcoord/proactive_relevance_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "docs/evals/20260910-generic-proactive-cases.md",
+        "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+        "docs/evals/results/20260910T033713Z-generic-proactive-repeat.json",
+        "docs/evals/results/20260910T034039Z-generic-proactive-retry.json"
+      ],
+      "cases": [
+        {
+          "id": "proactive-proactive-other-mention",
+          "title": "真实 @ 指向别人",
+          "module": "群参与",
+          "why": "显示名字与真实 @ 目标不同仍以可信接收对象为准。",
+          "method": [
+            "夹具消息写员工近似称呼，但真实 @ 元数据指向另一成员。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零新建或续接。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_other_mention",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-other-name",
+          "title": "点名其他成员",
+          "module": "群参与",
+          "why": "已有工作不能使员工接管给别人的呼叫。",
+          "method": [
+            "带旧事项的群上下文中点名另一成员询问在场。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_other_name",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-other-assignment",
+          "title": "交给其他成员的任务",
+          "module": "群参与",
+          "why": "工作内容相关不代表任务授予本员工。",
+          "method": [
+            "群消息明确将排查任务交给其他成员。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、不新建或续接。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_other_assignment",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-chatter",
+          "title": "群友闲聊",
+          "module": "群参与",
+          "why": "社交消息不应触发岗位执行。",
+          "method": [
+            "夹具输入给另一成员的社交安排。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_chatter",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-bare-greeting",
+          "title": "无对象群问候",
+          "module": "群参与",
+          "why": "群内无对象呼叫不自动确定员工为接收者。",
+          "method": [
+            "群消息仅有无明确对象的在场询问。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_bare_greeting",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-employee-name",
+          "title": "可信绑定名呼叫员工",
+          "module": "身份识别",
+          "why": "真实接收身份应支持正常在场回复。",
+          "method": [
+            "用可信绑定账号名称呼叫员工。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "简短 reply、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_employee_name",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-employee-role",
+          "title": "员工角色呼叫",
+          "module": "群参与",
+          "why": "指向数字员工角色的呼叫可回复但不派工。",
+          "method": [
+            "群消息直接呼叫数字员工角色。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "reply、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_employee_role",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-invitation",
+          "title": "员工帮助第三方",
+          "module": "工作授权",
+          "why": "明确请求员工帮助别人仍是本员工工作。",
+          "method": [
+            "对员工提出为第三方整理故障摘要的请求。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "一个新事项，不续接无关旧事项。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_invitation",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-open-role-issue",
+          "title": "岗位内开放求助",
+          "module": "群参与",
+          "why": "开放求助在可信岗位边界内可以构成新请求。",
+          "method": [
+            "群消息提出岗位内故障开放求助。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "一个独立 new_request work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_open_role_issue",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-mixed-recipients",
+          "title": "同窗不同接收者",
+          "module": "消息归因",
+          "why": "混合窗口不能借一条 addressed 消息接管全部消息。",
+          "method": [
+            "一个窗口放入真实 @ 别人和真实 @ 本员工的两条消息。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "仅回应本员工那条。",
+            "另一条不被接管或归入 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_mixed_recipients",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-same-work-addition",
+          "title": "原工作实质补充",
+          "module": "事项关联",
+          "why": "新诊断材料应保留到原目标。",
+          "method": [
+            "提供排查旧事项并输入同一故障的新增地区和错误材料。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "continuation 指向原事项。",
+            "本次材料与 source refs 保留。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_same_work_addition",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-proactive-presence-no-restart",
+          "title": "在场询问不重新执行",
+          "module": "进度与轻反馈",
+          "why": "重复提醒继续工作不能制造无必要新执行。",
+          "method": [
+            "旧任务仍在办，当前消息询问在场并说明只需回应。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "reply、零新 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/proactive_relevance_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "proactive_presence_no_restart",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-receiving-name",
+          "title": "绑定账号名优先",
+          "module": "身份识别",
+          "why": "执行配置名不能替代真实接收账号名。",
+          "method": [
+            "绑定账号名与配置名不同，呼叫可信账号名。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "reply、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_receiving_name",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-unknown-receiving-name",
+          "title": "接收身份缺失",
+          "module": "身份识别",
+          "why": "配置显示名不能补造可信接收身份。",
+          "method": [
+            "缺绑定账号名的夹具中只按配置名呼叫。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、不新建或续接。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_unknown_receiving_name",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-english-self",
+          "title": "英文呼叫可信身份",
+          "module": "身份识别",
+          "why": "身份资格需跨语言保持一致。",
+          "method": [
+            "用英文按可信绑定账号名询问在场。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "reply、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_english_self",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-english-other",
+          "title": "英文呼叫配置名",
+          "module": "身份识别",
+          "why": "英文配置别名也不能被当作可信本人。",
+          "method": [
+            "可信绑定名不同，英文按配置名呼叫。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_english_other",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-quoted-role",
+          "title": "引用对白中的员工称呼",
+          "module": "引用理解",
+          "why": "引用材料中的称呼不构成当前请求。",
+          "method": [
+            "当前消息是编辑培训文案，员工呼叫只存在于引文中。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_quoted_role",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-outside-role",
+          "title": "岗位外开放求助",
+          "module": "群参与",
+          "why": "开放邀请仍受岗位和接收范围限制。",
+          "method": [
+            "群消息向另一个业务岗位开放求助。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "silence、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_outside_role",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-output-question",
+          "title": "问句含停止回复表述",
+          "module": "语义理解",
+          "why": "关键词形式的否定不等于实际禁止回复。",
+          "method": [
+            "按可信员工名提出关于回复方式的疑问。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "正常 reply、零 work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_output_question",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-technical-subject",
+          "title": "工具名称作为技术对象",
+          "module": "工作规划",
+          "why": "消息提到工具不是外部操作授权或接收者。",
+          "method": [
+            "按可信身份请求排查聊天读取工具故障并给修复建议。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "一个独立新事项。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_technical_subject",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-changed-marker-same-work",
+          "title": "同工作更换诊断编号",
+          "module": "事项关联",
+          "why": "编号变更不意味着交付物变更。",
+          "method": [
+            "旧上传故障有旧诊断标记，当前补充同故障的新标记。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "continuation 到原事项且保留补充。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_changed_marker_same_work",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-same-marker-different-work",
+          "title": "不同工作共用诊断编号",
+          "module": "事项关联",
+          "why": "相同编号不能压过不同业务目标。",
+          "method": [
+            "旧上传故障与新测试框架启动性能问题共用合成标记。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "新事项，不续接旧故障。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_same_marker_different_work",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-shared-reference-english",
+          "title": "英文不同工作共用引用",
+          "module": "事项关联",
+          "why": "交付物判断不能依赖语言和诊断引用巧合。",
+          "method": [
+            "英文旧上传问题和新 IDE 启动问题共用合成 request reference。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "一个 new_request work。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_shared_reference_english",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-different-work-no-marker",
+          "title": "不同工作不带编号",
+          "module": "事项关联",
+          "why": "没有编号仍需依据目标判断新旧。",
+          "method": [
+            "旧上传故障上下文中请求分析另一启动问题，不含编号。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "新事项。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_different_work_no_marker",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-same-work-no-marker",
+          "title": "同工作不带编号",
+          "module": "事项关联",
+          "why": "去除编号不应让真实补充变成重复事项。",
+          "method": [
+            "旧上传故障上下文中补充失败条件，不含诊断编号。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "continuation 原事项并保留条件。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_same_work_no_marker",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        },
+        {
+          "id": "proactive-generic-same-object-different-deliverable",
+          "title": "同对象不同交付物",
+          "module": "事项关联",
+          "why": "分析故障与编写操作说明是不同产物。",
+          "method": [
+            "旧目标是排查上传问题，当前请求编写面向用户的说明文档。",
+            "运行真实模型主循环及 finish，核 action、work 与 source/target 断言。"
+          ],
+          "verify": [
+            "新事项，不能继续旧排查目标。"
+          ],
+          "evidence": [
+            "真实模型参与和工作规划结果",
+            "source refs、target_match 与 basis 断言",
+            "完整与重复回放结果 JSON"
+          ],
+          "boundaries": [
+            "真实模型、合成冻结对话及只读替身；不提交 Host，不创建真实事项或发送真实消息。",
+            "动作断言不认证回复措辞和当前部署；历史策略与当前 registry 版本不同。"
+          ],
+          "environmentIds": [
+            "model-replay"
+          ],
+          "identityIds": [
+            "local-tester",
+            "observer"
+          ],
+          "toolIds": [
+            "model-replay",
+            "fake-provider",
+            "fixture",
+            "verification"
+          ],
+          "sources": [
+            "server/internal/service/inboundcoord/generic_replay_test.go",
+            "docs/evals/results/20260910T033123Z-generic-proactive-gate.json",
+            "docs/evals/20260910-generic-proactive-cases.md"
+          ],
+          "sourceCase": "generic_same_object_different_deliverable",
+          "status": "historical",
+          "history": "2026-09-10：同次完整回放 26/26 PASS。重点重复回放 15/16 PASS，另一次审核模型请求失败；未改代码补该场景 2/2 PASS，原失败保留。"
+        }
+      ]
+    },
+    {
+      "id": "remote-agent-mcp",
+      "project": "集成工具",
+      "title": "远端 Agent MCP 深链路",
+      "description": "一个连续远端脚本按五个报告主场景呈现；后续阶段依赖前面创建的真实 Task 和 Issue。",
+      "status": "defined",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "business-api",
+        "runtime-inspect",
+        "verification"
+      ],
+      "sources": [
+        "scripts/agent-mcp-deep-e2e.mjs"
+      ],
+      "cases": [
+        {
+          "id": "remote-mcp-protocol",
+          "title": "MCP 认证与协议边界",
+          "module": "MCP 协议",
+          "why": "未授权访问、Origin 和参数错误必须在正确边界被拒绝。",
+          "method": [
+            "通过 header 和连接地址分别调用 initialize。",
+            "探测缺少/错误认证、非可信 Origin、tools/list、未知方法、坏参数和不存在任务。"
+          ],
+          "verify": [
+            "缺少/错误认证为 401，非可信 Origin 为 403。",
+            "initialize 和 tools/list 为 200，约定七个工具均存在。",
+            "未知方法为 -32601，坏参数为 -32602，不存在任务为 tool error。"
+          ],
+          "evidence": [
+            "远端 MCP HTTP/JSON-RPC 响应",
+            "真实 Task/Issue/产物读取",
+            "脚本 JSON 报告"
+          ],
+          "boundaries": [
+            "这是同一个脚本的依赖阶段，不是五个可独立运行的测试函数。",
+            "安全 headers 只记录未逐值断言；poll 接受任意终态，具体成功由后续产物条件约束。",
+            "脚本需实际授权身份与可执行 Runtime；本次未运行。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "business-api",
+            "runtime-inspect",
+            "verification"
+          ],
+          "sources": [
+            "scripts/agent-mcp-deep-e2e.mjs"
+          ],
+          "sourceCase": "protocol",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "remote-mcp-idempotency",
+          "title": "并发委派幂等与冲突",
+          "module": "MCP 委派",
+          "why": "技术重投必须复用同一任务，内容冲突不能被悄悄接受。",
+          "method": [
+            "相同 request_id 并发发送六次同内容 delegate_task。",
+            "用同 ID 提交不同内容并观察响应。"
+          ],
+          "verify": [
+            "六次响应仅一个 Task ID。",
+            "同 ID 不同内容返回 tool error。"
+          ],
+          "evidence": [
+            "远端 MCP HTTP/JSON-RPC 响应",
+            "真实 Task/Issue/产物读取",
+            "脚本 JSON 报告"
+          ],
+          "boundaries": [
+            "这是同一个脚本的依赖阶段，不是五个可独立运行的测试函数。",
+            "安全 headers 只记录未逐值断言；poll 接受任意终态，具体成功由后续产物条件约束。",
+            "脚本需实际授权身份与可执行 Runtime；本次未运行。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "business-api",
+            "runtime-inspect",
+            "verification"
+          ],
+          "sources": [
+            "scripts/agent-mcp-deep-e2e.mjs"
+          ],
+          "sourceCase": "idempotency",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "remote-mcp-issue",
+          "title": "读取委派事项",
+          "module": "MCP 事项视图",
+          "why": "远端 Task 需暴露可继续操作的正确 Issue 事实。",
+          "method": [
+            "等待原委派 Task 到终态，获取其 Issue ID。",
+            "调用 get_issue 并记录标识、URL、标题与评论计数。"
+          ],
+          "verify": [
+            "Task 暴露 Issue ID。",
+            "get_issue 不返回 tool error，元数据可读。"
+          ],
+          "evidence": [
+            "远端 MCP HTTP/JSON-RPC 响应",
+            "真实 Task/Issue/产物读取",
+            "脚本 JSON 报告"
+          ],
+          "boundaries": [
+            "这是同一个脚本的依赖阶段，不是五个可独立运行的测试函数。",
+            "安全 headers 只记录未逐值断言；poll 接受任意终态，具体成功由后续产物条件约束。",
+            "脚本需实际授权身份与可执行 Runtime；本次未运行。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "business-api",
+            "runtime-inspect",
+            "verification"
+          ],
+          "sources": [
+            "scripts/agent-mcp-deep-e2e.mjs"
+          ],
+          "sourceCase": "issue",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "remote-mcp-artifact",
+          "title": "持久文件产物读回",
+          "module": "MCP 产物",
+          "why": "工作区文件必须成为可独立读取的持久产物。",
+          "method": [
+            "委派实际执行器写唯一标记文件并读取验证，使用上传工具保存到 Issue。",
+            "list_artifacts 找到文件，再 read_artifact。"
+          ],
+          "verify": [
+            "列表包含指定 filename 和 artifact ID。",
+            "嵌入资源 text 精确等于标记。"
+          ],
+          "evidence": [
+            "远端 MCP HTTP/JSON-RPC 响应",
+            "真实 Task/Issue/产物读取",
+            "脚本 JSON 报告"
+          ],
+          "boundaries": [
+            "这是同一个脚本的依赖阶段，不是五个可独立运行的测试函数。",
+            "安全 headers 只记录未逐值断言；poll 接受任意终态，具体成功由后续产物条件约束。",
+            "脚本需实际授权身份与可执行 Runtime；本次未运行。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "business-api",
+            "runtime-inspect",
+            "verification"
+          ],
+          "sources": [
+            "scripts/agent-mcp-deep-e2e.mjs"
+          ],
+          "sourceCase": "artifact",
+          "status": "defined",
+          "history": ""
+        },
+        {
+          "id": "remote-mcp-follow-up",
+          "title": "续接找回原文件与上下文",
+          "module": "MCP 续接",
+          "why": "继续同一事项应使用之前执行的文件，不能重新创建来掩盖上下文丢失。",
+          "method": [
+            "continue_issue 请求不重建文件，读取前次文件。",
+            "等待终态，检查产物及事项评论。"
+          ],
+          "verify": [
+            "follow-up 仍指同一个 Issue。",
+            "产物或评论中精确出现找到前文件的约定结果。"
+          ],
+          "evidence": [
+            "远端 MCP HTTP/JSON-RPC 响应",
+            "真实 Task/Issue/产物读取",
+            "脚本 JSON 报告"
+          ],
+          "boundaries": [
+            "这是同一个脚本的依赖阶段，不是五个可独立运行的测试函数。",
+            "安全 headers 只记录未逐值断言；poll 接受任意终态，具体成功由后续产物条件约束。",
+            "脚本需实际授权身份与可执行 Runtime；本次未运行。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "business-api",
+            "runtime-inspect",
+            "verification"
+          ],
+          "sources": [
+            "scripts/agent-mcp-deep-e2e.mjs"
+          ],
+          "sourceCase": "followUp",
+          "status": "defined",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-task-baseline",
+      "project": "Employee",
+      "title": "对话与独立任务基础",
+      "description": "五个稳定 BASE ID 对应 2026-10-03 的六段历史真实 IM 剧本；原环境与当前环境需分开登记。",
+      "status": "historical",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+        "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-base-history",
+          "title": "冲突历史、指代与格式",
+          "module": "对话理解",
+          "why": "不能通过清空旧历史规避冲突，也不能把查询变成执行。",
+          "method": [
+            "保留旧冲突历史，重设两项值后询问后者，再只纠正其中一项。",
+            "要求仅 JSON 输出并由收件人回读。"
+          ],
+          "verify": [
+            "实际值按最近明确纠正正确更新，另一项保留。",
+            "JSON 合法且无额外围栏或前缀。",
+            "零 Task 与学习副作用。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "历史基础剧本不覆盖全部跨场域或故障场景。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCase": "BASE-HISTORY",
+          "status": "historical",
+          "history": "2026-10-03：历史真实 IM 记录确认该基础剧本；本次未在当前版本或当前环境复验。"
+        },
+        {
+          "id": "employee-base-task",
+          "title": "真实执行、进度和同任务续接",
+          "module": "独立任务",
+          "why": "进度需来自执行事实，续接与致谢不能产生错误新工作。",
+          "method": [
+            "运行 Python 等待并计算平方。",
+            "运行中查询进度，之后继续求合计，再发送致谢。"
+          ],
+          "verify": [
+            "同一个 Task、两个必要 Run，无 Issue。",
+            "实际工具输出包含等待、平方及正确合计。",
+            "进度读取真实 Task，致谢无新执行。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "历史基础剧本不覆盖全部跨场域或故障场景。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCase": "BASE-TASK",
+          "status": "historical",
+          "history": "2026-10-03：历史真实 IM 记录确认该基础剧本；本次未在当前版本或当前环境复验。"
+        },
+        {
+          "id": "employee-base-steer",
+          "title": "群内运行纠正与退出屏障",
+          "module": "任务纠正",
+          "why": "旧执行尚未退出时不能让后继同时运行或交付过时结果。",
+          "method": [
+            "群内开始长清单任务。",
+            "运行中更改数量并删除一项，跟踪原执行与后继。"
+          ],
+          "verify": [
+            "同 Task 旧 Run 取消、后继成功。",
+            "后继领取晚于实际进程退出证明。",
+            "仅交付最新清单，旧通知以纠正原因抑制。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "历史基础剧本不覆盖全部跨场域或故障场景。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCase": "BASE-STEER",
+          "status": "historical",
+          "history": "2026-10-03：历史真实 IM 记录确认该基础剧本；本次未在当前版本或当前环境复验。"
+        },
+        {
+          "id": "employee-base-stop",
+          "title": "否定停止、请求停止与真实退出",
+          "module": "任务停止",
+          "why": "逻辑取消不是退出；否定控制指令也不能产生停止效果。",
+          "method": [
+            "开始实际长执行，先发不要停止，再明确停止。",
+            "查询退出并发送致谢，持续观察超过原定完成时间。"
+          ],
+          "verify": [
+            "否定指令无 stop/steer/dispatch 效果。",
+            "停止固定原 Task/Run/queue，先 stopping 后有证明的 stopped。",
+            "无后继、旧结果或重复取消事件。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "历史基础剧本不覆盖全部跨场域或故障场景。",
+            "验收计划新增的纠正后继与前驱退出链场景不能据基础停止记录认定已验。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCase": "BASE-STOP",
+          "status": "historical",
+          "history": "2026-10-03：历史真实 IM 记录确认该基础剧本；本次未在当前版本或当前环境复验。"
+        },
+        {
+          "id": "employee-base-file",
+          "title": "仅文件交付与续接策略继承",
+          "module": "文件交付",
+          "why": "旧文件回执不能满足新 Run，续接应保留静音要求。",
+          "method": [
+            "要求 CSV 仅文件交付并独立下载。",
+            "同 Task 增加一行后再次下载核对内容与字节/hash。"
+          ],
+          "verify": [
+            "两个 Run 各有自己的原生文件回执。",
+            "第二文件继承旧内容并新增要求行。",
+            "两轮均无额外完成总结。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "历史基础剧本不覆盖全部跨场域或故障场景。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-e2e-results.md",
+            "docs/plans/2026-10-03/employee-loop-parity-acceptance.md"
+          ],
+          "sourceCase": "BASE-FILE",
+          "status": "historical",
+          "history": "2026-10-03：历史真实 IM 记录确认该基础剧本；本次未在当前版本或当前环境复验。"
+        }
+      ]
+    },
+    {
+      "id": "employee-collection",
+      "project": "Employee",
+      "title": "跨场域收集与参与者隔离",
+      "description": "三个授权对象、乱序归集及同人多 Task 的真实验收；需要明确参与者与消息引用。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "participant",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-col-01",
+          "title": "三人乱序收集与隐私",
+          "module": "跨场域收集",
+          "why": "收齐结果要准确归属且只交付授权发起场域。",
+          "method": [
+            "邀请三名授权对象分别提供 7、11、13，前两人乱序作答。",
+            "查询进度，再让第三人答复并独立回读各场域。"
+          ],
+          "verify": [
+            "中途进度确切为 2/3。",
+            "发起场域收到合计 31 一次。",
+            "其他参与者不收到总表。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md"
+          ],
+          "sourceCase": "COL-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-col-02",
+          "title": "同一参与者两个任务",
+          "module": "跨场域收集",
+          "why": "同人的答复不能按最近任务猜测归属。",
+          "method": [
+            "建立同参与者的两个 Task 和不同 invite 引用。",
+            "乱序按引用作答，再构造无引用歧义答复。"
+          ],
+          "verify": [
+            "两个 Task 输入不串。",
+            "引用对应正确 invite。",
+            "无引用有歧义时澄清。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md"
+          ],
+          "sourceCase": "COL-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-col-03",
+          "title": "重投与撤销后的迟答",
+          "module": "跨场域收集",
+          "why": "技术重投不能重复计数，取消或撤权不能被迟答复活。",
+          "method": [
+            "重放同一 source receipt。",
+            "取消 Task 或撤权后发送迟到答复。"
+          ],
+          "verify": [
+            "不新增人数或重复汇总。",
+            "迟答不恢复被取消或撤权工作。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md"
+          ],
+          "sourceCase": "COL-03",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-automation",
+      "project": "Employee",
+      "title": "定时、Webhook 与 Watchdog",
+      "description": "按真实 occurrence、签名、活动和等待事实验收，不以模拟到点或 heartbeat 当作业务进展。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect",
+        "fixture"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-cron-01",
+          "title": "真实定时发生",
+          "module": "场域例行任务",
+          "why": "任务需由实际时点触发，不能把手工调用当定时。",
+          "method": [
+            "在测试场域配置 Asia/Shanghai 每分钟唯一标记。",
+            "至少观察一次真实 scheduled occurrence 与执行结果。"
+          ],
+          "verify": [
+            "occurrence 与 Task/Run 来源对应。",
+            "实际到点产生一次正确输出。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md"
+          ],
+          "sourceCase": "CRON-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-cron-02",
+          "title": "定时重投与工作包冻结",
+          "module": "场域例行任务",
+          "why": "已接受发生不能因后改配置换掉内容。",
+          "method": [
+            "技术重投同 occurrence。",
+            "受理后修改指令，分别读取旧工作和下一次发生。"
+          ],
+          "verify": [
+            "重投无重复 Task/Run。",
+            "旧工作包不变，下一次使用新指令。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md"
+          ],
+          "sourceCase": "CRON-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-cron-03",
+          "title": "暂停越点与恢复",
+          "module": "场域例行任务",
+          "why": "暂停必须阻止新发生，恢复不补造未获准效果。",
+          "method": [
+            "暂停后跨过合法下一时点。",
+            "恢复并观察后续真实下一时点。"
+          ],
+          "verify": [
+            "暂停期间零新执行。",
+            "恢复后下一时点按配置执行。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md"
+          ],
+          "sourceCase": "CRON-03",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-cron-04",
+          "title": "定时条件决策",
+          "module": "场域例行任务",
+          "why": "decision 模式必须区分真实条件并准确记账。",
+          "method": [
+            "配置 decision。",
+            "分别构造条件不满足与满足的两个实际 occurrence。"
+          ],
+          "verify": [
+            "不满足 quiet，满足授权 dispatch。",
+            "实际模型调用数与通知 owner 正确。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/03-cron.md"
+          ],
+          "sourceCase": "CRON-04",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-hook-01",
+          "title": "合法签名触发真实任务",
+          "module": "Webhook",
+          "why": "签名可信入口和实际执行要形成完整来源链。",
+          "method": [
+            "在隔离授权端点发送合法签名事件。",
+            "要求打印唯一标记并独立验证输出。"
+          ],
+          "verify": [
+            "可信 delivery/source/Task 关联完整。",
+            "仅一次真实执行及正确结果。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md"
+          ],
+          "sourceCase": "HOOK-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-hook-02",
+          "title": "Webhook 重投与内容冲突",
+          "module": "Webhook",
+          "why": "相同 provider ID 的重投与内容变更应不同处理。",
+          "method": [
+            "同 ID 同内容重投，再同 ID 改内容。",
+            "使用新 ID 提交合法事件。"
+          ],
+          "verify": [
+            "重投零新增 Task/Run。",
+            "内容变化判冲突。",
+            "新 ID 正常执行。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md"
+          ],
+          "sourceCase": "HOOK-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-hook-03",
+          "title": "错签、伪造场域与禁用",
+          "module": "Webhook",
+          "why": "payload 不得授予场域权限，禁用要阻止新受理。",
+          "method": [
+            "提交错签、协议限定时的过期及伪造场域事件。",
+            "禁用后提交新事件。"
+          ],
+          "verify": [
+            "未获准事件拒绝且不扩大权限。",
+            "禁用后无新执行。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md"
+          ],
+          "sourceCase": "HOOK-03",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-hook-04",
+          "title": "Webhook 条件与目标定位",
+          "module": "Webhook",
+          "why": "合法事件仍只能作用于预授权目标。",
+          "method": [
+            "decision 条件 false 与 true 分别送入真实事件。",
+            "加入定向 Task 引用并检查其他 Task。"
+          ],
+          "verify": [
+            "false quiet、true 授权动作。",
+            "引用目标正确，不修改其他 Task。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/04-webhook.md"
+          ],
+          "sourceCase": "HOOK-04",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-wd-01",
+          "title": "无进展的一次诚实提醒",
+          "module": "Watchdog",
+          "why": "停滞提示需有依据且不能凭空汇报进度。",
+          "method": [
+            "授权隔离任务长等待无输出。",
+            "只缩短该测试 scope 阈值，观察到时提醒。"
+          ],
+          "verify": [
+            "同一 episode 只一次诚实提示。",
+            "不虚构执行进度，不新建 Run。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md"
+          ],
+          "sourceCase": "WD-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-wd-02",
+          "title": "心跳与真实活动区别",
+          "module": "Watchdog",
+          "why": "系统 heartbeat 不代表工作已经取得进展。",
+          "method": [
+            "先只产生 heartbeat。",
+            "随后产生真实工具调用或输出。"
+          ],
+          "verify": [
+            "heartbeat 不清除停滞 episode。",
+            "真实活动后 episode 清除。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md"
+          ],
+          "sourceCase": "WD-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-wd-03",
+          "title": "双消费者与重启去重",
+          "module": "Watchdog",
+          "why": "扫描重叠或重启不能反复打扰用户。",
+          "method": [
+            "使用授权隔离实例安排两个消费者及受控进程重启。",
+            "对比 episode/action 与实际消息。"
+          ],
+          "verify": [
+            "提醒不重复。",
+            "不产生新的 Run。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md"
+          ],
+          "sourceCase": "WD-03",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-wd-04",
+          "title": "等待输入时定向提醒",
+          "module": "Watchdog",
+          "why": "等待收集需要准确人数和获准提醒对象。",
+          "method": [
+            "构造等待输入进度 2/3。",
+            "观察邀请提醒，再让对象答复。"
+          ],
+          "verify": [
+            "进度准确。",
+            "只有获准 invite 得到一次提醒。",
+            "答复后不继续催促。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/05-watchdog.md"
+          ],
+          "sourceCase": "WD-04",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-resources",
+      "project": "Employee",
+      "title": "附件、视觉、引用与轻反馈",
+      "description": "真实资源内容与权限是验收对象；视觉需独立 provider 路径，引用控制需当前外层授权。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-res-01",
+          "title": "文本附件隐藏随机码",
+          "module": "附件理解",
+          "why": "题目不泄露答案才能证明读取了真实资源。",
+          "method": [
+            "上传含随机码的文本附件。",
+            "提出不含答案的问题并检查回答引用。"
+          ],
+          "verify": [
+            "准确回答附件码。",
+            "文件引用与实际读取对象一致。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+          ],
+          "sourceCase": "RES-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-res-02",
+          "title": "真实像素与图形关系",
+          "module": "视觉理解",
+          "why": "OCR 或猜测不能替代视觉关系理解。",
+          "method": [
+            "提供含随机文字和图形关系的真实图片。",
+            "同时提问两项并核 provider 像素请求。"
+          ],
+          "verify": [
+            "文字与图形关系两项正确。",
+            "真实 provider 收到目标图片像素。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "需要真实 vision 路径；仅 OCR、工具声明或模型自述不认证像素理解。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+          ],
+          "sourceCase": "RES-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-res-03",
+          "title": "坏文件、过大与权限拒绝",
+          "module": "资源边界",
+          "why": "不可用资源应诚实失败而不能旁读其他资源。",
+          "method": [
+            "提交过大、损坏和无权限资源分别提问。",
+            "检查实际读取路径与失败反馈。"
+          ],
+          "verify": [
+            "各项明确失败。",
+            "没有读取其他资源或扩大权限。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+          ],
+          "sourceCase": "RES-03",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-ref-01",
+          "title": "引用续接和运行任务停止",
+          "module": "引用控制",
+          "why": "历史引用只用于定位，当前外层请求才决定新控制。",
+          "method": [
+            "引用已交付 Task 并提出新要求。",
+            "引用正在工作的 Task 明确停止，核实际退出。"
+          ],
+          "verify": [
+            "续接同 Task 创建必要新 Run。",
+            "定位与当前授权可信。",
+            "停止具有真实退出证明。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+          ],
+          "sourceCase": "REF-01",
+          "status": "planned",
+          "history": "2026-10-03：基础结果明确带引用的续接和停止仍拒绝；该例未完成真实验收。"
+        },
+        {
+          "id": "employee-rea-01",
+          "title": "轻反馈不复活旧命令",
+          "module": "轻反馈",
+          "why": "reaction 或致谢不是重新执行原指令的授权。",
+          "method": [
+            "对旧命令发送 reaction 或致谢。",
+            "provider 支持时核实际表情回读。"
+          ],
+          "verify": [
+            "无执行或控制副作用。",
+            "支持的原生表情真实可读回；Quiet 不强凑工作。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "provider 不支持原生 reaction 时须记录外部能力边界。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/06-resources.md"
+          ],
+          "sourceCase": "REA-01",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-memory",
+      "project": "Employee",
+      "title": "记忆作用域、纠正及经验晋级",
+      "description": "明确记忆写入/纠正与 verified learning 是不同验收层级；历史查询成功不认证完整演化。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "participant",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-base-memory",
+          "title": "记忆纠正、隔离与遗忘",
+          "module": "场域记忆",
+          "why": "旧值不能借历史复活，记忆查询也不能派任务。",
+          "method": [
+            "明确记住内容，再纠正。",
+            "分别在单聊和群验证隔离，忘记后再次提问。"
+          ],
+          "verify": [
+            "来源与私有 scope 正确。",
+            "纠正和墓碑生效，旧值不复活。",
+            "全程零 Task。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+          ],
+          "sourceCase": "BASE-MEMORY",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-mem-01",
+          "title": "真实验证才产生可信经验",
+          "module": "经验验证",
+          "why": "执行器自报成功或错误目标不能升格为 verified learning。",
+          "method": [
+            "完成已知计算或文件 Task。",
+            "以可信 Host verification 判 passing，并对照假成功与 wrong goal。"
+          ],
+          "verify": [
+            "一条正确 verified learning。",
+            "假成功与错误目标不晋级。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+          ],
+          "sourceCase": "MEM-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-mem-02",
+          "title": "新真实任务使用经验",
+          "module": "经验复用",
+          "why": "存储或召回成功不代表经验实际改变后续工作。",
+          "method": [
+            "开启另一个相同允许 scope 的真实 Task。",
+            "读取 manifest、模型 trace 与实际结果。"
+          ],
+          "verify": [
+            "新 Task 召回并实际使用经验。",
+            "manifest/trace/结果共同支持。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+          ],
+          "sourceCase": "MEM-02",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-mem-03",
+          "title": "共享晋级与私有隔离",
+          "module": "经验授权",
+          "why": "共享经验需明确 owner grant，不能顺带泄露私有记录。",
+          "method": [
+            "owner 授予共享目标。",
+            "用授权与未授权参与者分别访问，并对照同人其他私有记录。"
+          ],
+          "verify": [
+            "获准共享目标可用。",
+            "未授权参与者不可读。",
+            "其他 private 记录不泄露。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+          ],
+          "sourceCase": "MEM-03",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-mem-04",
+          "title": "撤回后不召回或复活",
+          "module": "经验撤回",
+          "why": "重投与缓存恢复不能越过撤回墓碑。",
+          "method": [
+            "撤回经验后启动新 Task。",
+            "重投旧 source，并运行单聊/群 reset 与 forget 剧本。"
+          ],
+          "verify": [
+            "新 Task 不再召回。",
+            "旧 source 不使经验复活。",
+            "reset/forget 生效。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "participant",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/07-memory-evolution.md"
+          ],
+          "sourceCase": "MEM-04",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-follow-up",
+      "project": "Employee",
+      "title": "授权后续步骤",
+      "description": "只有明确预授权计划允许由执行事实推动后续工作；事实本身不授予新权限。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-follow-01",
+          "title": "多步任务唯一推进与收束",
+          "module": "主动跟进",
+          "why": "终态事件不是无限继续工作的授权。",
+          "method": [
+            "配置明确预授权多步任务。",
+            "观察每次终态后续推进，并加入旧 revision、取消和预算边界反例。"
+          ],
+          "verify": [
+            "同 Task 唯一推进。",
+            "旧 revision 或取消后不继续。",
+            "达到约定步数或预算上限正确收束。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/01-foundation.md"
+          ],
+          "sourceCase": "FOLLOW-01",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    },
+    {
+      "id": "employee-reliability",
+      "project": "Employee",
+      "title": "失败与滚动恢复",
+      "description": "隔离 Runtime 故障和旧新 reader/producer 窗口需真实演练；不能干扰共享预发。",
+      "status": "planned",
+      "environmentIds": [
+        "staging-live"
+      ],
+      "identityIds": [
+        "requester",
+        "employee",
+        "observer",
+        "releaser",
+        "resource-owner"
+      ],
+      "toolIds": [
+        "dws",
+        "business-api",
+        "sls",
+        "langfuse",
+        "verification",
+        "runtime-inspect",
+        "release",
+        "fixture"
+      ],
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+      ],
+      "cases": [
+        {
+          "id": "employee-fail-01",
+          "title": "真实 runner 失败及一次通知",
+          "module": "执行失败",
+          "why": "坏命令被模型解释后成功不等于 runner 失败。",
+          "method": [
+            "在授权专用测试 Runtime 注入真实 runner 失败。",
+            "对照 queue、Run、事件与用户通知。"
+          ],
+          "verify": [
+            "queue 与 Run 均为真实 failed。",
+            "事实 event 与准确失败通知一次。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "只在授权隔离实例进行失败注入；不以 agent 解释坏 shell 后正常退出替代。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "releaser",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "release",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCase": "FAIL-01",
+          "status": "planned",
+          "history": ""
+        },
+        {
+          "id": "employee-roll-01",
+          "title": "新旧 reader 与 producer 回退",
+          "module": "滚动兼容",
+          "why": "关闭新生产者不能丢失旧已受理工作或降级共享状态。",
+          "method": [
+            "在受控新旧 reader 窗口运行已接受工作。",
+            "关闭 producer 再恢复，读取持久状态与版本。"
+          ],
+          "verify": [
+            "新来源不被错误 reader 处理。",
+            "旧 job 可完成、新 job 不丢失。",
+            "shared revision 不降级。"
+          ],
+          "evidence": [
+            "用户实际消息或文件独立回读",
+            "Task/Run/queue 与对应来源事实",
+            "Langfuse 实际 generation/tool/event",
+            "跨副本 SLS 及必要执行证据"
+          ],
+          "boundaries": [
+            "声明验收方法不等于已实现、部署或当前通过。",
+            "业务事实、执行事实与真实用户效果需同时满足；模型自述不能替代。",
+            "触及 Runtime/Daemon 时需 FC 与常驻本地设备矩阵；FC 单次成功不认证旧客户端兼容。"
+          ],
+          "environmentIds": [
+            "staging-live"
+          ],
+          "identityIds": [
+            "requester",
+            "employee",
+            "observer",
+            "releaser",
+            "resource-owner"
+          ],
+          "toolIds": [
+            "dws",
+            "business-api",
+            "sls",
+            "langfuse",
+            "verification",
+            "runtime-inspect",
+            "release",
+            "fixture"
+          ],
+          "sources": [
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+            "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+          ],
+          "sourceCase": "ROLL-01",
+          "status": "planned",
+          "history": ""
+        }
+      ]
+    }
+  ]
+}

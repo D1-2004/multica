@@ -1,0 +1,506 @@
+{
+  "profiles": [
+    {
+      "id": "local-contract",
+      "title": "本地领域与协议合同 · 仓库 L0",
+      "purpose": "在最低必要环境验证确定性业务规则、权限边界、状态迁移、事务和重放反例。",
+      "components": [
+        "独立 worktree 与显式本地配置",
+        "按工作树隔离的 PostgreSQL 库或最小 schema",
+        "需要时使用专用 Redis 实例或互斥测试 DB",
+        "fake / httptest 模型、渠道和已有 fixture",
+        "固定代码版本、测试名与证据目录"
+      ],
+      "gates": [
+        "确认 DATABASE_URL 指向授权本地实例，禁止共享预发库",
+        "需要的 DB / Redis fixture 必须实际执行；SKIP 不能当 PASS",
+        "默认测试不解析或执行用户安装的 agent CLI",
+        "同一库中的 DDL / failpoint / Redis flush 测试须隔离或串行"
+      ],
+      "proves": "代码、存储和协议在声明反例与故障条件下成立，可作为后续集成依据。",
+      "limits": "桩输出不证明真实模型理解、真实执行器退出或渠道送达。仓库 L0 含必要 PG 合同测试，不等同于 dta 评测拓扑的 L0 定义。",
+      "sources": [
+        "CLAUDE.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "scripts/test-go.sh",
+        "server/internal/employeeentry/store_test.go"
+      ]
+    },
+    {
+      "id": "local-integration",
+      "title": "本地集成候选 · 仓库 L1",
+      "purpose": "在当前交付分支上验证领域模块、Host、worker、adapter 的组合、竞态与恢复。",
+      "components": [
+        "主代理已集成的版本与依赖合同",
+        "已迁移的独立本地 PostgreSQL",
+        "专用 Redis 与共同 fixture",
+        "显式集成配置、模型和渠道桩",
+        "基线及当前版本的按名测试结果"
+      ],
+      "gates": [
+        "公共接线、migration、reader / producer 依赖已满足",
+        "handler / service 包不共用测试库并行执行破坏性 fixture",
+        "并发通过独立 PG 连接或事务覆盖",
+        "失败、取消、重投及 commit-before-notify 风险有对应证据"
+      ],
+      "proves": "该分支的集成行为满足声明范围，可以成为发布候选。",
+      "limits": "集成通过不证明该版本已发布，也不证明真实 IM、模型、Runtime 或文件效果。仓库 L1 表示集成环境，不等同于 dta 的模型 shadow 层。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "Makefile",
+        "server/internal/service/direct_task_recovery_test.go"
+      ]
+    },
+    {
+      "id": "browser",
+      "title": "浏览器产品流程 · 仓库 L1 专项",
+      "purpose": "通过真实浏览器和测试 API 验证登录、工作区、事项、评论、导航、配置及附件的用户流程。",
+      "components": [
+        "Playwright 与配置中的显式 baseURL",
+        "本地前后端及隔离 PostgreSQL",
+        "TestApiClient 建立的独立测试用户和对象",
+        "按 worker / run 区分的测试工作区",
+        "页面断言、失败截图与对象清理"
+      ],
+      "gates": [
+        "确认浏览器 baseURL 与 fixture API / DB 指向同一授权本地栈",
+        "测试用户通过本地验证路径建立身份，不能借此绕过真实平台授权",
+        "setup / teardown 使用 TestApiClient 并只清理登记对象",
+        "涉及平台外写入时必须另有声明的 receipt 与独立回读"
+      ],
+      "proves": "声明产品路径中的页面、API 和对象状态在浏览器里一致成立。",
+      "limits": "浏览器通过不证明数字员工真实模型、跨场域身份授权、外部文件送达或生产版本。此 profile 是仓库 L1 的流程专项，不另占 L2。",
+      "sources": [
+        "CLAUDE.md",
+        "playwright.config.ts",
+        "e2e/env.ts",
+        "e2e/fixtures.ts",
+        "e2e/helpers.ts"
+      ]
+    },
+    {
+      "id": "model-replay",
+      "title": "真实模型只读回放",
+      "purpose": "固定合同和合成对话，验证模型的关联、续接、澄清、静默及工具选择；私有轨迹回放需单独授权。",
+      "components": [
+        "显式 opt-in 的 replay 测试",
+        "由模型负责人配置的 provider 与完整模型标识",
+        "冻结 fixture / policy 版本及 hash",
+        "只读 fake tools 与历史",
+        "实际请求、响应模型、判断和违规报告"
+      ],
+      "gates": [
+        "运行者明确启用相应 replay 开关并固定预算和范围",
+        "不暴露业务写工具，不创建任务、发送 IM 或写记忆",
+        "私有输入由数据负责人批准读取范围，原始报告不进入公共展示",
+        "记录 requested / actual model 与实际断言，配置缺失的 SKIP 不算通过"
+      ],
+      "proves": "指定模型在冻结输入和只读工具环境中的语义决策与合同表现。",
+      "limits": "会消耗真实模型额度；不证明 E2E、Host 装配、业务提交、外部送达或已部署版本。此 profile 不混称仓库 L0 / L1 / L2 或 dta L0–L4。",
+      "sources": [
+        "server/internal/service/inboundcoord/policy_replay_test.go",
+        "server/internal/service/inboundcoord/frozen_trace_replay_test.go",
+        "server/internal/service/inboundcoord/user_decision_replay_test.go",
+        "server/internal/service/inboundcoord/policy/registry.json"
+      ]
+    },
+    {
+      "id": "staging-live",
+      "title": "真实预发验收 · 仓库 L2",
+      "purpose": "对精确部署版本证明真实模型、Task / Run、Runtime、渠道效果、记忆复用与恢复。",
+      "components": [
+        "显式 Multica pre profile 和当前管理 / 调用权限",
+        "当波 workspace / Agent / tenant / Tag / Runtime / template manifest",
+        "独占测试 scene 与获准演员 / 联系白名单",
+        "DWS 线上网关的进程私有 profile 与实际读 / 发能力",
+        "真实模型、候选 Runtime、SLS、Langfuse、业务 API 与文件回读",
+        "窗口前后版本、配置、routine、活动 Task 与清理记录"
+      ],
+      "gates": [
+        "部署 ancestry、所有 live 副本本次启动、fence 与累积 reader marker 已核验",
+        "后台 pre 与 DWS 线上网关独立核验，不依赖全局 profile",
+        "scene_id 从服务端目录取得；外部会话只用于消息读取与发送",
+        "真人、跨场域联系、失败注入及重启仅在明确授权范围执行",
+        "本 case 的身份、能力、预算、完整观察窗口与恢复点就绪"
+      ],
+      "proves": "该版本在声明场域、演员、依赖和时间窗口下的实际用户及业务结果。",
+      "limits": "只覆盖实际跑过的版本和范围；缺演员或能力须等待，缺证须 incomplete，混版或重启穿过窗口须 invalid_env。仓库 L2 表示真实预发，不等同于 dta 的 mock 集成层。此页面只展示合同，不报告当前资源就绪。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/10-delivery-standard.md",
+        "docs/employee-loop.md",
+        "docs/langfuse-observability.md"
+      ]
+    }
+  ],
+  "identities": [
+    {
+      "id": "local-tester",
+      "title": "本地测试执行者",
+      "grant": "主代理分配 worktree 和模块范围；本地资源负责人提供独立库 / Redis；测试执行者通过显式环境配置选择已批准资源。",
+      "scope": "自己的源码、fixture、隔离库、临时实例与 case 对象；真实模型须另行显式 opt-in。",
+      "proof": "核对工作树状态、DB host / database、Redis 实例、测试 fixture 开关和实际 PASS / SKIP，记录不含凭据的环境清单。",
+      "limits": "本地资源访问不授予共享预发、真实账号、外联或发布权限；禁止默认测试执行 ambient agent CLI。",
+      "sources": [
+        "CLAUDE.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md"
+      ]
+    },
+    {
+      "id": "integrator",
+      "title": "主代理 / 集成负责人",
+      "grant": "项目团队明确唯一交付分支与集成负责人；当前平台成员 / Agent 管理权限决定可 Apply 的租户范围。",
+      "scope": "共享合同、公共接线、migration 登记、版本集成、共享验收资源协调和获准租户 Apply。",
+      "proof": "检查提交 ancestry、公共写者、集成结果及 Apply 后 GET 回读的配置 revision / Runtime，分别记录 integrated 和 deployed。",
+      "limits": "集成责任不自动获得任意他人私有数据、渠道身份或生产发布权限；保护其他会话 WIP。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/10-delivery-standard.md"
+      ]
+    },
+    {
+      "id": "requester",
+      "title": "事项请求者 / 规格确认者",
+      "grant": "本人明确发起任务、外联对象、交付条件或控制动作；Host 从可信受理记录冻结主体、场域和授权，模型提议的验证规格须本人确认。",
+      "scope": "本人获准事项的输入、纠正、停止、续接、私有记忆以及原授权允许的交付范围。",
+      "proof": "重验 receipt → consumption → job 绑定、外层消息来源、当前 tenant fence、Task 版本、source_ref 和 requester；完成标准保留 source / author 引用。",
+      "limits": "引用、历史、群观察或正文中的 actor / target 不授予新权限；管理者身份也不能读取任意他人的私有学习。",
+      "sources": [
+        "docs/employee-loop.md",
+        "docs/agent-scene.md",
+        "docs/event-scene-router.md",
+        "server/internal/employeeverification/spec.go"
+      ]
+    },
+    {
+      "id": "employee",
+      "title": "数字员工 / 实际执行身份",
+      "grant": "数字员工 / DWS 负责人绑定原生账号并批准资源读 / 发权限；平台负责人配置 Runtime capability；Host 按原调用、委托和当前权限装配工具。",
+      "scope": "已服务 tenant、获准 scene / Task、资源和出口；Role Principal、Execution Subject、Input Channel 分开固定。",
+      "proof": "核验实际 DWS profile / 组织、绑定身份、来源 authority、Runtime capability、工具装配及真实回执；每次执行 / 发送重验当前 scope。",
+      "limits": "权限取角色、委托与 DWS 权限的交集；执行身份冻结后不能由正文切换；来源会话最终文本按 Host 出口所有权处理。",
+      "sources": [
+        "docs/employee-loop.md",
+        "docs/event-scene-router.md",
+        "docs/workspace-storage-boundaries.md",
+        "server/internal/handler/dws_native_person.go"
+      ]
+    },
+    {
+      "id": "participant",
+      "title": "跨场域参与者 / 受邀答复者",
+      "grant": "原请求者明确允许联系名单和问题；Host 经可信身份桥、目标 scene 和发送权限建立精确 invitation / participant grant。",
+      "scope": "自己的邀请和答复输入；发起者仅可读取原 Task 获准汇总的输入。",
+      "proof": "校验 participant、target scene、tenant、invitation revision、有效期 / 撤销状态、来源 receipt 和 delivery proof；同人多 Task 不串。",
+      "limits": "其他参与者答案和私有记忆不进入答复者 Loop；跨组织历史 read grant 不等于发送或 participant 权限；多个场域内同一人不代表多个真人。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/02-collection.md",
+        "docs/employee-loop.md",
+        "server/internal/handler/dws_native_person.go"
+      ]
+    },
+    {
+      "id": "observer",
+      "title": "独立验证者 / 观测者",
+      "grant": "验收负责人批准专用场域和演员；观测负责人提供 SLS / LF 读取范围；业务 API 另按 workspace 成员及人类 Agent manage gate 授权。",
+      "scope": "本 case 声明的 IM、业务状态、跨副本日志、模型轨迹、产物与回读；receipt 默认只看 metadata。",
+      "proof": "按精确 source / receipt / job / Task / Run 和完整时间窗关联证据；检查分页、hasMore、查询失败与 truncation；保存脱敏证据引用。",
+      "limits": "观察不授予业务执行、任意 payload 阅读或外联；Agent actor 和普通成员不能借 receipt 获得管理读取权限；单 pod 或零列表命中不足以证明全局未发生。",
+      "sources": [
+        "docs/event-scene-router.md",
+        "server/internal/handler/event_receipts.go",
+        "docs/langfuse-observability.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md"
+      ]
+    },
+    {
+      "id": "releaser",
+      "title": "预发发布负责人",
+      "grant": "发布 / 环境负责人授予当前 Aone 应用、CR、pipeline 和目标环境的权限并协调共享发布窗口；生产环境另需用户明确范围。",
+      "scope": "获准分支与预发发布、版本 / 副本核验、当前租户 Apply；Runtime 候选沿独立构建和兼容合同。",
+      "proof": "核对精确 run / release ancestry、所有 live 副本本次 server starting、fence normal 与所需累积 marker；发布后配置回读。",
+      "limits": "pipeline 成功不证明业务验收或正式发布；不得为测试重启共享环境、手工迁移预发或覆盖其他人的运行。",
+      "sources": [
+        ".agents/skills/aone-deploy/SKILL.md",
+        ".agents/skills/fc-runtime-dev-loop/SKILL.md",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "resource-owner",
+      "title": "环境 / 模型 / DWS / Runtime / 存储资源负责人",
+      "grant": "各资源负责人按 case 提供最小权限和专用对象，通过已有安全 profile / secret provider 配置；自动化创建者 / endpoint installation 由当前平台权限服务校验。",
+      "scope": "明确的 provider / 模型配额、原生账号、候选 Runtime、测试 routine / webhook、签名来源、OSS 产物或观测资源。",
+      "proof": "以实时读取或最小探针登记 ready / pending / unavailable 及所阻断 case；固定配置 revision、绑定、能力和网络可达性，不记录 secret。",
+      "limits": "资源配置不替代人类业务授权；automation principal 不借用最早请求者身份，不进入人的私有学习命名空间；本展示页不实际授予权限。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md",
+        "docs/employee-loop.md",
+        "server/internal/employeeentry/task_origin.go",
+        "server/internal/employeeverification/types.go"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "id": "worktree",
+      "name": "worktree 配置",
+      "phase": "搭建",
+      "purpose": "通过 make worktree-env 与现有脚本建立按工作树区分的库名和应用端口。",
+      "access": "主代理分配工作树与文件所有权；只在授权本地实例配置，不覆盖他人 .env 或 WIP。",
+      "readback": "核对工作树、DB host / database、端口和配置归属；现有文件不视为自动证明目标正确。",
+      "sources": [
+        "Makefile",
+        "scripts/init-worktree-env.sh",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "local-stack",
+      "name": "本地应用与 PG / Redis",
+      "phase": "搭建 / 清理",
+      "purpose": "make migrate-up ENV_FILE=.env.worktree 准备本地库；完整应用使用 make setup-worktree / make start-worktree，Redis 使用专用实例。",
+      "access": "本地资源负责人批准隔离库 / 实例；先断言目标，预发迁移交发布 runner。",
+      "readback": "检查 migration、DB 连接与 Redis PING；记录实际 fixture 执行；结束只清理登记的实例，禁止影响共享容器。",
+      "sources": [
+        "Makefile",
+        "scripts/ensure-postgres.sh",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md"
+      ]
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright",
+      "phase": "触发 / 验证",
+      "purpose": "执行 e2e/*.spec.ts 的真实页面操作、页面断言及 API 对象检查。",
+      "access": "显式本地 baseURL、API 与隔离 DB；TestApiClient 创建测试身份和资源。",
+      "readback": "记录真实断言、失败截图、API 状态和 teardown；页面文本不代替外部系统回读。",
+      "sources": [
+        "playwright.config.ts",
+        "e2e/helpers.ts",
+        "e2e/fixtures.ts"
+      ]
+    },
+    {
+      "id": "fake-provider",
+      "name": "协议 fixture / fake provider",
+      "phase": "搭建 / 触发 / 验证",
+      "purpose": "固定 native roles、工具请求、预算、journal 和效果语义，构造权限、事务、并发及故障反例。",
+      "access": "仅合成输入与隔离测试资源；默认测试不访问真实模型账户或用户安装的 agent CLI。",
+      "readback": "检查真实 service 入场、PG 回滚 / CAS / 幂等及已执行断言；桩成功只证明声明合同。",
+      "sources": [
+        "CLAUDE.md",
+        "server/internal/employeeentry/store_test.go",
+        "server/internal/service/direct_task_recovery_test.go"
+      ]
+    },
+    {
+      "id": "model-replay",
+      "name": "真实模型回放",
+      "phase": "触发 / 验证",
+      "purpose": "显式启用 TestCoordinatorPolicyReplay 等测试，固定 fixture / policy 并检查语义选择和违规。",
+      "access": "模型负责人提供进程内配置，运行者明确 opt-in；私有 frozen trace 需来源授权，不能公开原文。",
+      "readback": "核对实际 requested / response model、每轮请求、只读工具、断言、fixture hash 和违规报告。",
+      "sources": [
+        "server/internal/service/inboundcoord/policy_replay_test.go",
+        "server/internal/service/inboundcoord/frozen_trace_replay_test.go",
+        "server/internal/service/inboundcoord/user_decision_replay_test.go"
+      ]
+    },
+    {
+      "id": "dws",
+      "name": "DWS 消息与文件",
+      "phase": "触发 / 验证 / 清理",
+      "purpose": "在获准测试会话发合成输入，并独立读取实际回复、引用、文件及撤销 / 清理结果。",
+      "access": "DWS 负责人批准原生身份及资源读 / 发权限；真人和联系白名单由验收负责人固定；进程私有 profile 断言线上网关。",
+      "readback": "记录幂等来源和发送回执，再按精确目标回读消息或下载文件 / hash；分页覆盖窗口，未知发送先对账再重试。",
+      "sources": [
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md",
+        "docs/employee-loop.md",
+        "server/internal/dwsclient/message_file.go"
+      ]
+    },
+    {
+      "id": "business-api",
+      "name": "业务 API",
+      "phase": "验证",
+      "purpose": "关联 ingress、receipt、job、Task / Run、queue 与 action，核验输入归属、状态、幂等、退出和通知 owner。",
+      "access": "按当前 workspace membership 与业务 privacy gate；ingress / receipts 额外要求人类 Agent manage 权限，默认 metadata。",
+      "readback": "以当前部署存在的路由、精确对象和 tenant fence 回读；GET 不创建 scene、不重放事件、不授予执行权。",
+      "sources": [
+        "docs/event-scene-router.md",
+        "server/internal/handler/event_receipts.go",
+        "server/cmd/server/router.go",
+        "docs/employee-loop.md"
+      ]
+    },
+    {
+      "id": "sls",
+      "name": "SLS / backend logs",
+      "phase": "验证",
+      "purpose": "查看 Host 摄入、路由、门禁、拒绝、恢复、重复和各副本启动的确定性事实。",
+      "access": "观测负责人提供获准日志范围；固定环境、跨副本窗口、size / offset，凭据留本地 profile。",
+      "readback": "按精确来源和 case 时间窗核分页 / 截断 / 查询失败；单 pod tail 或查询零命中不证明全局无事件。",
+      "sources": [
+        ".agents/skills/inspect-coordinator-sls/SKILL.md",
+        "scripts/query-coordinator-sls.sh",
+        "docs/event-scene-router.md",
+        "docs/langfuse-observability.md"
+      ]
+    },
+    {
+      "id": "langfuse",
+      "name": "Langfuse",
+      "phase": "验证",
+      "purpose": "区分 Employee 前台、后台 Task、digest 和 Coordinator，检查模型实际输入、native tool / result、调用账本和失败。",
+      "access": "观测负责人授予目标环境读取范围；凭据通过本地安全配置读取；使用本仓 helper 和当前公开 API。",
+      "readback": "已知 trace 优先精确取详情；检查 input / output truncation、完整 generation 和来源关联；trace 不证明外部送达。",
+      "sources": [
+        "scripts/query-langfuse.sh",
+        "scripts/query-langfuse.py",
+        ".agents/skills/inspect-langfuse/SKILL.md",
+        "docs/langfuse-observability.md"
+      ]
+    },
+    {
+      "id": "runtime-inspect",
+      "name": "Runtime / Daemon 检查",
+      "phase": "搭建 / 验证",
+      "purpose": "读取候选 Runtime、template、immutable provenance 和 capability，并按触及协议验证真实 canary 与滚动兼容。",
+      "access": "Runtime 负责人提供候选资源和获准平台 API scope；只在授权隔离实例注入失败 / 重启。",
+      "readback": "核对固定源 revision、template、实际 capability、真实 Task 输出 / 退出及 local / FC 兼容矩阵。",
+      "sources": [
+        ".agents/skills/fc-runtime-dev-loop/SKILL.md",
+        ".agents/skills/fc-runtime-dev-loop/references/workflow.md",
+        ".agents/skills/fc-runtime-dev-loop/references/daemon-compatibility.md",
+        "docs/employee-loop.md"
+      ]
+    },
+    {
+      "id": "release",
+      "name": "Aone 发布与 Apply",
+      "phase": "搭建 / 验证",
+      "purpose": "统一交付分支触发精确 pipeline run，并核实际副本和获准租户配置生效。",
+      "access": "唯一发布负责人持当前应用 / CR / pipeline 权限；先核目标，协调共享发布窗口。",
+      "readback": "release ancestry、所有 live 副本本次 server starting、fence normal / 累积 marker 三面成立；Apply 后 GET 回读配置。",
+      "sources": [
+        ".agents/skills/aone-deploy/SKILL.md",
+        "scripts/aone-deploy.sh",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/11-execution-board.md"
+      ]
+    },
+    {
+      "id": "fixture",
+      "name": "TestApiClient",
+      "phase": "搭建 / 清理",
+      "purpose": "创建独立用户、工作区和测试对象，保存创建清单，结束调用 cleanup 或相应恢复动作。",
+      "access": "仅授权本地栈和专用测试对象；真实 routine / webhook / 联系对象另由资源及验收负责人批准。",
+      "readback": "检查对象实际存在和状态；恢复被修改配置、停止本 case 自动化并回读，保留审计 / 原失败证据。",
+      "sources": [
+        "e2e/fixtures.ts",
+        "e2e/helpers.ts",
+        "docs/plans/2026-10-03/employee-loop-backend-delivery/00-step-0-environment.md"
+      ]
+    },
+    {
+      "id": "verification",
+      "name": "Host checker / receipt probe",
+      "phase": "验证",
+      "purpose": "Host checker 读取确切 Run 产物 / 回执验证 spec；receipt probe 在真实预发 PG 回滚事务中检查受理冲突与重放。",
+      "access": "spec 只来自本人明确标准、automation config、Host fixture；模型 proposed 必须本人确认。receipt probe 需明确 pre 开关与人类 manage gate。",
+      "readback": "记录 Task / Run / queue / goal / spec revision、证据 hash 与 checker version；spec / evidence 改变作废。probe 不执行业务或外发。",
+      "sources": [
+        "server/internal/employeeverification/types.go",
+        "server/internal/employeeverification/check.go",
+        "server/internal/employeeverification/spec.go",
+        "server/internal/handler/employee_task_verification.go",
+        "docs/event-scene-router.md"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "title": "当前性与范围",
+      "rule": "本页呈现可复用合同，不宣称环境已就绪。每波必须实时登记来源版本、部署、配置、演员、能力、场域及窗口；历史 Plan / results 只作为设计或证据。"
+    },
+    {
+      "title": "上下文与装配",
+      "rule": "先固定可信输入、来源字段、完整性、Definition / Skill / policy 版本及实际加载证据，再判行为；配置可发现不等于正文已加载。"
+    },
+    {
+      "title": "权限先于质量",
+      "rule": "依次判断 fixture / context、load、authority / safety、isolation / integrity、declared postconditions，最后质量；任何硬失败不能被平均质量分抵消。"
+    },
+    {
+      "title": "唯一场域",
+      "rule": "scene_id 只能由 scene.Resolve / Lookup 和可信 tenant 得到；外部会话、人员或标题不作内部场域键；每次使用重验 tenant fence。"
+    },
+    {
+      "title": "主体与出口",
+      "rule": "Host 认证 owner / principal / tenant；payload actor、引用、历史和模型字段不扩权。跨组织读取、渠道发送和 participant grant 分别校验，出口只有约定 owner。"
+    },
+    {
+      "title": "执行与送达",
+      "rule": "受理、job 完成、Run succeeded、outbox commit、渠道投递是不同事实；停止要真实退出 proof，送达要 receipt 与独立回读，文件送达仍不证明内容正确。"
+    },
+    {
+      "title": "幂等与恢复",
+      "rule": "同源重投 / 并发不得重复执行或新发效果；未知投递先对账，同身份内容变化为冲突；PG 保存真相，Redis 丢通知不能丢工作。"
+    },
+    {
+      "title": "版本与窗口",
+      "rule": "新 reader 先于 producer，所有 live 副本能力门禁成立再受理；新部署或重启穿过 case 窗口记 invalid_env，不能判产品 pass / fail。"
+    },
+    {
+      "title": "完整观察",
+      "rule": "分页 / truncation / 查询失败均声明；缺 generation、远端回读或 case 声明证据面记 incomplete，零列表命中不足以证明零调用或零效果。"
+    },
+    {
+      "title": "Spec 与 checker",
+      "rule": "有效标准只认本人明确完成条件、automation config、Host fixture；模型建议待本人确认。artifact_contents / execution_output 验正确性；delivery_receipt 只验送达；证据绑定确切版本，变化即作废。"
+    },
+    {
+      "title": "已知能力限制",
+      "rule": "当前 command checker 无 Host executor，返回 unknown；当前图片路径标 vision_unavailable。不能以桩、OCR、工具自报或沙箱 exit 0 宣称完整能力或 verified 成功。"
+    },
+    {
+      "title": "记忆下一轮证明",
+      "rule": "当前写入不证明长期复用；等待真实 flush / 状态稳定后，以不含答案的下一轮独立问题或新 Task 证明召回与使用；群不自动注入他人私有记忆。"
+    },
+    {
+      "title": "结果与清理",
+      "rule": "pass 仅限声明后置条件和全部证据面满足；fail 是有效环境下的合同失败；invalid_env 是环境窗口污染；incomplete 是缺证；waiting_actor / blocked 写具体依赖；known_limit 不作已通过能力。失败 / 中断也恢复配置并回读。"
+    }
+  ],
+  "stages": [
+    {
+      "title": "Spec · 用户结果与边界",
+      "artifact": "当前模块合同、用户完成标准、来源映射与版本。",
+      "requirement": "先写明要交付的行为、权限、场域、状态 / 效果边界和失败反例；规格来自可信来源，模型不能自行签发验收标准。"
+    },
+    {
+      "title": "Case · 单一主要风险",
+      "artifact": "case manifest / suite：模块、方法、可信输入、前置、反例、断言、证据面、预算及清理。",
+      "requirement": "每例讲清测哪一块、如何触发、为什么这些证据能证明，以及会抓住哪个错误实现；一个主要分类，横切维度用标签，不混计。"
+    },
+    {
+      "title": "Environment · 最低必要环境",
+      "artifact": "当波环境 manifest：版本、入口、身份 / grant、独占场域、能力、资源状态与窗口前后检查。",
+      "requirement": "选择能回答问题的最低 profile；资源负责人配置最小权限，Host 重验当前 scope。当前层硬门禁失败时停止相关评分，不用高层掩盖。"
+    },
+    {
+      "title": "Evidence · 独立事实链",
+      "artifact": "声明的 IM / 文件回读、API / PG 事实、跨副本 SLS、实际 LF generation、产物 bytes / hash 与 teardown。",
+      "requirement": "来源 → receipt → job → Task / Run → effect 可关联；命令成功、模型表达、业务状态和外部送达分别证明，记录分页 / 截断 / 缺证，不向展示页复制私密 payload。"
+    },
+    {
+      "title": "Verdict · 可复验结论",
+      "artifact": "pass / fail / invalid_env / incomplete / waiting_actor / blocked / known_limit、依据、未证明项与复验入口。",
+      "requirement": "硬门禁先判，语义质量后判；明确本次能证明和不能证明的范围。原失败保留并缩成回归，修复后同场景复验；清理 / 恢复结果随结论落盘。"
+    }
+  ]
+}

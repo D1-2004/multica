@@ -122,6 +122,10 @@ export function runtimeRewriteDestination(
   const remoteApiUrl = resolveRemoteApiUrl(env);
   if (!remoteApiUrl) return undefined;
 
+  if (pathname === "/evals" || pathname === "/evals/") {
+    return appendPath(remoteApiUrl, "/api/evals");
+  }
+
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     return appendPath(remoteApiUrl, pathname);
   }

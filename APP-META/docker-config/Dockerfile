@@ -6,7 +6,7 @@ FROM ${GO_BASE_IMAGE} AS backend-builder
 ARG APP_NAME
 ARG GO_VERSION=1.26.1
 WORKDIR /workspace
-RUN yum install -y gcc glibc-devel && \
+RUN yum install -y gcc glibc-devel python3 && \
     yum clean all && \
     rm -rf /var/cache/yum
 RUN curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" && \
@@ -19,6 +19,7 @@ ENV GONOSUMDB=*.alibaba-inc.com
 ENV GOSUMDB=sum.golang.google.cn
 COPY ${APP_NAME}.tgz /tmp/source.tgz
 RUN tar -xzf /tmp/source.tgz --strip-components=1 -C /workspace
+RUN python3 scripts/check-eval-catalog.py
 RUN cd server && go mod download
 ARG VERSION=dev
 ARG COMMIT=unknown
