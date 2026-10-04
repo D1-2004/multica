@@ -104,3 +104,11 @@ coverage. The compiler still performs no retrieval or authorization. The
 without that version retain unavailable history so effect replay does not
 silently rebuild a different packet. Scope and principal validation remain on
 each history material, and the current SOURCE remains the authorization anchor.
+
+## User-facing expression (2026-10-04)
+
+The existing GawkBot execution packet carries conclusion-first expression guidance
+for newly compiled work: short verified lead, actionable failures, and a separate
+verbatim evidence section when requested. Exact-format and verbatim-only requests
+override the default lead. No output envelope, report parser, sender, additional
+model call or rewrite of frozen packets is introduced.
