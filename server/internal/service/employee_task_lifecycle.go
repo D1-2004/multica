@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -52,6 +53,14 @@ func (s *TaskService) recordEmployeeRunInTx(ctx context.Context, tx pgx.Tx, task
 	case "completed":
 		state = employeetask.StateSucceeded
 		body = taskExecutionUpdateResultMessage(result)
+		var contract struct {
+			Version string `json:"employee_round_result_contract"`
+		}
+		// This is the Host-frozen execution contract, not a model-authored flag.
+		// Old text executions retain their display normalization unchanged.
+		if json.Unmarshal(task.Context, &contract) == nil && contract.Version != "" {
+			body = taskExecutionCanonicalResult(result)
+		}
 	case "cancelled", "canceled":
 		state = employeetask.StateCancelled
 		body = redact.Text(task.Error.String)

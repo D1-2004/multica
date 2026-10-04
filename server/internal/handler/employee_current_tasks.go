@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/humanquestion"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
 	"github.com/multica-ai/multica/server/internal/taskinput"
@@ -374,6 +375,19 @@ func (h *employeeSceneHost) prepareContinuation(ctx context.Context, source empl
 	taskContext["employee_job_id"] = h.job.ID
 	taskContext["employee_source_ref"] = source.SourceRef
 	taskContext["employee_context_used"] = packet.ContextUsed
+	if read.Snapshot.LatestRun != nil {
+		var contract string
+		if err = database.QueryRow(ctx, `SELECT COALESCE(context->>'employee_round_result_contract','') FROM agent_task_queue WHERE id=$1::uuid AND agent_id=$2::uuid`, read.Snapshot.LatestRun.QueueTaskID, h.job.Scope.AgentID).Scan(&contract); err != nil {
+			return nil, err
+		}
+		if contract != "" {
+			if contract != humanquestion.Version || !h.worker.humanQuestionsReady(ctx) {
+				return nil, errors.New("continuation round result readers are not ready")
+			}
+			taskContext["employee_round_result_contract"] = contract
+			packet.Text += "\n\n" + humanquestion.PromptContract
+		}
+	}
 	if packet.CompletionNotice.Mode != employeetask.CompletionNoticeAlways {
 		taskContext[employeeCompletionNoticeContextKey] = packet.CompletionNotice
 	}
@@ -503,6 +517,8 @@ func employeeContinuationFailureReply(outcome employeeloop.Outcome) string {
 		reason = failed.Reason
 	}
 	switch reason {
+	case "ready":
+		return "这项工作尚未确认完成，本次没有启动续接。"
 	case "running":
 		return "这项工作仍在执行，本次未启动续接。"
 	case "failed":

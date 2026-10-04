@@ -404,6 +404,33 @@ func (s *Store) Resume(ctx context.Context, scope Scope, id string, p ResumePara
 	})
 }
 
+// ReopenGoal starts an explicitly requested next step of a completed v2 Goal.
+// Its constraints stay intact; the new revision and current human source make
+// the second completion distinct. This is not a fabricated definition change.
+func (s *Store) ReopenGoal(ctx context.Context, scope Scope, id string, p ResumeParams) (Task, Entry, error) {
+	if p.ExpectedVersion <= 0 || strings.TrimSpace(p.ActorRef) == "" || strings.TrimSpace(p.Body) == "" {
+		return Task{}, Entry{}, ErrInvalid
+	}
+	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeAmendment, func(_ pgx.Tx, task *Task) (Entry, error) {
+		if task.Lifecycle() != LifecycleV2 || task.RequesterRef != p.ActorRef {
+			return Entry{}, ErrConflict
+		}
+		if task.ActiveRunID != "" {
+			return Entry{}, ErrActiveRun
+		}
+		if task.State == StateCancelled {
+			return Entry{}, lifecycleErr(CodeStopped, ReasonStopped)
+		}
+		if task.State != StateSucceeded {
+			return Entry{}, ErrConflict
+		}
+		task.GoalRevision++
+		task.State = StateReady
+		noteHumanInput(task, p.ActorRef)
+		return Entry{Kind: "resumed", ActorRef: p.ActorRef, Body: p.Body}, nil
+	})
+}
+
 // StartRun records a queue mapping supplied by the host. Passing NewStore(tx)
 // lets the host insert the existing queue row in the same outer transaction.
 func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRunParams) (Run, error) {

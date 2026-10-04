@@ -199,10 +199,12 @@
         "独立验证者"
       ],
       "verifies": [
-        "补充和成功后续接保持同一 Task；必要新 Run 唯一；致谢不重启工作。"
+        "补充和成功后续接保持同一 Task；必要新 Run 唯一；致谢不重启工作。",
+        "结构化多行结果保存后可在同事项的新版本续接，第二轮仍按完整合同收口；非法结果与取消不被修复处理绕过。"
       ],
       "method": [
-        "完成首轮计算后要求在该工作基础上求合计，再补充展示格式，最后致谢。核 Task ID、每次 Run、输入归属、实际结果和致谢后的零副作用。"
+        "完成首轮计算后要求在该工作基础上求合计，再补充展示格式，最后致谢。核 Task ID、每次 Run、输入归属、实际结果和致谢后的零副作用。",
+        "经真实完成入口核多行JSON和Goal收口，再引用改范围/交付形式；核新revision、唯一Run与第二轮完整结果。隔离非法JSON和重复字段反例保持拒绝。"
       ],
       "scenarioRefs": [
         "continuation-steer",
@@ -213,7 +215,8 @@
       "caseRefs": [
         "office-continue-success",
         "office-addition-same-work",
-        "office-approval-vs-closing"
+        "office-approval-vs-closing",
+        "office-structured-completion-continue"
       ],
       "sources": [
         "docs/evals/p0-golden.md",
