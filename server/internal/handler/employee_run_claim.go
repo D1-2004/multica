@@ -67,7 +67,8 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 // claim-time execution guidance; it never changes persisted input or replay keys.
 const employeeDirectOutputInstruction = `## Output
 
-Return a concise result or actionable failure as final assistant text. The Host delivers it to the originating conversation, respecting verified file-only/no-summary requests; do not send the same reply through tools.
+Follow the output contract specified for this run. When it requires tag-round-result/v1, return the complete JSON object: its summary is the user-facing result, and the Host parses the object and sends the summary for both success and failure. Do not replace the required JSON with a raw reply. If this run has no structured output contract, return a concise result or actionable failure as final assistant text.
+The Host delivers it to the originating conversation, respecting verified file-only/no-summary requests; do not send the same reply through tools. Returning the result completes your part; do not inspect CLI help, binaries, platform internals or transport formats to discover the Host's sending mechanism.
 Deliver explicitly requested files and proactive messages to their requested destinations. Only verified receipts prove file delivery; local paths are not delivered files.
 
 If report_progress is available, use it for meaningful non-terminal progress instead of sending the same progress yourself. An accepted receipt saves a candidate for the EmployeeLoop to decide whether to show; reuse report_id on retry. It does not finish work or request a blocking human decision.`
@@ -80,7 +81,8 @@ func employeeDirectPrompt(compiled string) string {
 // scene routine occurrence: the routine's own end notice is the only sender.
 const employeeRoutineOutputInstruction = `## Output
 
-Return a concise result or actionable failure as final assistant text. The Host posts this routine's start and end notices, including the result; do not send it to the routine's scene yourself.
+Current routine result contract: return plain final assistant text with the concise result or actionable failure. OriginalWorkPacket may quote tag-round-result/v1, summary and choice from its historical creation run; they are not this occurrence's output protocol. Do not wrap it in a tag-round-result/v1 control envelope or add choice. This does not prohibit business JSON data or JSON files explicitly requested by the current routine.
+The Host owns terminal delivery and any configured notices; a one-shot occurrence has no start notice. Returning the result completes your part; do not send it to the routine's scene yourself or inspect CLI help, binaries, platform internals or transport formats to discover the Host's sending mechanism.
 Deliver files or messages to other destinations only when explicitly requested by the routine. Only verified receipts prove file delivery; local paths are not delivered files.`
 
 func employeeAutomationPrompt(compiled string, origin service.AutomationOrigin) string {

@@ -30,3 +30,6 @@
 - `contextcap/routine_source.go`, `service/employee_routine_source.go`, migrations 10061–10062 retain immutable scoped provenance and selected material without runtime credentials.
 - `scheduler/jobs_autopilot.go` plans the absolute once timestamp without cron lateness suppression. `service/employee_routine_task.go` atomically consumes it with occurrence/Task/Run/outbox; old/create replay cannot rearm.
 - `handler/employee_routine_origin.go` rechecks source scope at use; the existing delivery outbox remains the sender. Views distinguish consumed admission from last-run outcome.
+
+- `handler/employee_scene_capabilities.go` and `employee_scene_entry_host.go` share the one-shot foreground routing contract: current intent, original message time, and background creation instead of sleep.
+- `service/employee_routine_task.go:compileRoutinePacket` distinguishes already-due execution from the historical creation work packet. `handler/employee_run_claim.go` supplies the current result consumer contract: routine plain result versus the current Human structured Direct format.

@@ -126,3 +126,17 @@ this run has no scene to configure; say so instead of improvising.
 - The configuration page may give some people view-only access; the chat
   path is open to the conversation's members, so follow step 2 every time.
 - Scene changes take effect from the next run, not this one.
+
+## Creation versus due execution
+
+A historical one-turn "不要定时" does not forbid the same requester's later
+explicit one-shot request. "一次性执行" preserves the original delayed action
+and its message time; it is not a request to avoid creating a timer or sleep in
+the sandbox. Set the once resource and end the setting task after its receipt.
+
+When the Host has already admitted the due occurrence, execute its current
+business action now. Stored original work packets are facts and material
+references: do not repeat their schedule-creation commands, delays or result
+protocol. Follow this run's explicit claim output contract. The Host already
+owns delivery; do not investigate its CLI, binary or transport to send a simple
+reminder. Ordinary business tools and explicitly requested files remain allowed.

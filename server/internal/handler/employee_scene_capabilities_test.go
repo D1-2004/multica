@@ -573,7 +573,7 @@ func TestEmployeeSceneSelfManagementDispatchContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := employeeloop.BuildPrompt(input.Config.Persona)
-	for _, rule := range []string{"create, change, pause, resume, delete or run now a routine", "config-qwen-tag-scene", "never answer that you cannot do it", "Only a task result can show that something is impossible", "DWS lookups (contacts, managers"} {
+	for _, rule := range []string{"create, change, pause, resume, delete or run now a routine", "config-qwen-tag-scene", "once at an exact run_at", "ONE-SHOT SCHEDULING:", "scene_routine_create", "occurredAt", "preserves that original time rather than starting a new delay", "never answer that you cannot do it", "Only a task result can show that something is impossible", "DWS lookups (contacts, managers"} {
 		if !strings.Contains(prompt, rule) {
 			t.Errorf("self-management boundary missing %q", rule)
 		}
@@ -588,7 +588,7 @@ func TestEmployeeSceneSelfManagementDispatchContract(t *testing.T) {
 		found[tool.Name] = true
 		switch tool.Name {
 		case "dispatch_task":
-			if !strings.Contains(tool.Description, "routine/定时任务") || !strings.Contains(tool.Description, "instead of declining") {
+			if !strings.Contains(tool.Description, "routine/定时任务") || !strings.Contains(tool.Description, "instead of declining") || !strings.Contains(tool.Description, employeeOneShotSchedulingPolicy) {
 				t.Error("dispatch_task does not cover scene self-management")
 			}
 		case "scene_config_get":
