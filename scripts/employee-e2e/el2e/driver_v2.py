@@ -4,7 +4,9 @@ Differences from the v1 driver (harness-gaps §2):
 - variables come from the case's var_sets row (seed run:case:attempt) on top
   of the driver codes; variables are rendered before aliases;
 - `reply_to` quote-replies a resolved message (step / employee_reply_of /
-  observed / employee_latest, with fallback) and never degrades to a plain send;
+  observed / employee_latest, with fallback). A missing step, observed, or
+  employee_reply_of target stays a harness error. When employee_latest has no
+  employee message yet, the question is still sent and the miss is recorded;
 - DEAP actors never @ and never DM; their landings are read back by a human
   reader of the conversation by senderId;
 - human sends carry --ai-tag=false; every landing is located by the sender's
@@ -89,6 +91,9 @@ def resolve_reply_to(step: dict[str, Any], rec: dict[str, Any], reg: dict[str, A
                         if im.classify(m, emp, reg["employee"]["name"]) == "employee"]
             if mine:
                 return {"messageId": mine[-1]["messageId"], "by_employee": True, "via": kind}
+            # The question still has to land. A later grade names the verdict;
+            # stopping here would hide the employee's silence behind a harness error.
+            return {"missing": "employee_latest", "by_employee": False, "via": kind}
     raise StepError(f"reply_to target not found (tried {tried})")
 
 
@@ -145,9 +150,13 @@ def speak(step: dict[str, Any], case: dict[str, Any], spec: dict[str, Any], rec:
     emp_ids = set(reg["employee"]["open_ids"].values())
     at_names = list(step.get("at", []))
     quoted = None
+    quote_miss = None
     if step.get("reply_to"):
         quoted = resolve_reply_to(step, rec, reg, conv_name, conv, landed_by_step)
-        if quoted["by_employee"] and "employee" in at_names:
+        if quoted.get("missing"):
+            quote_miss = quoted
+            quoted = None
+        elif quoted["by_employee"] and "employee" in at_names:
             # A quote already @-mentions its author; a second <@id> would double the mention.
             at_names.remove("employee")
     at_ids = []
@@ -166,6 +175,8 @@ def speak(step: dict[str, Any], case: dict[str, Any], spec: dict[str, Any], rec:
         sent["reply_to_resolved"] = quoted
     else:
         sent = im.send(at_all=bool(step.get("at_all")), **common_kw)
+    if quote_miss:
+        sent["quote_miss"] = quote_miss
     expected = len(at_ids) + (1 if quoted else 0) + (1 if step.get("at_all") else 0)
     found = im.prefix_mentions(sent["landed"][0]["text"]) if sent["landed"] else []
     sent["at_render"] = {"expected": expected, "found": found, "ok": len(found) >= expected}

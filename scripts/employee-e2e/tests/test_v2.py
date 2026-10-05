@@ -223,6 +223,15 @@ class GradeCaseTests(unittest.TestCase):
                                             judgements={"X-01.a1": {"verdict": wanted}})
                 self.assertEqual(res["verdict"], "fail")
 
+    def test_favorable_judge_cannot_pass_a_failed_hard_conversation_check(self) -> None:
+        rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "I don't know", quote="h1")])
+        res = grader_v2.grade_case_v2(
+            self.rd, rec, self.case(), SPEC, CAPS,
+            judgements={"X-01.a1": {"verdict": "pass", "rationale": "the reply looks fine"}},
+        )
+        self.assertEqual(res["verdict"], "fail")
+        self.assertNotEqual(res["verdict"], "pass")
+
     def test_empty_trace_listing_is_missing_evidence_not_zero_calls(self) -> None:
         res = grader_v2.evidence_check_v2({"evidence": "max_calls_per_wake", "max": 3},
                                         {"collected": True, "traces": []})
@@ -295,6 +304,19 @@ class SpeakTests(unittest.TestCase):
         with self.assertRaises(self.dv.StepError):
             self.speak(step)
         self.assertEqual(self.calls, [])
+
+    def test_missing_employee_latest_still_sends_the_question_and_records_the_miss(self) -> None:
+        question = "你刚才那条结论还作数吗？"
+        step = dict(self.case["steps"][1], text=question, reply_to={"employee_latest": True})
+        human = {"messageId": "h1", "createTime": "2026-10-03 20:00:01", "senderId": DIR_SELF,
+                 "text": "我先说一句", "sender": "Director"}
+        with mock.patch.object(self.dv, "transcript", return_value=[human]), \
+                mock.patch.object(self.dv.im, "read_messages", return_value={"messages": [human]}):
+            sent = self.speak(step)
+        self.assertEqual(self.calls[0][0], "send")
+        self.assertEqual(self.calls[0][1]["text"], question)
+        self.assertEqual([kind for kind, _ in self.calls], ["send"])
+        self.assertEqual(sent["quote_miss"], {"missing": "employee_latest", "by_employee": False, "via": "employee_latest"})
 
 
 class PagingTests(unittest.TestCase):

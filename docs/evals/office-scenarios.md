@@ -2,6 +2,8 @@
 
 评测集包含独立的 20 条 P0 Golden 组合回归与本文件索引的分场景定义。分场景数据以 `server/internal/evalcatalog/office-scenarios.json` 为准，Golden 定义以 `server/internal/evalcatalog/golden.json` 为准。
 
+每条场景用例只处于一种核对方式：对话或收到的文件里就能判断；对话之外再看一条事实；或还缺一项运行条件。页面上分别标成可跑可验证、补一条事实可判断、还缺条件。
+
 每条用例展示三个字段：
 
 - `roles`：需要的角色与其测试读取范围。

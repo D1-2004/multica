@@ -154,8 +154,10 @@ python3 e2e.py v2 sync-gaps                                                 # ca
   switches follow the code; a case needing an unimplemented harness capability is `blocked_harness`;
   release/ops switches that are off keep a case from running; a check whose `requires` is off is `vacuous`.
 - **Quote-reply** (`reply_to`): step / employee_reply_of (grader attribution, last reply) / observed /
-  employee_latest, with fallback; an unresolved target is `harness_error`, never a plain send. Quoting
-  the employee drops an explicit `@employee` (a quote already @-mentions its author).
+  employee_latest, with fallback. An unresolved step, observed, or employee_reply_of target is
+  `harness_error`. When `employee_latest` has no employee message yet, the question is still sent and
+  the send record carries `quote_miss`. Quoting the employee drops an explicit `@employee` (a quote
+  already @-mentions its author).
 - **Senders**: humans send with `--ai-tag=false`; every landing is located as a reader sees it by the
   sender's id and can't reuse a message an earlier step claimed (short lines like 「好嘞」 are safe).
   DEAP actors (`daiyu`, `wangxifeng`, `baochai`) never @ or DM, are leased on the DWH board per case

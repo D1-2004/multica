@@ -2445,6 +2445,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireEvalReportHumanActor).Head("/api/evals/", evals.ServeHTTP)
 		r.With(handler.RequireEvalReportHumanActor).Get("/api/evals/report-contract", evals.ServeHTTP)
 		r.With(handler.RequireEvalReportHumanActor).Head("/api/evals/report-contract", evals.ServeHTTP)
+		r.With(handler.RequireEvalReportHumanActor).Post("/api/evals/judge-fact", evals.ServeHTTP)
 
 		// --- User-scoped routes (no workspace context required) ---
 		r.With(handler.RequireHumanActor).Get("/api/me", h.GetMe)
