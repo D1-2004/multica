@@ -4,7 +4,7 @@
 
 - 范围：中等；只读调查原事故，修复 Employee Direct 一次性任务创建的重复配置通知，交付可审查 CR。不得发送钉钉消息、部署或合并。
 - 基线：`aone/feat/tag-multitenant@0c626efa138ef137bb8a23e82a3d7d2af85fd347`；隔离分支 `codex/qwen-once-create-notice-20261005`。原 checkout 的 WIP 不进入提交。
-- 实现 completed；本地验证 passed；原事故只读取证 completed；独立审查 passed；提交 pending。集成/发布不在本轮范围；修复版本真实 IM 验收 pending，交给后续明确授权的集成/验收负责人。
+- 实现 completed；本地验证 passed；原事故只读取证 completed；独立审查 passed；[CR30323684](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/codereview/30323684) 已 opened、can_be_merged，待人工评审，未配置默认评审人。代码候选 `b33137baf6923c8c1e90c9f7377d8a080d97b704`，后续仅回填本 Plan。集成/发布不在本轮范围；修复版本真实 IM 验收 pending，交给后续明确授权的集成/验收负责人。
 
 ## 用户结果与判据
 
@@ -46,7 +46,7 @@
 
 - 合同、skill/source map 和既有 `office-cron-once-short-due`（P0 `G15`）先更新。该用例增加创建阶段的唯一最终回执及重放核对，保持稳定 ID/场景归属；没有扩大真实执行授权。
 - `sceneConfigRoutineCreate` 在成功后只对 once 且 `CaptureRoutineSource` 已在 PG 验证 EmployeeRunID 的来源返回空 change notice。工具事实/资源/来源不变，失败早于此分支返回；不抑制原 Host 终态、不重发历史消息、不改普通任务、其他配置或到点运行。
-- 原代码的实际 MCP 创建/重放在本地复现一个资源、两条配置通知；先前夹具缺 Agent 头及非 Employee 模式的 setup 失败保留在日志，修正夹具后定位到真正重复通知断言。
+- 原代码的实际 MCP 创建/重放在本地复现一个资源、两条配置通知；首轮夹具缺 Agent 头及非 Employee 模式，修正 setup 后才使用真正的重复通知失败作为产品回归证据。
 - 隔离 PG 17.10，源码基线 `0c626efa13` 加本次 diff：新两项检查及十项既有检查共 12 顶层 PASS、0 fail、0 skip。覆盖原 Direct DM 受理→MCP创建/重放→单资源→无新增配置 outbox→原 Host唯一最终 outbox（重复 reconcile）、普通任务保留配置通知、Direct远程 MCP安全消息/URL脱敏、跨场域和token拒绝、routine只读、once取消/消费/重放，以及成功/失败/取消终态通知唯一性。模型、DWS、时钟输入为既有夹具；不把 outbox enqueued 当作 IM 已送达。
 - `go vet ./internal/handler`、`go build ./cmd/server`、`make eval-check`、`check-eval-catalog.py --base-ref 0c626efa...`、`git diff --check` passed。定义结构/引用检查不是真实模型质量验收；没有新增协议、迁移、配置或 Runtime 镜像依赖。
 - 修复版本的自然短句表达和真实 IM 次数尚未运行；须后续明确授权后部署候选并按本例最小路径复测。原失败 evidence 保留，不以换会话或模拟 PASS 签收产品效果。
