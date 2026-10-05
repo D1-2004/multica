@@ -355,3 +355,62 @@ func TestJudgeFactReturnsPlantedFactWithoutTraceDump(t *testing.T) {
 		t.Fatal("unplanted dump was returned", rejected.Code, rejected.Body.String())
 	}
 }
+
+func TestOfficeVisibleChecksSayWhatChatOrFileShows(t *testing.T) {
+	h := NewHandler(nil).(*handler)
+	page := request(h, "/api/evals")
+	if page.Code != 200 {
+		t.Fatal(page.Code)
+	}
+	body := page.Body.String()
+	live := map[string]bool{
+		"office-negative-stop":                true,
+		"office-two-existing-targets":         true,
+		"office-steer-delivery-inheritance":   true,
+		"office-forwarded-invite-principal":   true,
+		"office-authorized-terminal-followup": true,
+		"office-terminal-without-plan":        false,
+	}
+	found := 0
+	for _, scenario := range h.data.Scenarios {
+		for _, item := range scenario.Cases {
+			wantLive, ok := live[item.ID]
+			if !ok {
+				continue
+			}
+			found++
+			if len(item.Method) == 0 {
+				t.Fatal("missing method", item.ID)
+			}
+			verdict := item.Method[0]
+			if !strings.Contains(verdict, "通过时") || !strings.Contains(verdict, "不通过时") {
+				t.Fatal("method does not state pass and fail", item.ID)
+			}
+			if !strings.Contains(verdict, "群") && !strings.Contains(verdict, "文件") {
+				t.Fatal("method does not name the chat or the file", item.ID)
+			}
+			if item.LiveReady != wantLive {
+				t.Fatal("visible state", item.ID, item.LiveReady)
+			}
+			if !strings.Contains(body, verdict) {
+				t.Fatal("page does not show the verdict", item.ID)
+			}
+			if item.ID == "office-terminal-without-plan" {
+				const fact = "这一项结果交完之后，没有再派发新任务。"
+				if item.JudgeFact != fact || item.BlockedBecause != "" {
+					t.Fatal("judge fact", item.JudgeFact, item.BlockedBecause)
+				}
+				if !strings.Contains(body, "裁判只看这一条："+fact) {
+					t.Fatal("page does not show the one judge fact")
+				}
+				continue
+			}
+			if item.JudgeFact != "" || item.BlockedBecause != "" {
+				t.Fatal("conversation case also has another state", item.ID)
+			}
+		}
+	}
+	if found != len(live) {
+		t.Fatal("missing cases", found)
+	}
+}
