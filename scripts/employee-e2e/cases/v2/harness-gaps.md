@@ -71,7 +71,7 @@
 - **现状**：driver 只会 `+messages-send`；带 `reply_to` 的步骤会被当成普通文本发出，**DEAP 演员这样发出的消息员工根本收不到**（不带 @ 的 DEAP 发言不投递）。
 - **CLI**：`dws chat +messages-reply --ref-msg-id <openMessageId> --content <正文> --uuid <幂等键> --ai-tag=false`；群里可加 `--group <cid>`，单聊用 `--open-dingtalk-id`；需要同时 @ 员工时加 `--at-open-dingtalk-ids <员工在发送者视角的 id>`（CLI 会自动补 `<@id>` 占位符）。
 - **请求**：
-  1. 解析四种引用目标：`step`（该步落地的 messageId）、`employee_reply_of`（grader 同款归属算法找员工对该步的**最后一条**回复）、`observed`（observe 步骤 `matched_message.messageId`）、`employee_latest`（读该会话最新一条员工消息）。找不到时按 `fallback` 走；仍找不到就把这一步记为 `harness_error`，**不得降级为普通发送**。
+  1. 解析四种引用目标：`step`（该步落地的 messageId）、`employee_reply_of`（grader 同款归属算法找员工对该步的**最后一条**回复）、`observed`（observe 步骤 `matched_message.messageId`）、`employee_latest`（读该会话最新一条员工消息）。前三种找不到、且 fallback 也找不到时，把这一步记为 `harness_error`。`employee_latest` 当时还没有员工消息时，记下 `quote_miss`，问题仍按普通消息发出，随后给出有名字的判定。
   2. **人类引用员工消息时不要再加 `--at`**：钉钉引用会自动 @ 被引用人，正文再放 `<@id>` 会双 @（已踩坑）。人类引用**别人的**消息又要叫员工时才加 `--at-open-dingtalk-ids`；此时员工看到的正文开头是原始 `<@openId>` 占位符，grader 不扣分。
   3. 读回定位与普通发送一致（`--uuid` + senderId + match_key）。
 - **按引用目标统计**：employee_reply_of 16 条：G-03、G-08、G-11、G-12、G-14、M-01、M-02、M-03、M-04、M-06、M-15、P-01、P-04、P-06、P-11、P-16；step 5 条：G-18、M-02、M-03、M-06、M-08；observed 5 条：M-16、P-05、P-13、T-12、T-15；employee_latest 4 条：G-09、P-01、P-02、P-12。

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,17 +20,19 @@ import (
 var assets embed.FS
 
 type TestCase struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Priority     string   `json:"priority"`
-	Roles        []string `json:"roles"`
-	Verifies     []string `json:"verifies"`
-	Method       []string `json:"method"`
-	ScenarioRefs []string `json:"scenarioRefs"`
-	CaseRefs     []string `json:"caseRefs"`
-	Sources      []string `json:"sources"`
-	Origin       string   `json:"origin"`
-	LiveReady    bool     `json:"liveReady,omitempty"`
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Priority       string   `json:"priority"`
+	Roles          []string `json:"roles"`
+	Verifies       []string `json:"verifies"`
+	Method         []string `json:"method"`
+	ScenarioRefs   []string `json:"scenarioRefs"`
+	CaseRefs       []string `json:"caseRefs"`
+	Sources        []string `json:"sources"`
+	Origin         string   `json:"origin"`
+	LiveReady      bool     `json:"liveReady,omitempty"`
+	JudgeFact      string   `json:"judgeFact,omitempty"`
+	BlockedBecause string   `json:"blockedBecause,omitempty"`
 }
 
 type Scenario struct {
@@ -180,12 +183,65 @@ func NewHandler(reports ReportSource) http.Handler {
 	return h
 }
 
+func (h *handler) judgeFact(caseID string) (string, bool) {
+	for _, scenario := range h.data.Scenarios {
+		for _, item := range scenario.Cases {
+			if item.ID == caseID && item.JudgeFact != "" && !item.LiveReady && item.BlockedBecause == "" {
+				return item.JudgeFact, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (h *handler) serveJudgeFact(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		CaseID string `json:"caseId"`
+		Fact   string `json:"fact"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.CaseID) == "" || strings.TrimSpace(req.Fact) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+		return
+	}
+	fact, ok := h.judgeFact(req.CaseID)
+	if !ok || fact != req.Fact {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"no judge fact"}`))
+		return
+	}
+	encoded, err := json.Marshal(struct {
+		Fact string `json:"fact"`
+	}{Fact: fact})
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(encoded)
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	if strings.TrimSuffix(r.URL.Path, "/") == "/api/evals/judge-fact" {
+		h.serveJudgeFact(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -10,6 +10,10 @@ Read `docs/evals/CONTRIBUTING.md` before modifying definitions.
 - `liveReady: true` marks a case the current pre-release can run in a real
   conversation and check from the chat or a delivered file. Omit it otherwise.
   It is not a pass result. A golden row is marked only when every caseRef is.
+- A scenario case without `liveReady` has either `judgeFact` (one plain fact
+  for the judge, plus pass and fail wording) or `blockedBecause` (one missing
+  run condition). Do not combine them. The judge assistant returns that fact
+  alone.
 - Keep P0-to-scenario/case references valid and exact. Do not claim full coverage
   of a scenario when only selected cases are referenced.
 - Run `make eval-check` before submitting. No live DWS/model call belongs in this check.

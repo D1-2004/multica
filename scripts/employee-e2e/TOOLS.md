@@ -51,7 +51,7 @@ Rules and gotchas:
   - Verdicts: pass, fail, degraded (only `tier: target` checks missed), needs_review (semantic rubric pending), invalid_env (restart, deploy or wrong gateway in the window), harness_error, not_run.
   - Semantic verdicts go in `<run>/judgements.json` with evidence.
 - **var_sets.** One row per attempt, seeded by `run:case:attempt`, merged over the driver codes. Variables render first, then `{=ALIAS}`.
-- **Quote-reply targets.** `reply_to` = step / employee_reply_of / observed / employee_latest (+fallback). An unresolved target is a `harness_error`, never a plain send.
+- **Quote-reply targets.** `reply_to` = step / employee_reply_of / observed / employee_latest (+fallback). An unresolved step, observed, or employee_reply_of target is a `harness_error`. When `employee_latest` has no employee message yet, the step records `quote_miss` and still sends the question.
 - **Evidence** lives in `~/d1/employee-e2e-evidence/<run-id>/` (mode 0700, outside the repo).
 - **Tests:** `python3 -m unittest discover -s scripts/employee-e2e/tests -v` (offline).
 - **Suite sources:** edit `cases/v2/_build/*.py`, then `python3 cases/v2/_build/build.py` regenerates G/M/C/P/T.json, world.json, SUITE.md and harness-gaps.md in place.
