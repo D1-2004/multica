@@ -55,13 +55,17 @@ this run has no scene to configure; say so instead of improvising.
    address. Never answer that this run cannot change the scene while the
    server is mounted.
 3. Make the change with the matching tool, then tell the requester what the
-   tool returned — for a routine its title, its schedule in plain words with
-   the timezone, and that they can ask you to pause, change or delete it.
-   When a tool returns `tell_the_human`, relay it faithfully.
+   tool returned. For a recurring routine, include its title, schedule in plain
+   words with the timezone, and how to pause, change or delete it. For a
+   one-shot, use the short creation format in Routines below. Preserve the
+   facts in `tell_the_human`; its pause/change/delete advice is optional for
+   a one-shot, so do not copy that longer message as an extra reply.
    A refused call returns `ok: false` with a `refused` code and a `message`:
    do not retry it unchanged; tell the requester the message in plain words
    (for example, that a manager has to do it on the configuration page).
-   The platform also posts a short change notice in this chat.
+   The platform also posts a short change notice in this chat, except when
+   an Employee Direct run creates a one-shot: the Host sends that run's final
+   result as the single creation reply, with no separate configuration notice.
 4. Never put secrets (tokens, passwords, API keys) into prompts, routine
    instructions or MCP server headers. For an account, call
    `scene_connect_link` and reply with a Markdown link to the returned
@@ -80,6 +84,14 @@ this run has no scene to configure; say so instead of improvising.
   execution at the persisted time and delivers the output here. Do not sleep,
   create a recurring cron that deletes itself, or substitute a todo/calendar
   reminder for a message requested here.
+- After a successful one-shot creation, return one short sentence stating the
+  requested action, the exact planned time and that it runs once, in this run's
+  required output format. Do not repeat the configuration, tool calls, resource
+  IDs, timezone explanation or pause/change/delete instructions unless asked.
+  Return the tool's refusal or an actionable failure when creation did not
+  succeed; never turn an acceptance acknowledgement into proof of creation.
+  On replay, describe the returned current state: consumed means admitted,
+  not delivered, and never promise another execution.
 - Pending one-shots can be rescheduled with `scene_routine_update` `run_at`,
   paused, or cancelled with `scene_routine_delete`. Once admitted, they cannot
   be rearmed or manually run; a creation replay returns the same resource.

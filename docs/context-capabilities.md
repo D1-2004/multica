@@ -1499,7 +1499,11 @@ earlier binding, an unknown scene) gets neither.
     sandbox MCP bridge (pi-mcp-extension) replaces an `isError` result's text
     with a generic line, so the agent could not relay why. Only unexpected
     failures stay `isError`.
-  - Every write posts a Host change notice into the scene. Header values,
+  - Every write posts a Host change notice into the scene, except a verified
+    Employee Direct `scene_routine_create(kind=once)`: its tool receipt (also
+    on creation replay) returns to the executor, and that Run's Host result
+    is the sole final creation reply. Remote MCP security notices and other
+    configuration changes still post their change notice. Header values,
     URL user info and query strings, and full webhook URLs never enter the
     conversation.
 - **Skill.** Added at claim when the task has a current scene
