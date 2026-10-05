@@ -27,14 +27,23 @@ func (h *Handler) stageEmployeeHumanCardProjectionTx(ctx context.Context, tx pgx
 	if r == nil || q.Validate() != nil || q.ValidateResponse(*r) != nil {
 		return humanquestion.ErrInvalid
 	}
-	// Deferring is not the winning final answer. It must not prevent a later
-	// typed answer from closing the card with its actual choice.
+	// A native skip has no final projection; a later text answer may close it.
 	if r.Intent == "skip" || (q.PublicID == "" && q.ActionID == "") {
 		return nil
 	}
 	ref, ok := a2ui.ParseRef(q.PublicID)
 	if !ok || ref.ID.String() != q.ID || q.ActionID == "" {
 		return humanquestion.ErrInvalid
+	}
+	// Putting a card aside permanently closes this interaction surface. A
+	// later text answer resumes work, but never races a different FINISH
+	// payload against an older, possibly unknown provider update.
+	if q.State == "deferred" && q.ResponseID != "" {
+		var closed bool
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_human_card_projection p JOIN employee_human_response old ON old.id=p.response_id AND old.question_id=p.question_id WHERE p.question_id=$1::uuid AND p.workspace_id=$2::uuid AND p.agent_id=$3::uuid AND p.tenant_org_id=$4 AND p.scene_id=$5::uuid AND p.principal_id=$6::uuid AND old.body->>'intent'='defer')`, q.ID, q.Scope.WorkspaceID, q.Scope.AgentID, q.Scope.TenantOrgID, q.Scope.SceneID, q.PrincipalID).Scan(&closed)
+		if err != nil || closed {
+			return err
+		}
 	}
 	var same bool
 	err := tx.QueryRow(ctx, `INSERT INTO employee_human_card_projection(question_id,response_id,workspace_id,agent_id,tenant_org_id,scene_id,principal_id)
@@ -78,7 +87,7 @@ func (h *Handler) ReconcileEmployeeHumanCardProjections(ctx context.Context, lim
  SELECT q.id,q.response_id,q.workspace_id,q.agent_id,q.tenant_org_id,q.scene_id,q.principal_id
  FROM employee_human_question q JOIN employee_human_response r ON r.id=q.response_id
  JOIN a2ui_interaction a ON a.id=q.id AND a.workspace_id=q.workspace_id AND a.agent_id=q.agent_id AND a.sender_org_id=q.tenant_org_id AND a.scene_id=q.scene_id::text AND a.public_id=q.card_public_id
- WHERE q.state='answered' AND q.action_id<>'' AND q.card_public_id<>'' AND r.body->>'intent'<>'skip'
+ WHERE (q.state='answered' OR (q.state='deferred' AND r.body->>'intent'='defer')) AND q.action_id<>'' AND q.card_public_id<>'' AND r.body->>'intent'<>'skip'
  AND NOT EXISTS(SELECT 1 FROM employee_human_card_projection p WHERE p.question_id=q.id)
  ORDER BY q.created_at,q.id LIMIT $1 ON CONFLICT(question_id) DO NOTHING`, limit)
 	if err != nil {
@@ -120,10 +129,11 @@ func (h *Handler) ReconcileEmployeeHumanCardProjections(ctx context.Context, lim
 		// provider outcomes remain pending and retry the same replacement.
 		_, err = database.Exec(ctx, `UPDATE employee_human_card_projection SET state=$3,last_error=$4,available_at=now()+$5::interval,
  lease_token=NULL,lease_until=NULL,completed_at=CASE WHEN $3='completed' THEN now() ELSE completed_at END,updated_at=now()
- WHERE question_id=$1::uuid AND lease_token=$2::uuid AND state='pending'`, p.QuestionID, p.Lease, state, reason, fmt.Sprintf("%d seconds", int(employeeHumanCardRetryDelay(p.Attempts).Seconds())))
+ WHERE question_id=$1::uuid AND lease_token=$2::uuid AND state='pending' AND response_id=$6::uuid`, p.QuestionID, p.Lease, state, reason, fmt.Sprintf("%d seconds", int(employeeHumanCardRetryDelay(p.Attempts).Seconds())), p.ResponseID)
 		if err != nil {
 			return processed, err
 		}
+
 		slog.InfoContext(ctx, "human card projection reconciled", "event", "employee_human_card_projection", "question_id", p.QuestionID, "response_id", p.ResponseID, "scene_id", p.Scope.SceneID, "state", state, "reason", reason, "attempt", p.Attempts)
 	}
 	return processed, nil
@@ -148,6 +158,9 @@ func employeeHumanCardResult(q humanquestion.Question, r humanquestion.Response)
 	}
 	if r.Intent == "dismiss" {
 		return a2ui.Result{Outcome: "disabled"}, nil
+	}
+	if r.Intent == "defer" {
+		return a2ui.Result{Outcome: "deferred"}, nil
 	}
 	result := a2ui.Result{Outcome: string(a2ui.StatusAnswered), Selected: []string{}, Labels: []string{}, Custom: r.RawText}
 	for _, selected := range r.Selected {
@@ -180,7 +193,7 @@ func (h *Handler) updateEmployeeHumanCardProjection(ctx context.Context, databas
 	if err != nil {
 		return err
 	}
-	if q.PrincipalID != p.PrincipalID || q.State != "answered" || q.ResponseID != p.ResponseID || r.QuestionID != q.ID || r.Intent == "skip" || q.ValidateResponse(r) != nil {
+	if q.PrincipalID != p.PrincipalID || (q.State != "answered" && !(q.State == "deferred" && r.Intent == "defer")) || (q.ResponseID != p.ResponseID && r.Intent != "defer") || r.QuestionID != q.ID || r.Intent == "skip" || q.ValidateResponse(r) != nil {
 		return humanquestion.ErrForbidden
 	}
 	// Closing a valid accepted question is independent of whether its Task
@@ -243,6 +256,7 @@ func (h *Handler) updateEmployeeHumanCardProjection(ctx context.Context, databas
 	if err = employeeHumanCardSenderCurrent(ctx, database, q, in.DWSUID); err != nil {
 		return err
 	}
+
 	return h.DingTalkResponses.UpdateQuestionCard(ctx, in, bizID, messages)
 }
 

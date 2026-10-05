@@ -467,3 +467,19 @@ natural sentences; requested raw evidence does not request a diagnostic narrativ
 Explicit detail and exact-format exceptions remain unchanged.
 
 Quoted-human-card authority is frozen per source by employee_human_quote.go, using exact provider message ids plus verified outer/quoted provider reads. Human marker 3 gates this snapshot and its effect checks; missing ids remain unresolved. The production router installs the card-receipt callback after response-service construction. dwsclient queries delivery ids on the original SDK client/token only; CLI and missing historical business ids remain explicit verification limits.
+
+Human marker 4 adds explicit, recoverable question deferral. Borrowed boundaries
+from fixed GawkBot broker_requests_interviews.go (FYI dismissal versus an answer),
+broker_messages.go (directed quote first), and scheduler.go (active request only).
+The Host preserves the mandatory wait and pending question, mutes only its
+reminder, and admits a fresh text answer through the original question/Task.
+No new wake is produced by deferral; permanent dismissal of a required wait is
+refused. Deferral permanently closes this card with one immutable projection; later text
+resumes the Task through chat and never races another card payload against an
+unknown prior provider RPC.
+SDK receipt lookup follows DWS resolveDigitalEmployeeDelivery's bounded,
+original-client polling pattern (local source 7de51a87a13f89de1084f07d9ded9c4603b4da9a),
+without copying its code or broadening generic delivery-state parsing. Message
+identity without a conversation id is saved for later exact Host verification,
+not claimed as a fully delivered receipt. The original failed status payload
+was not exported, so its precise query failure remains unproven.

@@ -215,7 +215,7 @@ func TestEmployeeHumanDisableRacesNativeWithOneTerminal(t *testing.T) {
 	}
 }
 
-func TestEmployeeHumanDisablePreservesBoundWaitingTask(t *testing.T) {
+func TestEmployeeHumanDeferPreservesWaitAndTextResumesSameTask(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Skip("requires explicit isolated DATABASE_URL")
 	}
@@ -295,7 +295,12 @@ func TestEmployeeHumanDisablePreservesBoundWaitingTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	response := humanquestion.Response{ID: uuid.NewString(), QuestionID: q.ID, EventID: "bound-task-disable", Surface: "chat_text", RequesterRef: q.RequesterRef, Intent: "dismiss", Reason: "not_needed", RawText: "不用选了，先保留任务", EvidenceQuote: "不用选了"}
+	response := humanquestion.Response{ID: uuid.NewString(), QuestionID: q.ID, EventID: "bound-task-defer", Surface: "chat_text", RequesterRef: q.RequesterRef, Intent: "defer", Reason: "deferred", RawText: "先不管", EvidenceQuote: "先不管"}
+	dismiss := response
+	dismiss.Intent, dismiss.Reason = "dismiss", "not_needed"
+	if _, _, err = humanquestion.AcceptTx(ctx, tx, scope, dismiss, f.h.stageEmployeeHumanCardProjectionTx); !errors.Is(err, humanquestion.ErrConflict) {
+		t.Fatal("required wait could be orphaned by dismissal", err)
+	}
 	if _, _, err = humanquestion.AcceptTx(ctx, tx, scope, response, f.h.stageEmployeeHumanCardProjectionTx); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +314,7 @@ func TestEmployeeHumanDisablePreservesBoundWaitingTask(t *testing.T) {
 		t.Fatal("disable altered Task/Run/wait/queue")
 	}
 	pending, err := humanquestion.NewStore(database).Pending(ctx, scope, q.RequesterRef)
-	if err != nil || len(pending) != 0 {
+	if err != nil || len(pending) != 1 || pending[0].ID != q.ID || pending[0].State != "deferred" {
 		t.Fatal(pending, err)
 	}
 	var jobsAfter int
@@ -318,5 +323,37 @@ func TestEmployeeHumanDisablePreservesBoundWaitingTask(t *testing.T) {
 	}
 	if probe.calls != 1 || probe.sends != 0 {
 		t.Fatal("card not closed by original update", probe)
+	}
+	late := humanquestion.Response{ID: uuid.NewString(), QuestionID: q.ID, EventID: "late-deferred-click", Surface: "a2ui_action", RequesterRef: q.RequesterRef, Intent: "answer", Selected: []string{q.Choice.Options[0].ID}}
+	tx, err = database.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, _, err = humanquestion.AcceptTx(ctx, tx, scope, late, f.h.admitEmployeeHumanResponseTx); !errors.Is(err, humanquestion.ErrStale) {
+		t.Fatal("old deferred button resumed work", err)
+	}
+	answer := late
+	answer.ID, answer.EventID, answer.Surface = uuid.NewString(), "fresh-text-answer", "chat_text"
+	answer.RawText, answer.EvidenceQuote = "现在继续整理流程", "继续整理"
+	if _, _, err = humanquestion.AcceptTx(ctx, tx, scope, answer, f.h.admitEmployeeHumanResponseTx); err != nil {
+		t.Fatal("text answer failed to resume deferred question", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if before != snapshot() {
+		t.Fatal("accepting text prematurely released the mandatory wait")
+	}
+	c.model.set(func(string) (string, map[string]any) {
+		return wakeToolCall("resume-deferred", "continue_question_work", map[string]any{"prompt": "继续整理流程，不发送", "reply": "我来继续整理。"})
+	})
+	c.process()
+	var nextTask, waitState string
+	if err = testPool.QueryRow(ctx, `SELECT r.task_id::text,w.state FROM employee_task_run r JOIN agent_task_queue aq ON aq.id=r.queue_task_id JOIN employee_task_wait w ON w.task_id=r.task_id AND w.ref_id=$2 WHERE aq.context->>'employee_human_response_id'=$1`, answer.ID, q.ID).Scan(&nextTask, &waitState); err != nil || nextTask != taskID || waitState != "satisfied" {
+		t.Fatal("response did not resume the exact original wait/Task", nextTask, waitState, err)
+	}
+	if updated, err := f.h.ReconcileEmployeeHumanCardProjections(ctx, 5); err != nil || updated != 0 || probe.calls != 1 {
+		t.Fatal("text answer reopened the permanently closed card", updated, probe.calls, err)
 	}
 }
