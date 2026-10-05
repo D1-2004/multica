@@ -182,12 +182,19 @@ func (l *Loop) callModel(ctx context.Context) error {
 			l.modelFailure(errors.New("normal completion requires nonempty text and no tool calls"))
 			return nil
 		}
+		if err := ValidateReplyProtocol(msg.Content, l.config.Tools); err != nil {
+			l.modelFailure(err)
+			return nil
+		}
 		l.sessions.Append(SessionEntry{Type: "assistant", Content: msg.Content, Message: &msg})
 		l.decision = Decision{Kind: Reply, Reply: strings.TrimSpace(msg.Content)}
 	case "tool_calls":
 		calls, err := parseToolCalls(msg)
 		if err == nil {
 			err = l.tools.ValidateBatch(calls)
+		}
+		if err == nil {
+			err = l.validatePublicToolText(calls)
 		}
 		if err == nil {
 			err = validateFeedbackPlan(calls, l.config.StreamedFeedback && l.GetState().ModelCalls == 1)
@@ -225,7 +232,7 @@ func (l *Loop) modelFailure(err error) {
 	l.state.Phase = PhaseError
 	l.mu.Unlock()
 	// Keep invalid output out of history, including partial text and tool batches.
-	l.sessions.Append(SessionEntry{Type: "user", Content: "The last model response was incomplete or invalid. Return a complete reply or a valid native tool call batch. Do not claim an action happened without a Host receipt."})
+	l.sessions.Append(SessionEntry{Type: "user", Content: "The last model response was incomplete or invalid. Return a complete reply or a valid native tool call batch. Never encode tool calls in XML or public reply text; use native tool_calls and keep internal source_ref locators out of public text. Do not claim an action happened without a Host receipt."})
 }
 
 func parseToolCalls(msg openai.ChatCompletionMessage) ([]ToolCall, error) {
