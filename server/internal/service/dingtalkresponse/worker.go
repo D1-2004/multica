@@ -352,7 +352,7 @@ func a2uiSendState(in ActionInput, result dwsclient.SendResult) (string, string)
 	if result.OpenConversationID != "" && result.OpenConversationID != in.ConversationID {
 		return "unknown", "delivery_target_mismatch"
 	}
-	if result.OpenMessageID != "" && result.OpenConversationID != "" {
+	if result.OpenMessageID != "" && result.OpenConversationID != "" && !result.A2UIReceipt.DeliveryUnconfirmed {
 		return "delivered", ""
 	}
 	if result.OpenTaskID != "" {

@@ -1,6 +1,6 @@
 # Employee 人工选择与文字答复
 
-本页描述当前源码行为；部署与真实IM验收分别以当波交付记录为准。生产者须等待所有副本具备 `[employee-human:3]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
+本页描述当前源码行为；部署与真实IM验收分别以当波交付记录为准。生产者须等待所有副本具备 `[employee-human:4]`；不扩大旧快照工具表。复用现有 Employee Loop、最多三次真实模型调用的单wake预算、持久scene jobs、工具journal和response outbox，不注入阻塞式沙箱工具、不保持Pi session。
 
 ## 询问与索引
 
@@ -70,13 +70,21 @@ Employee专用compact投影按用户确认的模板选择，卡内不拼原消�
 
 单聊发卡目标使用Host冻结来源的员工视角senderOpenDingTalkId；群使用场域目录CID。两者不可混用，模型不提供目标参数。
 
+## 暂缓、失效与任务控制
+
+“先不管/先放着”使用 `disable_human_question(reason=deferred)`。Host 保存 `intent=defer`、`question.state=deferred`，原卡显示“本次选择已暂缓，卡片已关闭；后续以聊天为准”且没有交互控件。Task/Run/mandatory wait 保留，不创建答复 wake，不批准或完成工作。Watchdog 仅停止该题的催问，包括已排队提醒的发送前复验；同场域其他问题/等待正常。
+
+暂缓题保留在 `pending_human_questions` 和精确引用索引。原人后续明确文字答复走 `accept_human_response`，恢复该题原来的 wait/Task；旧卡点击不能恢复。暂缓永久关闭本次交互卡，后续进展以聊天为准，不再将这张卡改成另一答复态；未知远端关闭结果的重试只投影同一关闭内容，避免不同版本远端更新乱序。未指定时间时不自行定时重问。必需澄清不能终态 dismiss 留下不可恢复等待：Host 拒绝，要求暂缓、真实答复/amend，或以 source-bound `stop_task` 停止原 Task。结案按 Goal 合同执行，不能由关卡代替。取消询问不等于取消任务。
+
+新增语义使用 `employee-human:4` reader 门禁；3/4 混版暂停新人工生产者，既有 native 提交协议和冻结 snapshot/journal 不热改。
+
 ## 模型与工程共同处理整体失效
 
-`disable_human_question(source_ref,question_ref,evidence_quote,reason)`只操作当前请求者、本场域的精确旧问题。reason为chat_continued/request_changed/cancelled/not_needed；证据必须来自当前可信消息外层原话。工具非终结，关卡后模型可继续回复或处理新事项。明确回答走accept_human_response并正常续接；文字已推进到不同要求、新话题或取消询问时可明确disable旧卡。感谢/闲聊不自动当答案，也不能批量关掉别人/其他场域的问题。
+`disable_human_question(source_ref,question_ref,evidence_quote,reason)`只操作当前请求者、本场域的精确旧问题。reason为deferred/chat_continued/request_changed/cancelled/not_needed；证据必须来自当前可信消息外层原话。工具非终结，关卡后模型可继续回复或处理新事项。明确回答走accept_human_response并正常续接；文字已推进到不同要求、新话题或取消询问时可明确disable旧卡。感谢/闲聊不自动当答案，也不能批量关掉别人/其他场域的问题。
 
 禁用复用scope/question锁和question answered终态，response intent=dismiss只是关闭审计，不创建typed human_response wake/Task，不释放必需等待或停止后台Task。原Task停止仍用stop_task。native点击与dismiss竞争只一个终态；重复disable不覆盖先前答案，旧卡迟点拒绝。a2ui存储status沿用answered，result.outcome=disabled区分显示，持久原卡projection outbox按原bizId更新FINISH；模型不能指定bizId/场域或人员权限。发送尚未完成时先关闭状态，晚回执后补锁卡；未知投递不重发新卡。
 
-新引用绑定生产者须等待全部live副本支持human:3；混版2/3双方暂停新人工生产者，防止旧reader忽略引用约束。旧native submit协议不变；工具snapshot仍冻结，不热改旧journal。
+新引用绑定生产者须等待全部live副本支持human:4；混版3/4双方暂停新人工生产者，防止旧reader忽略引用约束。旧native submit协议不变；工具snapshot仍冻结，不热改旧journal。
 
 ## 原消息引用到问题的索引
 
@@ -84,4 +92,4 @@ Employee专用compact投影按用户确认的模板选择，卡内不拼原消�
 
 Host写前检查冻结绑定，引用A不能操作B；原快照没有绑定时不现场添加新授权。关闭事务重新检查映射与来源权限。没有精确消息ID不创建假绑定，也不重发未知卡。
 
-生产发送服务构造后才安装OnA2UIAccepted，否则成功发卡的真实BizId不会落盘。已记录BizId/MID不能被不同回执覆盖，空BizId拒绝。SDK发卡在原client/原凭据内最多3秒补查一次真实送达MID/CID；失败不撤销成功创建，不重发。CLI跨进程无法保证异步任务原token，仍保留缺MID的限制。安全日志dws_a2ui_receipt_identity仅记录transport、request ID及身份字段是否存在，真实验收必须证明目标实际使用SDK及得到MID。历史已丢失BizId的卡不能由本次修改恢复，原卡更新不能被新卡样式测试替代。
+生产发送服务构造后才安装OnA2UIAccepted，否则成功发卡的真实BizId不会落盘。已记录BizId/MID不能被不同回执覆盖，空BizId拒绝。SDK发卡在原client/原凭据内总计最多3秒、最多6次只读补查真实MID；等待状态有界重查，永久拒绝立即停止。失败不撤销成功创建、不重发。缺CID不丢真实MID，也不制造完整delivered事实；Host仍用冻结CID、定向消息回读的发送人/引用/接收人检查授权。CLI跨进程无法保证异步任务原token，仍保留缺MID的限制。安全日志仅记录transport、request ID、查询分类及身份字段有无，不输出原回执或凭据。真实验收必须证明实际SDK路径和MID。历史已丢失BizId的卡不能由本次修改恢复，原卡更新不能被新卡样式测试替代。

@@ -28,6 +28,75 @@ type humanCardUpdateProbe struct {
 	release  chan struct{}
 }
 
+func TestEmployeeHumanDeferredProjectionStaysImmutableAfterTextAnswer(t *testing.T) {
+	f, _, q, probe := humanProjectionFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	database, _ := employeeEntryDB(f.h)
+	accept := func(r humanquestion.Response) {
+		t.Helper()
+		tx, err := database.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		hook := f.h.admitEmployeeHumanResponseTx
+		if r.Intent == "defer" {
+			hook = f.h.stageEmployeeHumanCardProjectionTx
+		}
+		if _, _, err = humanquestion.AcceptTx(ctx, tx, q.Scope, r, hook); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deferred := humanquestion.Response{ID: uuid.NewString(), QuestionID: q.ID, EventID: "defer-projection", Surface: "chat_text", RequesterRef: q.RequesterRef, Intent: "defer", Reason: "deferred", RawText: "先不管", EvidenceQuote: "先不管"}
+	accept(deferred)
+	humanProjectionReceipt(t, f, q)
+	probe.started, probe.release = make(chan struct{}, 1), make(chan struct{})
+	probe.err = errors.New("provider update outcome unknown")
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.h.ReconcileEmployeeHumanCardProjections(ctx, 1)
+		done <- err
+	}()
+	select {
+	case <-probe.started:
+	case <-ctx.Done():
+		t.Fatal("deferred RPC never started")
+	}
+	answer := deferred
+	answer.ID, answer.EventID, answer.Intent, answer.Reason = uuid.NewString(), "answer-projection", "answer", ""
+	answer.Selected = []string{"handbook"}
+	answer.RawText, answer.EvidenceQuote = "现在选员工手册", "员工手册"
+	accept(answer)
+	if n, err := f.h.ReconcileEmployeeHumanCardProjections(ctx, 1); err != nil || n != 0 {
+		t.Fatal("new projection raced with older RPC", n, err)
+	}
+	close(probe.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var responseID, state string
+	var unlocked bool
+	if err := testPool.QueryRow(ctx, `SELECT response_id::text,state,lease_token IS NULL FROM employee_human_card_projection WHERE question_id=$1::uuid`, q.ID).Scan(&responseID, &state, &unlocked); err != nil || responseID != deferred.ID || state != "pending" || !unlocked {
+		t.Fatal("old RPC acknowledged or retained the new projection", responseID, state, unlocked, err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE employee_human_card_projection SET available_at=now() WHERE question_id=$1::uuid`, q.ID); err != nil {
+		t.Fatal(err)
+	}
+	probe.mu.Lock()
+	probe.err = nil
+	probe.mu.Unlock()
+	if n, err := f.h.ReconcileEmployeeHumanCardProjections(ctx, 1); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	if probe.calls != 2 || !strings.Contains(strings.Join(probe.messages[0], ""), "已暂缓") || strings.Join(probe.messages[0], "") != strings.Join(probe.messages[1], "") {
+		t.Fatal("answer projection was overwritten by deferral", probe.calls, probe.messages)
+	}
+}
+
 func (p *humanCardUpdateProbe) Send(context.Context, dingtalkresponse.ActionInput, string) (dwsclient.SendResult, error) {
 	p.mu.Lock()
 	p.sends++

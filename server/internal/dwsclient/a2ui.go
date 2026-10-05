@@ -31,6 +31,8 @@ type A2UIReceipt struct {
 	MessageID      string `json:"messageId,omitempty"`
 	ConversationID string `json:"conversationId,omitempty"`
 	TaskID         string `json:"taskId,omitempty"`
+	// Identity-only lookup must not upgrade a successful query into delivery.
+	DeliveryUnconfirmed bool `json:"deliveryUnconfirmed,omitempty"`
 }
 
 // SendA2UI supplies stable tracing/business IDs. They are NOT evidence of send

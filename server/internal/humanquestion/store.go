@@ -175,6 +175,20 @@ func AcceptTx(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, r Respo
 	if q.State != "open" && q.State != "deferred" {
 		return q, r, ErrStale
 	}
+	// Once put aside, a stale button cannot resume work. Only a fresh human
+	// message may supply the missing answer; replay above remains idempotent.
+	if q.State == "deferred" && r.Surface == "a2ui_action" {
+		return q, r, ErrStale
+	}
+	if r.Intent == "dismiss" && q.TaskID != "" {
+		var blocking bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task_wait WHERE task_id=$1::uuid AND goal_revision=$2 AND kind='human_input' AND ref_id=$3 AND state='open' AND mandatory)`, q.TaskID, q.GoalRevision, q.ID).Scan(&blocking); err != nil {
+			return q, r, err
+		}
+		if blocking {
+			return q, r, ErrConflict
+		}
+	}
 	if r.Intent != "dismiss" {
 		if err = CurrentTargetTx(ctx, tx, q); err != nil {
 			return q, r, err
@@ -195,7 +209,7 @@ func AcceptTx(ctx context.Context, tx pgx.Tx, scope employeeentry.Scope, r Respo
 		return q, r, err
 	}
 	state := "answered"
-	if r.Intent == "skip" {
+	if r.Intent == "skip" || r.Intent == "defer" {
 		state = "deferred"
 	}
 	_, err = tx.Exec(ctx, `UPDATE employee_human_question SET state=$2,response_id=$3::uuid WHERE id=$1::uuid`, q.ID, state, r.ID)

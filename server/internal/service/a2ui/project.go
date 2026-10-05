@@ -256,6 +256,10 @@ func projectResolvedAsk(surfaceID, question string, labels []string, custom, out
 		children = append(children, "resolved-disabled")
 		components = append(components, captionText("resolved-disabled", "已失效"))
 	}
+	if outcome == "deferred" {
+		children = append(children, "resolved-deferred")
+		components = append(components, captionText("resolved-deferred", "本次选择已暂缓，卡片已关闭；后续以聊天为准"))
+	}
 	if outcome == string(StatusSkipped) {
 		children = append(children, "resolved-skipped")
 		components = append(components, captionText("resolved-skipped", "先不选"))
