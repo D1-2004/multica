@@ -23,6 +23,22 @@ terms remain applicable. See [NOTICE](NOTICE).
 
 ## Behavioral corrections during adaptation
 
+- Registered-tool XML and raw internal source locators in public replies are
+  invalid protocol, including normal stop text and native reply/ACK fields.
+  `reply_protocol.go` rejects them before Host effects using the same bounded
+  format-repair path. The Host applies the same boundary to recovered/outbox
+  replies, preserving committed receipts rather than executing text or stripping
+  tags into an unsupported promise. Ordinary business HTML/JSON remain text.
+  This follows the fixed source's distinction between native tools and its
+  explicit prompted-tool adapter in `internal/team/headless_openai_compat.go`;
+  that adapter's text-to-tool execution is deliberately not ported.
+- New scene snapshots front-load execution acceptance before optional
+  configuration links. The no-task `describe_capabilities`/`reply` terminals
+  cannot acknowledge background work; only dispatch receipts can do that.
+  Semantic routing stays with the existing model, without keyword dispatch or
+  another judge in the runtime. See the 2026-10-05 webhook action Plan for the
+  original model/Host/IM evidence and bounded quality checks.
+
 - The upstream single `pendingToolCall` and first-tool `goto done` become a full
   native call batch. Malformed/duplicate native call identities reject the whole
   batch before any Host execution. Every executed tool result retains its ID.

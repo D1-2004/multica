@@ -56,6 +56,9 @@ func (l *Loop) feedbackObserver(ctx context.Context) func(openai.ChatCompletionC
 			if text, _ := args["text"].(string); strings.TrimSpace(text) == "" {
 				continue
 			}
+			if err := l.validatePublicToolText([]ToolCall{{Name: tool.Name, Arguments: args}}); err != nil {
+				return err
+			}
 			normalized, _ := json.Marshal(args)
 			if prior, ok := seen[native.ID]; ok {
 				if prior != string(normalized) {
