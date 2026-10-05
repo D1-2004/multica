@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -194,18 +195,56 @@ func sendA2UISDK(ctx context.Context, client *dws.Client, in A2UISendRequest) ([
 	// exchanged directory. Failure here cannot revoke a confirmed card send.
 	statusCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	statusRaw, statusErr := querySendStatusSDK(statusCtx, client, receipt.TaskID)
-	if statusErr != nil {
+	outcome, attempts := "pending", 0
+	defer func() {
+		slog.InfoContext(ctx, "DWS A2UI receipt lookup", "event", "dws_a2ui_receipt_lookup", "request_id", in.RequestID, "outcome", outcome, "attempts", attempts)
+	}()
+	for attempts < 6 {
+		if attempts > 0 {
+			timer := time.NewTimer(250 * time.Millisecond)
+			select {
+			case <-statusCtx.Done():
+				timer.Stop()
+				outcome = "deadline"
+				return raw, nil
+			case <-timer.C:
+			}
+		}
+		attempts++
+		statusRaw, statusErr := querySendStatusSDK(statusCtx, client, receipt.TaskID)
+		if statusErr != nil {
+			outcome = "query_rejected"
+			if statusCtx.Err() != nil {
+				outcome = "deadline"
+			} else if a2uiReceiptNotVisible(statusErr) {
+				outcome = "not_visible"
+				continue
+			}
+			return raw, nil
+		}
+		message, conversation, state := a2uiStatusIdentity(statusRaw)
+		outcome = state
+		if state == "pending" {
+			continue
+		}
+		if state != "identity" && state != "identity_unconfirmed" {
+			return raw, nil
+		}
+		if conversation != "" && ((in.ConversationID != "" && conversation != in.ConversationID) ||
+			(receipt.ConversationID != "" && conversation != receipt.ConversationID)) {
+			outcome = "conversation_mismatch"
+			return raw, nil
+		}
+		receipt.MessageID = message
+		receipt.DeliveryUnconfirmed = state == "identity_unconfirmed" || conversation == ""
+		if conversation != "" {
+			receipt.ConversationID = conversation
+		}
+		break
+	}
+	if receipt.MessageID == "" {
 		return raw, nil
 	}
-	status, statusErr := ParseSendStatus(statusRaw)
-	if statusErr != nil || status.State != "delivered" ||
-		(in.ConversationID != "" && status.OpenConversationID != in.ConversationID) ||
-		(receipt.ConversationID != "" && status.OpenConversationID != receipt.ConversationID) {
-		return raw, nil
-	}
-	receipt.MessageID = status.OpenMessageID
-	receipt.ConversationID = status.OpenConversationID
 	enriched, marshalErr := json.Marshal(map[string]any{"ok": true, "result": map[string]any{
 		"success": true, "result": receipt,
 	}})

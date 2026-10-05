@@ -44,7 +44,7 @@ func TestSDKA2UIReceiptQueryCannotUndoConfirmedSend(t *testing.T) {
 		wantQueries           int
 	}{
 		{"rejected-query", `{"bizId":"real-biz","cardInstanceId":42,"openTaskId":"task"}`, `{"success":false,"errorCode":"INTERNAL_ERROR"}`, 1},
-		{"pending", `{"bizId":"real-biz","cardInstanceId":42,"openTaskId":"task"}`, toolOK(`{"sendStatus":"PENDING","openMessageId":"mid","openConversationId":"cid"}`), 1},
+		{"pending", `{"bizId":"real-biz","cardInstanceId":42,"openTaskId":"task"}`, toolOK(`{"sendStatus":"PENDING","openMessageId":"mid","openConversationId":"cid"}`), 6},
 		{"wrong-conversation", `{"bizId":"real-biz","cardInstanceId":42,"openTaskId":"task"}`, toolOK(`{"sendStatus":"SUCCESS","openMessageId":"mid","openConversationId":"other-cid"}`), 1},
 		{"no-task", `{"bizId":"real-biz","cardInstanceId":42}`, "", 0},
 	} {
@@ -107,8 +107,14 @@ func captureReceiptLogs(t *testing.T) *bytes.Buffer {
 func assertReceiptLog(t *testing.T, raw, transport string, hasMessage bool) {
 	t.Helper()
 	var log map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &log); err != nil {
-		t.Fatal(err)
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["event"] == "dws_a2ui_receipt_identity" {
+			log = entry
+		}
 	}
 	if log["event"] != "dws_a2ui_receipt_identity" || log["transport"] != transport || log["request_id"] != "request" || log["has_biz_id"] != true || log["has_message_id"] != hasMessage || log["has_conversation_id"] != hasMessage || log["has_task_id"] != true {
 		t.Fatalf("receipt diagnostic = %v", log)

@@ -35,7 +35,7 @@ func (EmployeeTaskWaitFacts) ReadEmployeeTaskWait(ctx context.Context, tx pgx.Tx
 	scope := task.Scope
 	var id, kind, ref string
 	var since time.Time
-	// Dismissing a question mutes only that question's reminder. Its durable
+	// Disposing a question mutes only that question's reminder. Its durable
 	// wait and Task remain unchanged; select another open wait if one exists.
 	err := tx.QueryRow(ctx, `SELECT w.id::text,w.kind,w.ref_id,w.created_at FROM employee_task_wait w
  WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid
@@ -44,7 +44,8 @@ func (EmployeeTaskWaitFacts) ReadEmployeeTaskWait(ctx context.Context, tx pgx.Tx
  SELECT 1 FROM employee_human_question q JOIN employee_human_response r ON r.id=q.response_id AND r.question_id=q.id
  WHERE q.id::text=w.ref_id AND q.workspace_id=w.workspace_id AND q.agent_id=w.agent_id
  AND q.tenant_org_id=w.tenant_org_id AND q.scene_id=$6::uuid AND q.task_id=w.task_id
- AND q.goal_revision=w.goal_revision AND q.state='answered' AND r.body->>'intent'='dismiss'))
+ AND q.goal_revision=w.goal_revision AND ((q.state='answered' AND r.body->>'intent'='dismiss')
+ OR (q.state='deferred' AND r.body->>'intent'='defer'))))
  ORDER BY opened_seq,w.id LIMIT 1`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, task.ID, task.GoalRevision, scope.Scene.SceneID).Scan(&id, &kind, &ref, &since)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EmployeeTaskWait{}, false, nil

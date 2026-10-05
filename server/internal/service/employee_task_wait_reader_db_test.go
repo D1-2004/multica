@@ -368,6 +368,7 @@ func TestWatchdogDismissedHumanQuestionNotification(t *testing.T) {
 		want         bool
 	}{
 		{"dismiss", "", false},
+		{"defer", `WITH changed AS (UPDATE employee_human_question SET state='deferred' WHERE id=$1::uuid) UPDATE employee_human_response SET body='{"intent":"defer"}' WHERE question_id=$1::uuid`, false},
 		{"answer", `UPDATE employee_human_response SET body='{"intent":"answer"}' WHERE question_id=$1::uuid`, true},
 		{"open", `UPDATE employee_human_question SET state='open' WHERE id=$1::uuid`, true},
 		{"wrong_scene", `UPDATE employee_human_question SET scene_id=gen_random_uuid() WHERE id=$1::uuid`, true},
@@ -437,6 +438,23 @@ func TestWatchdogDismissedHumanQuestionNotification(t *testing.T) {
 		}
 		if n = onlyNotice(t, f.notices(g.ID)); n.State != "suppressed" {
 			t.Fatal(n)
+		}
+	})
+	t.Run("queued_deferred_notice", func(t *testing.T) {
+		f, g, q := dismissedHumanWaitFixture(t)
+		f.exec(`UPDATE employee_human_question SET state='open',response_id=NULL WHERE id=$1::uuid`, q)
+		f.at(62 * time.Minute)
+		f.scan(nil)
+		n := onlyNotice(t, f.notices(g.ID))
+		f.exec(`WITH changed AS (UPDATE employee_human_question SET state='deferred',response_id=(SELECT id FROM employee_human_response WHERE question_id=$1::uuid) WHERE id=$1::uuid) UPDATE employee_human_response SET body='{"intent":"defer"}' WHERE question_id=$1::uuid`, q)
+		before := humanWaitLifecycleSnapshot(t, f)
+		_, code := f.runOutbox(f.pool, f.w, n.ActionID, "cancelled")
+		if !strings.HasSuffix(code, "state_changed") || f.provider.total() != 0 {
+			t.Fatal(code, f.provider.total())
+		}
+		f.scan(nil)
+		if before != humanWaitLifecycleSnapshot(t, f) {
+			t.Fatal("deferred notification mutated lifecycle")
 		}
 	})
 }

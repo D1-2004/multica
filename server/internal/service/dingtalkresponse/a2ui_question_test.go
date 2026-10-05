@@ -99,6 +99,7 @@ func TestA2UIAcknowledgementIsNotMessageDelivery(t *testing.T) {
 		{"card-only", dwsclient.SendResult{A2UIReceipt: ack}, "provider_accepted", "a2ui_delivery_unconfirmed"},
 		{"real-task", dwsclient.SendResult{A2UIReceipt: ack, OpenTaskID: "real-task"}, "provider_accepted", ""},
 		{"real-message", dwsclient.SendResult{A2UIReceipt: ack, OpenConversationID: in.ConversationID, OpenMessageID: "message"}, "delivered", ""},
+		{"identity-only", dwsclient.SendResult{A2UIReceipt: &dwsclient.A2UIReceipt{BizID: "provider-card", CardInstanceID: 42, DeliveryUnconfirmed: true}, OpenConversationID: in.ConversationID, OpenMessageID: "message"}, "provider_accepted", "a2ui_delivery_unconfirmed"},
 		{"wrong-target", dwsclient.SendResult{A2UIReceipt: ack, OpenConversationID: "other", OpenMessageID: "message"}, "unknown", "delivery_target_mismatch"},
 		{"missing-card-receipt", dwsclient.SendResult{OpenTaskID: "real-task"}, "unknown", "a2ui_receipt_missing"},
 	}

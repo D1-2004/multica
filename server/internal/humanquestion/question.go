@@ -78,12 +78,12 @@ func (q Question) ValidateResponse(r Response) error {
 		return ErrInvalid
 	}
 	switch r.Intent {
-	case "answer", "provide_info", "amend", "cancel", "skip", "dismiss":
+	case "answer", "provide_info", "amend", "cancel", "skip", "dismiss", "defer":
 	default:
 		return ErrInvalid
 	}
-	if r.Intent == "dismiss" {
-		if r.Surface != "chat_text" || len(r.Selected) != 0 || !ValidDismissReason(r.Reason) {
+	if r.Intent == "dismiss" || r.Intent == "defer" {
+		if r.Surface != "chat_text" || len(r.Selected) != 0 || !ValidDismissReason(r.Reason) || (r.Intent == "defer") != (r.Reason == "deferred") {
 			return ErrInvalid
 		}
 	} else if r.Reason != "" {
@@ -128,7 +128,7 @@ func responseBody(r Response) ([]byte, error) { return json.Marshal(r) }
 // ValidDismissReason bounds the model-owned explanation without granting authority.
 func ValidDismissReason(reason string) bool {
 	switch reason {
-	case "chat_continued", "request_changed", "cancelled", "not_needed":
+	case "deferred", "chat_continued", "request_changed", "cancelled", "not_needed":
 		return true
 	default:
 		return false
