@@ -78,6 +78,8 @@ Employee专用compact投影按用户确认的模板选择，卡内不拼原消�
 
 新增语义使用 `employee-human:4` reader 门禁；3/4 混版暂停新人工生产者，既有 native 提交协议和冻结 snapshot/journal 不热改。
 
+回滚须保留理解 defer 的 reader；持久暂缓问题仍存在时不能直接退回 human3，否则旧版提醒与投影不理解该处置。停止 producer 与排空发送队列不代表这些暂缓问题已经消失。是否恢复或停止原工作须另按明确授权处理，不能通过回滚清等待。
+
 ## 模型与工程共同处理整体失效
 
 `disable_human_question(source_ref,question_ref,evidence_quote,reason)`只操作当前请求者、本场域的精确旧问题。reason为deferred/chat_continued/request_changed/cancelled/not_needed；证据必须来自当前可信消息外层原话。工具非终结，关卡后模型可继续回复或处理新事项。明确回答走accept_human_response并正常续接；文字已推进到不同要求、新话题或取消询问时可明确disable旧卡。感谢/闲聊不自动当答案，也不能批量关掉别人/其他场域的问题。

@@ -2,14 +2,14 @@
 
 ## 2026-10-05 “先不管”接续：当前状态入口
 
-- 基线 `aone/feat/tag-multitenant@a662da6c09`，隔离分支 `codex/human-defer-receipt-20261005`。不改原 checkout 或原 A2UI worktree 的 WIP。CR30323281 已 merged；Run3110405323/source21bf92ec/release7999bf56，01:39:49 部署，双 live human3。原选择锁卡通过证据复用。
+- 基线 `aone/feat/tag-multitenant@a662da6c09`，隔离分支 `codex/human-defer-receipt-20261005`。不改原 checkout 或原 A2UI worktree 的 WIP。CR30323281 已 merged；Run3110405323/source21bf92ec/release7999bf56，01:39:49 部署，双 live human3。原选择锁卡通过证据复用。本波本地证据：/Users/yuanzhan/d1/employee-e2e-evidence/HUMAN-DEFER-LOCAL-20261005/manifest.json；隔离PG已停用。
 - 23:08:35 原失败未调用工具；部署后 P02 调用了 disable，但被 `card_message_identity_missing` 拒绝。SDK 最终有 Biz/Task、缺 MID/CID。未导出原始 send-status query 响应，权限、暂不可见、字段形态与缺 CID 的具体归因仍未证实。
 - 参考固定 GawkBot `71e82a18`：`broker_requests_interviews.go` 区分 FYI dismissal 与人类答案，`broker_messages.go` 先处理定向引用，`scheduler.go` 按 active request 提醒。采用定向问题、处置与提醒分账，不移植新消息取消全场域 interview。DWS `resolveDigitalEmployeeDelivery` 已使用原 client 有界回执重查；采用该模式，保留本仓 PG/outbox 和源授权。
 - 新合同：`reason=deferred` 记录 `intent=defer`、question deferred，原卡静态暂缓。不是答案、批准、Task 取消或 Goal 完成；不建 typed wake、不改 Task/Run/wait/queue。问题继续在同 requester/scene 的 pending 与引用索引，可由后续明确文字答复恢复原等待；旧 native 点击拒绝。仅停止该题的提醒，其他 wait 正常。必需澄清不允许终态 dismiss 留下不可恢复的 wait。
 - 并发审查后的范围修订：暂缓永久关闭本次交互卡，后续文字恢复以聊天和Task状态为准；该卡不再改成答案投影。原因是 provider 没有已证实的更新版本 CAS，未知旧RPC可能迟执行；本地 lease 无法证明远端不同内容更新顺序。采用一个不可变关闭投影，恢复答复不产生第二种卡更新，避免增加补偿状态机。
 - 回执：原 SDK client/token，总计三秒内最多六次只读补查；等待状态可重查，永久拒绝停止，不重发创建。真实 MID 可保存为引用索引，缺 CID 不能制造 delivered 事实；Host 使用已冻结 CID 与 MID 定向消息回读验证发送人/引用/接收人，不按时间或最新卡猜。安全日志补查询结果分类，不打印原回执或凭据。
 - 本地验收：模拟 DWS 覆盖迟回执、缺 CID、失败/取消与零重发；隔离 PG 覆盖暂缓、原卡关闭/迟点拒绝、文字恢复、wait 不提前释放、排队提醒发送前抑制、投影重放/竞态与多题隔离。这些不替代真实 IM/模型与一小时等待。
-- 状态：implemented=complete；local verification=pass（76命名Human零fail/skip、本地PG15435、scripted model/provider）；integration/release=待CR交发布协调；runtime acceptance=原 P02 FAIL，待发布后复验。本 session 不合并、部署、发钉钉消息、追加真人 E2E 或恢复线上旧卡/Task。完成可审查 CR 后交接停止。
+- 状态：implemented=complete；local verification=pass（76命名Human零fail/skip、本地PG15435、scripted model/provider）；integration/release=CR30323575 opened（实现候选4c910f3d），待发布协调合并/发布；runtime acceptance=原 P02 FAIL，待发布后复验。本 session 不合并、部署、发钉钉消息、追加真人 E2E 或恢复线上旧卡/Task。完成可审查 CR 后交接停止。
 - 验证补充：原SDK client延迟/暂不可见/合法alias/MID-only与不重发通过；identity-only不标delivered通过；排队提醒发送前抑制、其他wait不受影响、human3/4门禁通过；未知关卡RPC与文字答复并发及不可变重试race通过；vet与server compile-only通过；policy仅PASS_STRUCTURAL_ONLY。无数据迁移/Runtime/配置变更。独立只读审查两项阻断已修复，最终无阻断。不替代真实IM和一小时试验。
 - 原调查三条直接数据库链仍 unproven：IM MID→outbox provider MID；取消动态 ref→Task UUID；事故卡 MID→question→wait.ref_id。保留证据缺口，不绕过权限补证。
 
