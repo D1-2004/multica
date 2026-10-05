@@ -22,6 +22,10 @@ one run depends on where the message came from and who sent it.
 
 ## 1. Layers
 
+执行侧 Context Builder 的分层整理设计见
+[执行 Context Builder](execution-context-builder.md)。它是设计候选，复用本合同的
+scope、权限与合并规则，不表示运行时新增了配置快照或跨场域能力。
+
 A claimed task's context is merged from four layers, outermost first:
 global → enterprise (org) → scene (a group or a 1:1 chat) → person (§1.3). For connectors and
 skills the scope layers only ever ADD capabilities; they never remove a

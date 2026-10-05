@@ -56,7 +56,7 @@ func TestEmployeeDirectPromptOwnsFinalTextWithoutBlockingRequestedDeliveries(t *
 	if strings.Contains(got, "no final assistant output") {
 		t.Fatal("failures could disappear")
 	}
-	for _, want := range []string{"plain final assistant text", "result or actionable failure", "The Host owns terminal delivery and any configured notices", "do not send it to the routine's scene yourself", "only when explicitly requested by the routine", "verified receipts"} {
+	for _, want := range []string{"plain final assistant text", "result or actionable failure", "The Host owns terminal delivery and any configured notices", "If the current routine explicitly asks to send or mention a message in this same scene", "use the authorized messaging tool once and verify its receipt", "do not add a duplicate sent/delivered acknowledgement", "only after verifying same-scene delivery", "only when explicitly requested by the routine", "verified receipts"} {
 		if !strings.Contains(employeeRoutineOutputInstruction, want) {
 			t.Fatal("routine output contract missing", want)
 		}
@@ -77,7 +77,7 @@ func TestEmployeeDirectClaimPreservesStructuredResultContract(t *testing.T) {
 	if !strings.Contains(employeeDirectPrompt("Legacy unstructured packet"), "If this run has no structured output contract") {
 		t.Fatal("legacy result parser was given an unsupported JSON contract")
 	}
-	if !strings.Contains(employeeRoutineOutputInstruction, "a one-shot occurrence has no start notice") || strings.Contains(employeeRoutineOutputInstruction, "attaches your final output") {
+	if !strings.Contains(employeeRoutineOutputInstruction, "Employee routine occurrences (scheduled, one-shot, webhook or manually started) have no start notice") || strings.Contains(employeeRoutineOutputInstruction, "attaches your final output") {
 		t.Fatal("routine claim guidance misstates one-shot notices or result parsing")
 	}
 }
