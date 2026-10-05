@@ -32,4 +32,5 @@
 - `handler/employee_routine_origin.go` rechecks source scope at use; the existing delivery outbox remains the sender. Views distinguish consumed admission from last-run outcome.
 
 - `handler/employee_scene_capabilities.go` and `employee_scene_entry_host.go` share the one-shot foreground routing contract: current intent, original message time, and background creation instead of sleep.
+- `handler/scene_config_mcp.go:sceneConfigRoutineCreate` returns the verified Employee Direct once receipt without a second configuration notice, including replay. `handler/employee_run_notice.go` keeps the original Host final-result owner; this skill's one-shot guidance makes that result a short action/time/once sentence in the required output format.
 - `service/employee_routine_task.go:compileRoutinePacket` distinguishes already-due execution from the historical creation work packet. `handler/employee_run_claim.go` supplies the current result consumer contract: routine plain result versus the current Human structured Direct format.

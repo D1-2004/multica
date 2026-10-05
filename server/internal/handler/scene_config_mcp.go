@@ -1089,6 +1089,11 @@ func (h *Handler) sceneConfigRoutineCreate(ctx context.Context, target sceneConf
 		return nil, "", err
 	}
 	result.Routine = sceneConfigRoutineView(result.Routine)
+	if result.Routine.Trigger.Kind == sceneRoutineTriggerOnce && args.Source != nil && args.Source.EmployeeRunID != "" {
+		// CaptureRoutineSource verified this Direct Run against PostgreSQL.
+		// Its Host result owns the creation reply, including creation replay.
+		return result, "", nil
+	}
 	verb := "新增"
 	if result.Updated {
 		verb = "更新"
